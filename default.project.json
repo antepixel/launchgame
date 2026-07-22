@@ -1,0 +1,79 @@
+{
+  "name": "launchgame",
+  "tree": {
+    "$className": "DataModel",
+    "ServerScriptService": {
+      "$path": "src/ServerScriptService"
+    },
+    "ReplicatedStorage": {
+      "$path": "src/ReplicatedStorage"
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "$path": "src/StarterPlayer/StarterPlayerScripts"
+      },
+      "StarterCharacterScripts": {
+        "$className": "StarterCharacterScripts"
+      }
+    },
+    "StarterGui": {
+      "$path": "src/StarterGui"
+    },
+    "Workspace": {
+      "Baseplate": {
+        "$className": "Part",
+        "$properties": {
+          "Anchored": true,
+          "Position": [0, -2, -100],
+          "Size": [60, 4, 320],
+          "Material": "Grass",
+          "Color": [0.29, 0.56, 0.2]
+        }
+      },
+      "Ramp": {
+        "$className": "Part",
+        "$properties": {
+          "Anchored": true,
+          "Position": [0, 3.5, 35],
+          "Orientation": [20, 0, 0],
+          "Size": [12, 2, 20],
+          "Material": "WoodPlanks",
+          "Color": [0.4, 0.27, 0.13]
+        }
+      },
+      "LaunchPoint": {
+        "$className": "Part",
+        "$properties": {
+          "Anchored": true,
+          "CanCollide": false,
+          "Transparency": 1,
+          "Position": [0, 8, 24],
+          "Size": [2, 0.2, 2]
+        }
+      },
+      "LaunchBall": {
+        "$className": "Part",
+        "$properties": {
+          "Anchored": true,
+          "Position": [0, 10.5, 24],
+          "Size": [4, 4, 4],
+          "Shape": "Ball",
+          "Material": "Neon",
+          "Color": [1, 0.45, 0.05]
+        }
+      },
+      "PlaceholderSpawn": {
+        "$className": "SpawnLocation",
+        "$properties": {
+          "Anchored": true,
+          "CanCollide": true,
+          "Neutral": true,
+          "Duration": 0,
+          "Position": [0, 1, 55],
+          "Size": [8, 1, 8]
+        }
+      }
+    }
+  }
+}

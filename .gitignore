@@ -1,0 +1,8 @@
+Packages/
+ServerPackages/
+*.rbxl
+*.rbxlx
+*.rbxlx.lock
+DevPackages/
+Packages.lock.toml.bak
+.vscode/
