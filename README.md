@@ -1,7 +1,8 @@
 # launchgame
 
-Launch-and-collect prototype. This build is **only** the launch mechanic: charge,
-release, fly, measure distance, reset. Nothing else exists yet on purpose.
+Launch-and-collect prototype. This build is **only** the launch mechanic: ride a
+swing that sweeps on its own arc forever, release at the right moment, fly,
+measure distance, reset. Nothing else exists yet on purpose.
 
 ## Workflow
 
@@ -17,7 +18,7 @@ with the Rojo Studio plugin for live sync instead of rebuilding a file each time
 
 ## Tuning
 
-Every feel-related constant (launch power range, charge time, angle, gravity,
-friction, bounce, landing detection, reset delay) lives in one place:
-`src/ReplicatedStorage/Config/LaunchConfig.luau`. Change numbers there; no other
-script should need editing to retune the feel.
+Every feel-related constant (launch speed range, launch angle, gravity, landing
+detection, reset delay, swing period/arc/rope length, sweet-spot position and
+width) lives in one place: `src/ReplicatedStorage/Config/LaunchConfig.luau`.
+Change numbers there; no other script should need editing to retune the feel.
