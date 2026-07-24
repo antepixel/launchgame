@@ -18,12 +18,18 @@
 -- sine wave, not a physics constraint -- see swingTheta/swingSeatPosition.
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local RunwayGeometry = require(ReplicatedStorage.Config.RunwayGeometry)
 local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
+local SlimeConfig = require(ReplicatedStorage.Config.SlimeConfig)
+-- Server-only siblings (see each module's own header for why these live in
+-- ServerScriptService, not ReplicatedStorage, specifically).
+local SlimeRoll = require(ServerScriptService.SlimeRoll)
+local SlimeCollection = require(ServerScriptService.SlimeCollection)
 
 Workspace.Gravity = LaunchConfig.GRAVITY
 
@@ -49,6 +55,25 @@ local releaseRemote = makeRemote("Release")
 -- LaunchClient.client.luau.
 local flightStartedRemote = makeRemote("FlightStarted")
 local resetReadyRemote = makeRemote("ResetReady")
+-- Server -> client: fires ONCE per landing that earned luck > 0, carrying the
+-- box's starting luck (see the Heartbeat landing handler below). A 0-luck
+-- landing never fires this -- see the written report for why no box appears
+-- at all in that case.
+local boxStartedRemote = makeRemote("BoxStarted")
+-- Client -> server: content-free, exactly like Release -- a bare "I pressed"
+-- signal. The server alone decides open-or-double; see onBoxPress.
+local boxPressRemote = makeRemote("BoxPress")
+-- Server -> client: fires once per resolved press, (opened: boolean, luck:
+-- number) -- luck is either the DOUBLED value (opened = false, press again)
+-- or the FINAL value (opened = true, sequence over).
+local boxResultRemote = makeRemote("BoxResult")
+-- Server -> client: fires ONCE per box that opens, REVEAL_BOX_TO_SLIME_DELAY_
+-- SECONDS after BoxResult(opened=true) -- the second beat of the reveal (see
+-- onBoxPress). Carries (globalIndex: number, isNew: boolean) -- the ONLY
+-- slime identifier ever sent; the client looks up name/tier/colour/income
+-- from the shared SlimeData table by this index, never from anything else
+-- the server says.
+local slimeRevealedRemote = makeRemote("SlimeRevealed")
 -- Server -> client: fires ONCE per player, the moment they claim the (single,
 -- shared) rider slot -- tells that client "you're the one who should render
 -- yourself on the swing." See setupCharacter and the bug-2 fix in the written
@@ -213,7 +238,7 @@ local function restoreFlightPose(joints: PoseJoints)
 	end
 end
 
-type LoopState = "riding" | "inflight" | "cooldown"
+type LoopState = "riding" | "inflight" | "box" | "cooldown"
 
 -- One shared rider slot for this prototype (same limitation every previous pass
 -- had): only one player can be on/using the swing at a time.
@@ -229,19 +254,67 @@ type Flight = {
 	startPosition: Vector3,
 	distance: number,
 	archHeight: number,
+	duration: number,
 	startTime: number,
 	poseJoints: PoseJoints,
 	luck: number,
 }
 local activeFlight: Flight? = nil
 
+-- The active mystery box -- set once per landing that earned luck > 0, read
+-- and mutated (luck doubling) by every press until it opens. `pending` is
+-- true from the moment a press is ACCEPTED until its delayed result fires --
+-- see onBoxPress. `luck` starts at the landing's earned value and only ever
+-- doubles; nothing here caps it.
+type Box = {
+	player: Player,
+	character: Model,
+	luck: number,
+	pending: boolean,
+}
+local activeBox: Box? = nil
+
 -- Frees the rider slot (on disconnect, death, or a missing character) without
--- otherwise touching the swing itself -- the seat keeps swinging empty either way.
+-- otherwise touching the swing itself -- the seat keeps swinging empty either
+-- way. Clearing activeBox here too (on TOP of resetting state away from
+-- "box") is what guarantees a player leaving or dying mid-sequence can never
+-- leave a stuck box: any in-flight delayed roll (see onBoxPress) checks
+-- `activeBox ~= box or state ~= "box"` the instant its delay elapses and
+-- simply bails if either has changed out from under it.
 local function clearActiveRider()
 	activePlayer = nil
 	activeCharacter = nil
 	activeFlight = nil
+	activeBox = nil
 	state = "riding"
+end
+
+-- Shared by both the 0-luck landing path (no box) and the box's own "opened"
+-- path -- identical reset behaviour either way, just reached from two places
+-- now instead of one inline block.
+local function scheduleReset(landedPlayer: Player, landedCharacter: Model)
+	task.delay(LaunchConfig.RESET_DELAY, function()
+		if landedPlayer.Character == landedCharacter and landedCharacter.Parent then
+			local humanoid = landedCharacter:FindFirstChildOfClass("Humanoid")
+			local rootPart = humanoid and humanoid.RootPart
+			if rootPart then
+				rootPart.AssemblyLinearVelocity = Vector3.zero
+				rootPart.AssemblyAngularVelocity = Vector3.zero
+				-- Re-anchor: back to "riding," where the CLIENT takes over
+				-- positioning again (see setupCharacter's comment) -- nothing
+				-- server-side will reposition this part again until the next
+				-- release, so it must not be free to fall in the meantime.
+				rootPart.Anchored = true
+			end
+			if humanoid then
+				humanoid.AutoRotate = false
+			end
+		end
+		state = "riding"
+		if landedPlayer.Parent then
+			resetReadyRemote:FireClient(landedPlayer)
+		end
+	end)
 end
 
 -- HUMANOID SETUP, done once per character (not per launch). Ragdoll/FallingDown
@@ -335,8 +408,24 @@ local function onRelease(player: Player)
 	-- anything back into this number.
 	local phase = swingPhase()
 	local multiplier = launchMultiplier(phase)
-	local distance = LaunchConfig.DISTANCE_PER_MULTIPLIER * multiplier
+	-- Swing tier scaling: a plain multiplier on top of the usual timing-based
+	-- distance, read once here from the (currently hard-coded, see
+	-- LaunchConfig.ACTIVE_SWING_TIER) active tier. Bands themselves never
+	-- change length or count -- this is the ONLY place tier progression
+	-- enters the flight, which is what keeps it from having to touch the
+	-- trajectory formula, the camera, or the band curve at all.
+	local tierScale = LaunchConfig.SWING_TIER_DISTANCE_SCALE[LaunchConfig.ACTIVE_SWING_TIER]
+	local distance = LaunchConfig.DISTANCE_PER_MULTIPLIER * multiplier * tierScale
 	local archHeight = distance * LaunchConfig.ARC_HEIGHT_FRACTION
+	-- Flight duration now scales WITH distance instead of staying fixed --
+	-- see FLIGHT_DURATION_EXPONENT's comment in LaunchConfig for why a square
+	-- root (not linear, not flat). baseDistance is deliberately NOT tier-
+	-- scaled -- it's the fixed tier-1-perfect-launch anchor point that
+	-- FLIGHT_DURATION_SECONDS was tuned against, the same reference for every
+	-- tier's duration, not a per-tier moving target.
+	local baseDistance = LaunchConfig.DISTANCE_PER_MULTIPLIER * LaunchConfig.SWEET_SPOT_MULTIPLIER
+	local duration = LaunchConfig.FLIGHT_DURATION_SECONDS
+		* (distance / baseDistance) ^ LaunchConfig.FLIGHT_DURATION_EXPONENT
 
 	-- Launch from wherever the seat actually is right now (the swing never
 	-- stops, so this is a moving origin).
@@ -389,12 +478,13 @@ local function onRelease(player: Player)
 		startPosition = startPosition,
 		distance = distance,
 		archHeight = archHeight,
+		duration = duration,
 		startTime = startTime,
 		poseJoints = poseJoints,
 		luck = luck,
 	}
 
-	flightStartedRemote:FireClient(player, distance, archHeight, LaunchConfig.FLIGHT_DURATION_SECONDS, startPosition, startTime, luck)
+	flightStartedRemote:FireClient(player, distance, archHeight, duration, startPosition, startTime, luck)
 end
 
 releaseRemote.OnServerEvent:Connect(onRelease)
@@ -403,6 +493,10 @@ Players.PlayerRemoving:Connect(function(player)
 	if player == activePlayer then
 		clearActiveRider()
 	end
+	-- Collection tracking is per-player regardless of rider status -- frees
+	-- their in-memory "seen" set so it doesn't outlive the connection (see
+	-- SlimeCollection.cleanup's own comment for why this matters).
+	SlimeCollection.cleanup(player)
 end)
 
 -- This loop used to ALSO reposition the rider every Heartbeat while "riding"
@@ -430,7 +524,11 @@ RunService.Heartbeat:Connect(function()
 		return
 	end
 	local flight = activeFlight
-	local u = (Workspace:GetServerTimeNow() - flight.startTime) / LaunchConfig.FLIGHT_DURATION_SECONDS
+	-- flight.duration, NOT the config constant directly -- see onRelease,
+	-- where duration was computed once per flight from that flight's own
+	-- (possibly tier-scaled) distance and stored here, exactly like distance
+	-- and archHeight already were.
+	local u = (Workspace:GetServerTimeNow() - flight.startTime) / flight.duration
 
 	if u < 1 then
 		return
@@ -448,29 +546,115 @@ RunService.Heartbeat:Connect(function()
 
 	local landedPlayer = activePlayer
 	local landedCharacter = activeCharacter
-	state = "cooldown"
+	local earnedLuck = flight.luck
 	activeFlight = nil
 
-	task.delay(LaunchConfig.RESET_DELAY, function()
-		if landedPlayer and landedPlayer.Character == landedCharacter and landedCharacter.Parent then
-			local humanoid = landedCharacter:FindFirstChildOfClass("Humanoid")
-			local rootPart = humanoid and humanoid.RootPart
-			if rootPart then
-				rootPart.AssemblyLinearVelocity = Vector3.zero
-				rootPart.AssemblyAngularVelocity = Vector3.zero
-				-- Re-anchor: back to "riding," where the CLIENT takes over
-				-- positioning again (see setupCharacter's comment) -- nothing
-				-- server-side will reposition this part again until the next
-				-- release, so it must not be free to fall in the meantime.
-				rootPart.Anchored = true
-			end
-			if humanoid then
-				humanoid.AutoRotate = false
-			end
-		end
+	if not landedPlayer then
+		-- Defensive only: activeFlight is never set without activePlayer (see
+		-- onRelease) -- this can't actually happen, but keeps the type
+		-- checker honest about Player? instead of asserting it away.
 		state = "riding"
-		if landedPlayer and landedPlayer.Parent then
-			resetReadyRemote:FireClient(landedPlayer)
+		return
+	end
+
+	if earnedLuck > 0 then
+		-- Mystery box: the box's STARTING luck is the exact value already
+		-- computed at release and already shown in the landing readout (see
+		-- onRelease/bandLuckForLandingZ) -- carried forward, not rerolled or
+		-- re-derived. Every press from here is scored in onBoxPress below.
+		state = "box"
+		activeBox = {
+			player = landedPlayer,
+			character = landedCharacter,
+			luck = earnedLuck,
+			pending = false,
+		}
+		boxStartedRemote:FireClient(landedPlayer, earnedLuck)
+	else
+		-- 0 luck: nothing was earned to gamble with, so no box appears at all
+		-- -- straight to the existing reset flow, unchanged from before this
+		-- pass. See the written report for why a box here (doubling zero
+		-- forever) would just be a dead interaction.
+		state = "cooldown"
+		scheduleReset(landedPlayer, landedCharacter)
+	end
+end)
+
+-- ===== Mystery box presses =====
+-- After a landing with luck > 0, the player presses to open the box: each
+-- accepted press is a fresh, independent, server-rolled coin flip
+-- (BOX_DOUBLE_CHANCE to DOUBLE the luck and allow another press, the rest to
+-- open) -- see LaunchConfig.BOX_DOUBLE_CHANCE. Uncapped by design: nothing
+-- here stops the luck from doubling indefinitely -- a long chain is meant to
+-- be rare and memorable, not something the game protects the player from.
+local function onBoxPress(player: Player)
+	if state ~= "box" or not activeBox or player ~= activeBox.player then
+		return
+	end
+	-- RATE LIMIT + THE BEAT, same mechanism: a press is only even ACCEPTED
+	-- (activeBox.pending flips true) once, and ignored on every repeat until
+	-- its own delayed result has fired. A script mashing BoxPress as fast as
+	-- it can therefore gets exactly one roll every BOX_ROLL_DELAY_SECONDS --
+	-- the server never evaluates faster than that, no matter how many Presses
+	-- arrive in between.
+	if activeBox.pending then
+		return
+	end
+	activeBox.pending = true
+	local box = activeBox
+
+	task.delay(LaunchConfig.BOX_ROLL_DELAY_SECONDS, function()
+		-- The box (player left/died, see clearActiveRider) or the whole rider
+		-- slot may have been torn down while this was pending. Bail without
+		-- touching anything if this delayed roll is no longer the current one.
+		if activeBox ~= box or state ~= "box" then
+			return
+		end
+
+		-- THE ONLY THING A BOX ROLL IS EVER DERIVED FROM: math.random(),
+		-- called here, server-side, the instant this delay elapses. The
+		-- client sent nothing but a bare press signal, so there is no number
+		-- in this path for a modified client to influence, let alone force a
+		-- double or fake a luck value.
+		local doubled = math.random() < LaunchConfig.BOX_DOUBLE_CHANCE
+		if not doubled then
+			local finalLuck = box.luck
+			local landedPlayer = box.player
+			local landedCharacter = box.character
+			activeBox = nil
+			state = "cooldown"
+			boxResultRemote:FireClient(landedPlayer, true, finalLuck)
+
+			-- THE SLIME: rolled immediately, server-side, from this box's own
+			-- final luck -- see SlimeRoll.rollSlime. Nothing about WHICH
+			-- slime is ever sent to or influenced by the client; only its
+			-- globalIndex goes over the wire (see slimeRevealedRemote above),
+			-- and the client looks up name/tier/colour/income from the same
+			-- shared SlimeData table this rolled from. The roll itself lives
+			-- in a ServerScriptService module a client cannot even require,
+			-- let alone call.
+			local slime = SlimeRoll.rollSlime(finalLuck)
+			local isNew = SlimeCollection.recordSeen(landedPlayer, slime.globalIndex)
+
+			-- THE SECOND BEAT: the box's own "OPENED!" is already the first
+			-- (see BOX_ROLL_DELAY_SECONDS) -- this is a SEPARATE delay before
+			-- the slime itself appears, so the two don't land in the same
+			-- instant (see the written report for why). scheduleReset moves
+			-- HERE too, not before -- RESET_DELAY should count down from the
+			-- LATEST thing the player needs to read (the slime), not the
+			-- box's own open moment.
+			task.delay(SlimeConfig.REVEAL_BOX_TO_SLIME_DELAY_SECONDS, function()
+				if landedPlayer.Parent then
+					slimeRevealedRemote:FireClient(landedPlayer, slime.globalIndex, isNew)
+				end
+				scheduleReset(landedPlayer, landedCharacter)
+			end)
+		else
+			box.luck *= 2
+			box.pending = false
+			boxResultRemote:FireClient(box.player, false, box.luck)
 		end
 	end)
-end)
+end
+
+boxPressRemote.OnServerEvent:Connect(onBoxPress)

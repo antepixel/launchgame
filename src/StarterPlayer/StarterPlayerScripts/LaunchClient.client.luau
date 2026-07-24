@@ -33,6 +33,8 @@ local Players = game:GetService("Players")
 
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
+local SlimeConfig = require(ReplicatedStorage.Config.SlimeConfig)
+local SlimeData = require(ReplicatedStorage.Config.SlimeData)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -42,6 +44,10 @@ local remotesFolder = ReplicatedStorage:WaitForChild("Remotes")
 local releaseRemote = remotesFolder:WaitForChild("Release") :: RemoteEvent
 local flightStartedRemote = remotesFolder:WaitForChild("FlightStarted") :: RemoteEvent
 local resetReadyRemote = remotesFolder:WaitForChild("ResetReady") :: RemoteEvent
+local boxStartedRemote = remotesFolder:WaitForChild("BoxStarted") :: RemoteEvent
+local boxPressRemote = remotesFolder:WaitForChild("BoxPress") :: RemoteEvent
+local boxResultRemote = remotesFolder:WaitForChild("BoxResult") :: RemoteEvent
+local slimeRevealedRemote = remotesFolder:WaitForChild("SlimeRevealed") :: RemoteEvent
 local ridingAssignedRemote = remotesFolder:WaitForChild("RidingAssigned") :: RemoteEvent
 
 local swingPivot = Workspace:WaitForChild("SwingPivot") :: BasePart
@@ -156,6 +162,17 @@ local flightDistance = 0
 local flightArcHeight = 0
 local flightStartPosition = Vector3.zero
 local flightLuck = 0
+
+-- ===== Mystery box state (set by BoxStarted, driven by BoxResult) =====
+-- boxActive gates whether Space/the box button do anything -- true from
+-- BoxStarted until the box opens (BoxResult with opened = true) or a reset
+-- wipes it defensively (see resetReadyRemote below). boxWaitingForResult is a
+-- LOCAL-only "already pressed, waiting" latch -- purely for not sending a
+-- pointless second FireServer while one is in flight; the server's own
+-- `pending` guard (see LaunchServer's onBoxPress) is what actually enforces
+-- this, so a modified client skipping this latch gains nothing.
+local boxActive = false
+local boxWaitingForResult = false
 
 -- True once this client has been told (via RidingAssigned) that it's the one
 -- shared rider -- gates whether THIS client positions its own character on the
@@ -278,6 +295,174 @@ local releaseButtonCorner = Instance.new("UICorner")
 releaseButtonCorner.CornerRadius = UDim.new(0, 10)
 releaseButtonCorner.Parent = releaseButton
 
+-- ===== Mystery box UI: hidden until BoxStarted, shown center-screen as a
+-- distinct modal-ish panel (not just another HUD label) since this is its own
+-- reward beat, not a continuation of the flight readout above it. Text and
+-- timing only, per the written report -- no particles/sound/animation
+-- systems; every visual change below is an instant property set, and the
+-- only "motion" is the server-driven delay before a result lands. =====
+local boxFrame = Instance.new("Frame")
+boxFrame.Name = "MysteryBox"
+boxFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+boxFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+boxFrame.Size = UDim2.new(0, 380, 0, 220)
+boxFrame.BackgroundColor3 = Color3.new(0.08, 0.08, 0.11)
+boxFrame.BackgroundTransparency = 0.05
+boxFrame.BorderSizePixel = 0
+boxFrame.Visible = false
+boxFrame.ZIndex = 5
+boxFrame.Parent = screenGui
+
+local boxFrameCorner = Instance.new("UICorner")
+boxFrameCorner.CornerRadius = UDim.new(0, 18)
+boxFrameCorner.Parent = boxFrame
+
+local boxTitleLabel = Instance.new("TextLabel")
+boxTitleLabel.Name = "BoxTitle"
+boxTitleLabel.AnchorPoint = Vector2.new(0.5, 0)
+boxTitleLabel.Position = UDim2.new(0.5, 0, 0.06, 0)
+boxTitleLabel.Size = UDim2.new(1, -20, 0, 30)
+boxTitleLabel.BackgroundTransparency = 1
+boxTitleLabel.Font = Enum.Font.GothamBold
+boxTitleLabel.TextScaled = true
+boxTitleLabel.TextColor3 = Color3.new(0.75, 0.75, 0.8)
+boxTitleLabel.TextStrokeTransparency = 0.6
+boxTitleLabel.Text = "MYSTERY BOX"
+boxTitleLabel.ZIndex = 6
+boxTitleLabel.Parent = boxFrame
+
+-- The number itself -- the whole point of the box, so it gets the biggest
+-- text in the panel. Gold while live, brightens further on an open (see
+-- BoxResult below); a double just re-renders this same label with the new
+-- (bigger) value, which is what makes the escalation read as "the number
+-- climbed" rather than a fresh unrelated event each time.
+local boxLuckLabel = Instance.new("TextLabel")
+boxLuckLabel.Name = "BoxLuck"
+boxLuckLabel.AnchorPoint = Vector2.new(0.5, 0)
+boxLuckLabel.Position = UDim2.new(0.5, 0, 0.18, 0)
+boxLuckLabel.Size = UDim2.new(1, -20, 0, 70)
+boxLuckLabel.BackgroundTransparency = 1
+boxLuckLabel.Font = Enum.Font.GothamBlack
+boxLuckLabel.TextScaled = true
+boxLuckLabel.TextColor3 = Color3.new(1, 0.85, 0.2)
+boxLuckLabel.TextStrokeTransparency = 0.3
+boxLuckLabel.Text = "Luck x0"
+boxLuckLabel.ZIndex = 6
+boxLuckLabel.Parent = boxFrame
+
+-- Status line: "press to open," the "..." suspense beat, "DOUBLED!", or
+-- "OPENED!" -- the one element whose COLOUR is what tells a double from an
+-- open apart at a glance (warm orange escalation vs. bright green
+-- resolution), since the luck label above looks the same shape either way.
+local boxStatusLabel = Instance.new("TextLabel")
+boxStatusLabel.Name = "BoxStatus"
+boxStatusLabel.AnchorPoint = Vector2.new(0.5, 0)
+boxStatusLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
+boxStatusLabel.Size = UDim2.new(1, -20, 0, 34)
+boxStatusLabel.BackgroundTransparency = 1
+boxStatusLabel.Font = Enum.Font.GothamBold
+boxStatusLabel.TextScaled = true
+boxStatusLabel.TextColor3 = Color3.new(1, 1, 1)
+boxStatusLabel.TextStrokeTransparency = 0.5
+boxStatusLabel.Text = ""
+boxStatusLabel.ZIndex = 6
+boxStatusLabel.Parent = boxFrame
+
+local boxButton = Instance.new("TextButton")
+boxButton.Name = "BoxOpenButton"
+boxButton.AnchorPoint = Vector2.new(0.5, 1)
+boxButton.Position = UDim2.new(0.5, 0, 0.93, 0)
+boxButton.Size = UDim2.new(0, 220, 0, 56)
+boxButton.BackgroundColor3 = Color3.new(0.15, 0.65, 0.95)
+boxButton.Font = Enum.Font.GothamBold
+boxButton.TextScaled = true
+boxButton.TextColor3 = Color3.new(1, 1, 1)
+boxButton.Text = "PRESS"
+boxButton.ZIndex = 6
+boxButton.Parent = boxFrame
+
+local boxButtonCorner = Instance.new("UICorner")
+boxButtonCorner.CornerRadius = UDim.new(0, 10)
+boxButtonCorner.Parent = boxButton
+
+-- ===== Slime reveal panel: the box's payoff, shown AFTER the box itself
+-- (see SlimeRevealed below) -- never at the same time as boxFrame, which
+-- hides the instant this appears. Text and colour only, per the written
+-- report -- no particles/sound/animation systems. Rarity reads instantly two
+-- ways: the TIER label is coloured with that tier's own colour (see
+-- SlimeConfig.SLIME_TIER_COLORS) and sized bigger for higher tiers (see
+-- SLIME_TIER_TEXT_SIZE_BASE/STEP), and a plain asterisk flourish (none for
+-- Common-Epic, escalating "*" through "****" for Legendary-Divine) frames the
+-- tier name -- so a Divine reveal is unmistakably a bigger deal than a
+-- Common one without needing anything beyond text and colour. =====
+local slimeRevealFrame = Instance.new("Frame")
+slimeRevealFrame.Name = "SlimeReveal"
+slimeRevealFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+slimeRevealFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+slimeRevealFrame.Size = UDim2.new(0, 420, 0, 260)
+slimeRevealFrame.BackgroundColor3 = Color3.new(0.05, 0.05, 0.07)
+slimeRevealFrame.BackgroundTransparency = 0.05
+slimeRevealFrame.BorderSizePixel = 0
+slimeRevealFrame.Visible = false
+slimeRevealFrame.ZIndex = 5
+slimeRevealFrame.Parent = screenGui
+
+local slimeRevealCorner = Instance.new("UICorner")
+slimeRevealCorner.CornerRadius = UDim.new(0, 18)
+slimeRevealCorner.Parent = slimeRevealFrame
+
+-- Border tinted with the TIER's colour -- the very first thing the eye
+-- catches, before reading any text: a Common's border is a dull grey
+-- sliver, a Divine's is bright gold.
+local slimeRevealBorder = Instance.new("UIStroke")
+slimeRevealBorder.Thickness = 3
+slimeRevealBorder.Color = Color3.new(1, 1, 1)
+slimeRevealBorder.Parent = slimeRevealFrame
+
+local newBadgeLabel = Instance.new("TextLabel")
+newBadgeLabel.Name = "NewBadge"
+newBadgeLabel.AnchorPoint = Vector2.new(0.5, 0)
+newBadgeLabel.Position = UDim2.new(0.5, 0, 0.06, 0)
+newBadgeLabel.Size = UDim2.new(1, -20, 0, 30)
+newBadgeLabel.BackgroundTransparency = 1
+newBadgeLabel.Font = Enum.Font.GothamBold
+newBadgeLabel.TextScaled = true
+newBadgeLabel.TextColor3 = Color3.new(1, 1, 1)
+newBadgeLabel.TextStrokeTransparency = 0.5
+newBadgeLabel.Text = ""
+newBadgeLabel.ZIndex = 6
+newBadgeLabel.Parent = slimeRevealFrame
+
+-- NOT TextScaled -- TextSize is set explicitly per reveal (see
+-- SlimeRevealed below) so higher tiers render LITERALLY bigger text, not
+-- just auto-fit to the same box.
+local slimeTierLabel = Instance.new("TextLabel")
+slimeTierLabel.Name = "SlimeTier"
+slimeTierLabel.AnchorPoint = Vector2.new(0.5, 0)
+slimeTierLabel.Position = UDim2.new(0.5, 0, 0.2, 0)
+slimeTierLabel.Size = UDim2.new(1, -20, 0, 60)
+slimeTierLabel.BackgroundTransparency = 1
+slimeTierLabel.Font = Enum.Font.GothamBlack
+slimeTierLabel.TextColor3 = Color3.new(1, 1, 1)
+slimeTierLabel.TextStrokeTransparency = 0.2
+slimeTierLabel.Text = ""
+slimeTierLabel.ZIndex = 6
+slimeTierLabel.Parent = slimeRevealFrame
+
+local slimeNameLabel = Instance.new("TextLabel")
+slimeNameLabel.Name = "SlimeName"
+slimeNameLabel.AnchorPoint = Vector2.new(0.5, 0)
+slimeNameLabel.Position = UDim2.new(0.5, 0, 0.58, 0)
+slimeNameLabel.Size = UDim2.new(1, -20, 0, 40)
+slimeNameLabel.BackgroundTransparency = 1
+slimeNameLabel.Font = Enum.Font.GothamBold
+slimeNameLabel.TextScaled = true
+slimeNameLabel.TextColor3 = Color3.new(1, 1, 1)
+slimeNameLabel.TextStrokeTransparency = 0.5
+slimeNameLabel.Text = ""
+slimeNameLabel.ZIndex = 6
+slimeNameLabel.Parent = slimeRevealFrame
+
 -- ===== State =====
 local canRelease = true
 
@@ -303,12 +488,37 @@ end
 -- this covers mouse, touch, and gamepad activation of the on-screen button.
 releaseButton.MouseButton1Click:Connect(doRelease)
 
+-- THE BEAT: boxWaitingForResult flips true the instant a press is sent and the
+-- status line switches to "...", then holds until BoxResult actually arrives
+-- -- BOX_ROLL_DELAY_SECONDS later, server time (see LaunchServer's
+-- onBoxPress). Nothing here times that delay locally; this just waits for the
+-- server's own result event, so the pause the player feels is always the
+-- real, authoritative one, never a client-guessed approximation of it.
+local function doBoxPress()
+	if not boxActive or boxWaitingForResult then
+		return
+	end
+	boxWaitingForResult = true
+	boxStatusLabel.Text = "..."
+	boxStatusLabel.TextColor3 = Color3.new(0.7, 0.7, 0.75)
+	boxPressRemote:FireServer()
+end
+
+boxButton.MouseButton1Click:Connect(doBoxPress)
+
+-- Space does double duty: release the swing normally, or press the box when
+-- one's up -- never both at once, since boxActive and canRelease can't be
+-- simultaneously true (see resetReadyRemote's guard below).
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 	if gameProcessedEvent then
 		return
 	end
 	if input.KeyCode == Enum.KeyCode.Space then
-		doRelease()
+		if boxActive then
+			doBoxPress()
+		else
+			doRelease()
+		end
 	end
 end)
 
@@ -361,8 +571,105 @@ end)
 
 resetReadyRemote.OnClientEvent:Connect(function()
 	canRelease = true
+	-- Defensive cleanup, not the normal path (a box that OPENED already hides
+	-- itself below on its own timer): if ResetReady ever arrives while a box
+	-- is still marked active for any reason, this guarantees no stuck box UI
+	-- survives into the next round -- ResetReady only ever fires once the
+	-- server-side sequence (box included) has fully resolved, so seeing it is
+	-- always a safe moment to force this closed.
+	boxActive = false
+	boxWaitingForResult = false
+	boxFrame.Visible = false
+	-- Same defensive guarantee, extended to the slime panel: a normal open
+	-- already hides this itself after RESET_DELAY (see SlimeRevealed below),
+	-- but ResetReady arriving is ALWAYS a safe moment to force it closed too.
+	slimeRevealFrame.Visible = false
 	distanceLabel.Text = "Time your release!"
 	distanceLabel.TextColor3 = Color3.new(1, 1, 1)
+end)
+
+-- BoxStarted: fired once per landing that earned luck > 0 (see LaunchServer's
+-- Heartbeat landing handler) -- a 0-luck landing never fires this, so the box
+-- simply never appears for a whiff (see the written report).
+boxStartedRemote.OnClientEvent:Connect(function(luck: number)
+	boxActive = true
+	boxWaitingForResult = false
+	boxLuckLabel.Text = string.format("Luck x%s", LuckCurve.formatLuck(luck))
+	boxLuckLabel.TextColor3 = Color3.new(1, 0.85, 0.2)
+	boxStatusLabel.Text = "Press to open!"
+	boxStatusLabel.TextColor3 = Color3.new(1, 1, 1)
+	boxFrame.Visible = true
+end)
+
+-- BoxResult: the server's answer to exactly one press, always arriving
+-- BOX_ROLL_DELAY_SECONDS after that press was accepted -- see onBoxPress. A
+-- double (opened = false) reads as ESCALATION: the same luck label just grows
+-- a bigger number in a hot, energetic colour, and the status line invites
+-- another press -- not an error state, the good outcome. An open
+-- (opened = true) reads as RESOLUTION: bright green "OPENED!", the button
+-- disabled (boxActive false, so further presses do nothing), and the panel
+-- itself lingers for RESET_DELAY -- the same window the player already reads
+-- the plain distance/luck result in -- before clearing, so it never gets cut
+-- off mid-read.
+boxResultRemote.OnClientEvent:Connect(function(opened: boolean, luck: number)
+	boxWaitingForResult = false
+	boxLuckLabel.Text = string.format("Luck x%s", LuckCurve.formatLuck(luck))
+	if opened then
+		boxActive = false
+		boxLuckLabel.TextColor3 = Color3.new(0.4, 1, 0.5)
+		boxStatusLabel.Text = "OPENED!"
+		boxStatusLabel.TextColor3 = Color3.new(0.3, 1, 0.4)
+		-- boxFrame is deliberately left showing "OPENED!" here -- it hides
+		-- itself the instant SlimeRevealed arrives below, not on a separate
+		-- client-side timer. That's what guarantees the two beats (box open,
+		-- then slime) never overlap and never rely on the client guessing
+		-- the server's own REVEAL_BOX_TO_SLIME_DELAY_SECONDS pacing.
+	else
+		boxLuckLabel.TextColor3 = Color3.new(1, 0.85, 0.2)
+		boxStatusLabel.Text = "DOUBLED! Press again!"
+		boxStatusLabel.TextColor3 = Color3.new(1, 0.55, 0.15)
+	end
+end)
+
+-- SlimeRevealed: THE SECOND beat -- arrives REVEAL_BOX_TO_SLIME_DELAY_SECONDS
+-- after BoxResult(opened=true), never at the same instant (see
+-- LaunchServer's onBoxPress). boxFrame hides right as this shows, so the box
+-- and the slime are never on screen together -- a clean handoff, box's job
+-- done, slime panel takes over. Held visible for RESET_DELAY (the same
+-- window the player already reads every other landing result in), then
+-- cleared -- ResetReady's own handler (above) is the defensive backstop if
+-- that timer and the real reset ever fall out of step.
+slimeRevealedRemote.OnClientEvent:Connect(function(globalIndex: number, isNew: boolean)
+	local slime = SlimeData.SLIMES[globalIndex]
+	if not slime then
+		return
+	end
+	boxFrame.Visible = false
+
+	local starCount = math.max(0, slime.tier - 4)
+	local flourish = string.rep("*", starCount)
+	local tierText = string.upper(slime.tierName)
+	if flourish ~= "" then
+		tierText = flourish .. " " .. tierText .. " " .. flourish
+	end
+	slimeTierLabel.Text = tierText
+	slimeTierLabel.TextColor3 = slime.color
+	slimeTierLabel.TextSize = SlimeConfig.SLIME_TIER_TEXT_SIZE_BASE + (slime.tier - 1) * SlimeConfig.SLIME_TIER_TEXT_SIZE_STEP
+	slimeRevealBorder.Color = slime.color
+	slimeNameLabel.Text = slime.name
+
+	if isNew then
+		newBadgeLabel.Text = "* NEW! *"
+		newBadgeLabel.TextColor3 = Color3.new(0.3, 1, 0.4)
+	else
+		newBadgeLabel.Text = "Duplicate"
+		newBadgeLabel.TextColor3 = Color3.new(0.6, 0.6, 0.65)
+	end
+
+	slimeRevealFrame.Visible = true
+	task.delay(LaunchConfig.RESET_DELAY, function()
+		slimeRevealFrame.Visible = false
+	end)
 end)
 
 ridingAssignedRemote.OnClientEvent:Connect(function()

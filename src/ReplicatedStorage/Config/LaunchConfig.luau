@@ -11,6 +11,7 @@ export type LaunchConfig = {
 	SWEET_SPOT_MULTIPLIER: number,
 	DISTANCE_PER_MULTIPLIER: number,
 	FLIGHT_DURATION_SECONDS: number,
+	FLIGHT_DURATION_EXPONENT: number,
 	ARC_HEIGHT_FRACTION: number,
 	GRAVITY: number,
 	RESET_DELAY: number,
@@ -25,6 +26,10 @@ export type LaunchConfig = {
 	SWEET_SPOT_WIDTH: number,
 	RUNWAY_BAND_LENGTH_STUDS: number,
 	RUNWAY_WIDTH_STUDS: number,
+	BOX_DOUBLE_CHANCE: number,
+	BOX_ROLL_DELAY_SECONDS: number,
+	ACTIVE_SWING_TIER: number,
+	SWING_TIER_DISTANCE_SCALE: { number },
 }
 
 local LaunchConfig: LaunchConfig = {
@@ -44,20 +49,40 @@ local LaunchConfig: LaunchConfig = {
 
 	-- ===== Scripted flight (this pass: no more velocity/physics -- see the
 	-- written report for why) =====
-	-- Studs of landing distance per 1.0 of multiplier -- distance = multiplier *
-	-- this, a direct deterministic mapping, no speed/angle/gravity physics
-	-- involved. 25 chosen so the sweet spot (2.0x) lands at 50 studs, matching
-	-- the middle of what the OLD physics-simulated flight actually produced for a
-	-- 2x release (35-65, noisily) -- same distances, now with zero variance.
-	DISTANCE_PER_MULTIPLIER = 25,
-	-- Seconds every flight takes, regardless of distance -- FIXED, not scaled by
-	-- how far the launch goes (a weak release just crosses less ground in the
-	-- same time, which incidentally makes a sweet-spot flight visibly faster --
-	-- free spectacle). Too short and the camera moment barely registers; too long
-	-- and repeated launches start to drag. 1.8s is enough time for the chase
-	-- camera and flight pose to read clearly at 60fps (~108 frames) while staying
-	-- short enough that back-to-back reps don't feel padded.
+	-- Studs of landing distance per 1.0 of multiplier, AT TIER 1 (see
+	-- SWING_TIER_DISTANCE_SCALE below for other tiers) -- distance = multiplier
+	-- * this * the active tier's scale, a direct deterministic mapping, no
+	-- speed/angle/gravity physics involved. 50 is derived, not guessed: a
+	-- tier-1 perfect (2.0x) launch must land on band 5 (luck 25) -- see the
+	-- written report for the arithmetic (it works back from the swing-to-
+	-- runway gap, ~14.26 studs at the sweet-spot phase, plus the target
+	-- band's stud range, to this number).
+	DISTANCE_PER_MULTIPLIER = 50,
+	-- Seconds a flight takes AT THE BASE reference distance (DISTANCE_PER_
+	-- MULTIPLIER * SWEET_SPOT_MULTIPLIER, i.e. a tier-1 perfect launch) -- see
+	-- FLIGHT_DURATION_EXPONENT below for how every OTHER distance (other
+	-- tiers, other release timings) scales off this one anchor point. 1.8s is
+	-- enough time for the chase camera and flight pose to read clearly at
+	-- 60fps (~108 frames) while staying short enough that back-to-back reps
+	-- don't feel padded -- unchanged reasoning from before tiers existed,
+	-- just now describing one specific point on a curve instead of a flat
+	-- constant.
 	FLIGHT_DURATION_SECONDS = 1.8,
+	-- Exponent duration scales BY relative to distance: duration =
+	-- FLIGHT_DURATION_SECONDS * (distance / baseDistance) ^ this, where
+	-- baseDistance is the tier-1 perfect-launch distance above. 1.0 would
+	-- hold SPEED constant across every tier -- a tier-11 perfect launch
+	-- (14.8x farther) would take 14.8x as long, ~27s, which drags badly. 0.0
+	-- would hold DURATION constant regardless of distance -- the same
+	-- tier-11 flight would cross ~1480 studs in the same 1.8s as tier 1's
+	-- 100 studs, over 800 studs/sec, reading as a teleport, not a flight.
+	-- 0.5 (square root) is the middle ground: speed still climbs
+	-- noticeably with distance (a bigger tier reads as more powerful, ~55
+	-- studs/sec at tier 1 up to ~214 studs/sec at tier 11), but duration
+	-- grows far slower than distance does -- that same 14.8x-farther tier-11
+	-- flight takes only ~3.8x as long (~6.9s): long enough to register as a
+	-- big flight without dragging.
+	FLIGHT_DURATION_EXPONENT = 0.5,
 	-- Peak arc height as a FRACTION of that flight's total distance (not a fixed
 	-- stud value) -- a bigger release automatically gets a proportionally
 	-- bigger, more dramatic arc, which is also exactly what the camera's
@@ -155,6 +180,54 @@ local LaunchConfig: LaunchConfig = {
 	-- -- see ReplicatedStorage/Config/LuckCurve.luau. The road is now as long
 	-- as the generated curve says it is (#LuckCurve.VALUES bands), not a fixed
 	-- number tuned by hand.
+
+	-- ===== Mystery box (after landing, before reset -- see LaunchServer's
+	-- onBoxPress) =====
+	-- Probability [0,1] each press DOUBLES the luck and lets the player press
+	-- again, instead of opening the box. The remaining probability (1 -
+	-- this) OPENS the box and ends the sequence with whatever luck it
+	-- currently holds -- there is no downside branch, only "double and
+	-- continue" or "resolve now." Raise this and doubles get more common
+	-- (longer average chains, bigger typical payouts, more variance); lower
+	-- it and most boxes resolve in one or two presses.
+	BOX_DOUBLE_CHANCE = 0.55,
+	-- Seconds between a press being ACCEPTED and its result (open or double)
+	-- reaching the client. This one number does two jobs: it's the "beat"
+	-- that makes a press feel weighed rather than instant, and it IS the rate
+	-- limit -- the server does not even evaluate the next press until this
+	-- delay has fully elapsed (see onBoxPress's `pending` guard), so spamming
+	-- the button faster than a human can never yields more than one roll per
+	-- this many seconds, script or not.
+	BOX_ROLL_DELAY_SECONDS = 0.4,
+
+	-- ===== Swing tiers (scaling only -- see the written report; NOTHING reads
+	-- or writes this from a purchase/upgrade flow yet, there is no such system
+	-- in this pass) =====
+	-- Which tier is currently active, read once per launch by onRelease.
+	-- HARD-CODED to 1 -- change this number BY HAND, right here, to test any
+	-- other tier's distance/duration until a real upgrade system exists to
+	-- read/write it instead.
+	ACTIVE_SWING_TIER = 1,
+	-- One distance multiplier per swing tier -- ACTIVE_SWING_TIER indexes
+	-- straight into this (tier 1 reads index 1, tier 11 reads index 11; Luau
+	-- arrays are 1-indexed, so tier number IS the index, no off-by-one).
+	-- Applied on top of DISTANCE_PER_MULTIPLIER * multiplier, before
+	-- ARC_HEIGHT_FRACTION/duration -- everything downstream (arc height,
+	-- camera pull-back, flight duration) already scales off the resulting
+	-- distance, so scaling distance here is the ONLY change needed to make a
+	-- whole flight bigger. Bands themselves stay uniform length -- all of the
+	-- progression lives in this array, not in the road's geometry. Tier 1 is
+	-- fixed at 1.0x by definition (the reference DISTANCE_PER_MULTIPLIER/
+	-- FLIGHT_DURATION_SECONDS are both anchored to it); tiers 2-11 were each
+	-- derived by picking the reference game's target luck value, finding the
+	-- band on THIS game's generated curve (see LuckCurve.luau) closest to
+	-- that target, then solving for the scale that lands a perfect (2.0x)
+	-- launch safely inside that band's stud range -- see the written report
+	-- for the full table and the arithmetic behind each entry. Must stay
+	-- exactly 11 entries long (one per tier); tier 11 is deliberately tuned
+	-- to land just inside the LAST band on the road (see LuckCurve.VALUES),
+	-- not past it.
+	SWING_TIER_DISTANCE_SCALE = { 1.0, 3.0, 4.4, 6.4, 8.2, 9.2, 10.8, 11.6, 12.6, 13.8, 14.8 },
 }
 
 return LaunchConfig

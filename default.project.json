@@ -21,6 +21,9 @@
       "$path": "src/StarterGui"
     },
     "Workspace": {
+      "$properties": {
+        "StreamingEnabled": false
+      },
       "Baseplate": {
         "$className": "Part",
         "$properties": {
