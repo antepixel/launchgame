@@ -12,24 +12,26 @@
 -- repeated, formulaic set of parts, which is exactly what a loop is for rather
 -- than hand-copying dozens of near-identical JSON blocks.
 --
--- ONE LABEL PER BAND (this pass): the separate finer-grained marker grid from
--- the previous pass is gone -- each band carries exactly one number, placed
--- directly on it, counting 5/10/15/20... by LABEL INDEX, not by real stud
--- distance (see RUNWAY_LABEL_INCREMENT's comment in LaunchConfig).
+-- ONE LABEL PER BAND: each band carries exactly one number, placed directly
+-- on it -- that number IS LuckCurve.VALUES[i + 1], the generated luck curve
+-- (see LuckCurve.luau), formatted for readability. Band COUNT is no longer
+-- authored anywhere either: this loop runs to #LuckCurve.VALUES, whatever
+-- that currently is.
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
+local RunwayGeometry = require(ReplicatedStorage.Config.RunwayGeometry)
+local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
 
 local swingPivot = Workspace:WaitForChild("SwingPivot") :: BasePart
-local baseplate = Workspace:WaitForChild("Baseplate") :: BasePart
 
 -- The flight always travels in -Z (see LaunchServer.server.luau's
 -- launchDirection) -- a fixed fact about this world's layout, not recomputed
 -- here. The runway picks up exactly where the (shrunk/widened) support platform
--- ends, read from the Baseplate part itself rather than a second hardcoded
--- number that would have to be kept in sync with default.project.json by hand.
-local RUNWAY_START_Z = baseplate.Position.Z - baseplate.Size.Z / 2
+-- ends -- see RunwayGeometry.luau, also read by LaunchServer so the band a
+-- landing scores against is always the band physically built here.
+local RUNWAY_START_Z = RunwayGeometry.RUNWAY_START_Z
 local RUNWAY_X = swingPivot.Position.X
 local RUNWAY_TOP_Y = 0 -- matches the baseplate's own top surface height
 
@@ -48,7 +50,15 @@ runwayFolder.Parent = Workspace
 -- applied to a sub-region of the band instead of a whole separate part.
 local LABEL_SQUARE_FRACTION = LaunchConfig.RUNWAY_BAND_LENGTH_STUDS / LaunchConfig.RUNWAY_WIDTH_STUDS
 
-for i = 0, LaunchConfig.RUNWAY_BAND_COUNT - 1 do
+-- Colours repeat every COLOUR_CYCLE_LENGTH bands rather than spreading one hue
+-- rotation across the whole (now much longer) road -- a single rotation over
+-- ~74 bands would put neighbouring bands within a hue or two of each other,
+-- reading as a slow gradient instead of a sequence of distinct colours. Five
+-- repeating hues keeps every band visually distinct from its immediate
+-- neighbours no matter how long the generated curve gets.
+local COLOUR_CYCLE_LENGTH = 5
+
+for i = 0, #LuckCurve.VALUES - 1 do
 	local band = Instance.new("Part")
 	band.Name = string.format("RunwayBand%02d", i + 1)
 	band.Anchored = true
@@ -65,17 +75,18 @@ for i = 0, LaunchConfig.RUNWAY_BAND_COUNT - 1 do
 
 	-- FULL SATURATION: Color3.fromHSV(hue, 1, 1) is the purest, most intense
 	-- version of every hue there is -- saturation 1 means no white mixed in (no
-	-- pastel), value 1 means no black mixed in (no muddy/dark). Hue cycles
-	-- exactly once, linearly, across the whole runway; band i gets a single
-	-- flat, solid colour -- not a gradient within a band -- so each one reads
-	-- as a distinct band.
-	local hue = i / LaunchConfig.RUNWAY_BAND_COUNT
+	-- pastel), value 1 means no black mixed in (no muddy/dark). Band i gets a
+	-- single flat, solid colour -- not a gradient within a band -- so each one
+	-- reads as a distinct band; the hue itself repeats every
+	-- COLOUR_CYCLE_LENGTH bands (see above) instead of spanning the full road.
+	local hue = (i % COLOUR_CYCLE_LENGTH) / COLOUR_CYCLE_LENGTH
 	band.Color = Color3.fromHSV(hue, 1, 1)
 	band.Parent = runwayFolder
 
-	-- ONE NUMBER PER BAND, counting by LABEL INDEX (5, 10, 15, 20...), not by
-	-- this band's actual stud length -- see RUNWAY_LABEL_INCREMENT's comment.
-	local distance = (i + 1) * LaunchConfig.RUNWAY_LABEL_INCREMENT
+	-- ONE NUMBER PER BAND: this band's luck value from the generated curve,
+	-- formatted the same way the HUD formats it on landing (see
+	-- LuckCurve.formatLuck) so the two never disagree on how a number reads.
+	local luck = LuckCurve.VALUES[i + 1]
 
 	local surfaceGui = Instance.new("SurfaceGui")
 	surfaceGui.Name = "DistanceLabel"
@@ -99,6 +110,6 @@ for i = 0, LaunchConfig.RUNWAY_BAND_COUNT - 1 do
 	label.TextColor3 = Color3.new(0, 0, 0)
 	label.TextStrokeColor3 = Color3.new(1, 1, 1)
 	label.TextStrokeTransparency = 0
-	label.Text = tostring(distance)
+	label.Text = LuckCurve.formatLuck(luck)
 	label.Parent = surfaceGui
 end

@@ -24,9 +24,7 @@ export type LaunchConfig = {
 	SWEET_SPOT_PHASE: number,
 	SWEET_SPOT_WIDTH: number,
 	RUNWAY_BAND_LENGTH_STUDS: number,
-	RUNWAY_BAND_COUNT: number,
 	RUNWAY_WIDTH_STUDS: number,
-	RUNWAY_LABEL_INCREMENT: number,
 }
 
 local LaunchConfig: LaunchConfig = {
@@ -144,13 +142,8 @@ local LaunchConfig: LaunchConfig = {
 	-- RunwayBuilder.server.luau -- generated at runtime, not hand-authored in the
 	-- project file, since it's a repeated/formulaic set of parts) =====
 	-- Studs each COLOURED band spans along the flight direction (how far you
-	-- travel while one band is under you). Kept as-is this pass -- the length is
-	-- good; only the width and the labeling scheme changed.
+	-- travel while one band is under you). Unchanged this pass.
 	RUNWAY_BAND_LENGTH_STUDS = 20,
-	-- How many coloured bands the runway has, one full colour cycle across all
-	-- of them. 10 * 20 = 200 studs of runway, still 4x the 50-stud maximum
-	-- possible landing distance ("well past" it).
-	RUNWAY_BAND_COUNT = 10,
 	-- Studs wide (crosswise, perpendicular to the flight direction) each band
 	-- is -- and, with the support platform below, the whole playable width.
 	-- Quadrupled from the original 24: the flight path itself never drifts
@@ -158,13 +151,10 @@ local LaunchConfig: LaunchConfig = {
 	-- trajectory), so this was never load-bearing for containing the flight --
 	-- it was just too narrow to feel like an open space rather than a strip.
 	RUNWAY_WIDTH_STUDS = 96,
-	-- The number each successive band's label counts up by -- 5, 10, 15, 20...
-	-- -- regardless of RUNWAY_BAND_LENGTH_STUDS. This is a plain label index
-	-- multiplier now, not a stud measurement (it used to be, back when bands
-	-- were shorter and their own length WAS the distance shown -- see the
-	-- written report for why that stopped being true): band i's label is
-	-- (i+1) * this, full stop, whatever the bands' actual physical length is.
-	RUNWAY_LABEL_INCREMENT = 5,
+	-- Band COUNT and each band's LUCK value are no longer authored here at all
+	-- -- see ReplicatedStorage/Config/LuckCurve.luau. The road is now as long
+	-- as the generated curve says it is (#LuckCurve.VALUES bands), not a fixed
+	-- number tuned by hand.
 }
 
 return LaunchConfig

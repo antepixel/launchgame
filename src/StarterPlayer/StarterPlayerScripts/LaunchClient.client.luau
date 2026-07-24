@@ -32,6 +32,7 @@ local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
+local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -154,6 +155,7 @@ local flightDuration = 0
 local flightDistance = 0
 local flightArcHeight = 0
 local flightStartPosition = Vector3.zero
+local flightLuck = 0
 
 -- True once this client has been told (via RidingAssigned) that it's the one
 -- shared rider -- gates whether THIS client positions its own character on the
@@ -340,12 +342,13 @@ end)
 -- the server's OWN (earlier-starting) timeline had already finished and told
 -- the server to reset, occasionally letting a second release overwrite the
 -- first flight's still-incomplete display (see doRelease's guard above too).
-flightStartedRemote.OnClientEvent:Connect(function(distance: number, archHeight: number, duration: number, startPosition: Vector3, startTime: number)
+flightStartedRemote.OnClientEvent:Connect(function(distance: number, archHeight: number, duration: number, startPosition: Vector3, startTime: number, luck: number)
 	flightDistance = distance
 	flightArcHeight = archHeight
 	flightDuration = duration
 	flightStartPosition = startPosition
 	flightStartTime = startTime
+	flightLuck = luck
 	flightActive = true
 	-- "Pull back as the arc gets bigger": computed ONCE per flight from this
 	-- flight's own arc height, not re-adjusted mid-flight.
@@ -359,6 +362,7 @@ end)
 resetReadyRemote.OnClientEvent:Connect(function()
 	canRelease = true
 	distanceLabel.Text = "Time your release!"
+	distanceLabel.TextColor3 = Color3.new(1, 1, 1)
 end)
 
 ridingAssignedRemote.OnClientEvent:Connect(function()
@@ -408,14 +412,30 @@ RunService.RenderStepped:Connect(function()
 			character:PivotTo(trajectoryCFrame(flightStartPosition, flightDistance, flightArcHeight, u))
 		end
 
+		if u >= 1 then
+			-- Landed: swap the live countup for the final result -- distance AND
+			-- the luck it earned, together, since the luck IS the result of the
+			-- launch (see the written report). Server already computed luck at
+			-- release from the same landing Z the character is now standing at
+			-- (see LaunchServer's bandLuckForLandingZ) -- this is purely display,
+			-- nothing here can change or re-derive the value. Held on screen for
+			-- the rest of RESET_DELAY (unchanged), same as the plain distance
+			-- readout was before.
+			if flightLuck > 0 then
+				distanceLabel.Text = string.format("%.1f studs  --  Luck x%s!", flightDistance, LuckCurve.formatLuck(flightLuck))
+				distanceLabel.TextColor3 = Color3.new(1, 0.85, 0.2)
+			else
+				distanceLabel.Text = string.format("%.1f studs  --  No luck (short of the road)", flightDistance)
+				distanceLabel.TextColor3 = Color3.new(1, 1, 1)
+			end
+			flightActive = false
+			return
+		end
+
 		-- Count the distance UP live -- horizontal progress is exactly linear in
 		-- u for this trajectory, so this number always matches exactly how far
 		-- along the flight the character visibly is, not a decoupled animation.
 		distanceLabel.Text = string.format("%.1f studs", flightDistance * u)
-
-		if u >= 1 then
-			flightActive = false
-		end
 		return
 	end
 

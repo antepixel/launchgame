@@ -22,6 +22,8 @@ local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
+local RunwayGeometry = require(ReplicatedStorage.Config.RunwayGeometry)
+local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
 
 Workspace.Gravity = LaunchConfig.GRAVITY
 
@@ -42,8 +44,8 @@ end
 local releaseRemote = makeRemote("Release")
 -- Server -> client: fires ONCE, at release, carrying the FULL deterministic
 -- flight description (distance, arc height, duration, start TIME, start
--- position) so the client can independently drive its camera and live distance
--- counter for the whole flight without any further messages -- see
+-- position, luck) so the client can independently drive its camera and live
+-- distance counter for the whole flight without any further messages -- see
 -- LaunchClient.client.luau.
 local flightStartedRemote = makeRemote("FlightStarted")
 local resetReadyRemote = makeRemote("ResetReady")
@@ -108,6 +110,43 @@ local function trajectoryPosition(startPosition: Vector3, distance: number, arch
 	local horizontal = startPosition + Vector3.new(0, 0, -distance * u)
 	local heightOffset = archHeight * 4 * u * (1 - u)
 	return horizontal + Vector3.new(0, heightOffset, 0)
+end
+
+-- ===== Rainbow band -> luck =====
+-- Band index (0-based) a world Z position falls under, using the SAME
+-- RunwayGeometry.RUNWAY_START_Z and LaunchConfig.RUNWAY_BAND_LENGTH_STUDS that
+-- RunwayBuilder used to physically place the coloured parts (see
+-- RunwayGeometry.luau), then looked up in the SAME LuckCurve.VALUES table
+-- RunwayBuilder read to label them (see LuckCurve.luau) -- not a re-derived
+-- approximation anywhere in this chain, the literal same numbers throughout.
+-- That's what guarantees the band awarded here is the band the player is
+-- actually standing on when they land, not just usually the same one.
+--
+-- BOUNDARY RULE: band i owns distance-from-start in the HALF-OPEN interval
+-- [i*L, (i+1)*L) -- landing exactly on a seam always resolves to the FARTHER
+-- band. Floor division gives this for free with no special-casing: reaching a
+-- boundary means you've travelled the full length of the nearer band, so you
+-- get the one whose front edge you're now standing on.
+--
+-- SHORT of band 0 (negative distance-from-start -- landed on the platform,
+-- before the runway starts): 0 luck, not a floor/minimum. This is a
+-- deliberate whiff signal -- a badly-timed release should read as "no luck,"
+-- distinct from barely clipping band 1. A minimum would blur that line and
+-- blunt the sweet-spot's whole point of rewarding precision.
+--
+-- PAST the last band (distance-from-start >= #LuckCurve.VALUES * L): still
+-- impossible today (50-stud max distance vs. a curve now ~1480 studs long --
+-- see the written report) but must survive the road shrinking or distances
+-- growing later. Clamped to the LAST band -- never an out-of-range index, and
+-- never worse to travel farther than to travel less far.
+local function bandLuckForLandingZ(landingZ: number): number
+	local distanceFromStart = RunwayGeometry.RUNWAY_START_Z - landingZ
+	if distanceFromStart < 0 then
+		return 0
+	end
+	local index = math.floor(distanceFromStart / LaunchConfig.RUNWAY_BAND_LENGTH_STUDS)
+	index = math.clamp(index, 0, #LuckCurve.VALUES - 1)
+	return LuckCurve.VALUES[index + 1]
 end
 
 -- ===== Flight pose: a cheap static "flailing" silhouette (arms out/up, legs
@@ -192,6 +231,7 @@ type Flight = {
 	archHeight: number,
 	startTime: number,
 	poseJoints: PoseJoints,
+	luck: number,
 }
 local activeFlight: Flight? = nil
 
@@ -316,6 +356,14 @@ local function onRelease(player: Player)
 	rootPart.AssemblyLinearVelocity = Vector3.zero
 	rootPart.AssemblyAngularVelocity = Vector3.zero
 
+	-- Landing is fully known already, same as distance/archHeight above -- reuse
+	-- the EXACT trajectoryPosition call (u = 1) that the Heartbeat loop below
+	-- will use to actually place the character at landing, so the Z fed into
+	-- bandLuckForLandingZ can never diverge from the Z the character actually
+	-- ends up standing at.
+	local landingPosition = trajectoryPosition(startPosition, distance, archHeight, 1)
+	local luck = bandLuckForLandingZ(landingPosition.Z)
+
 	local poseJoints = applyFlightPose(character)
 
 	-- BUG FIX (see written report): this used to be os.clock(), the SERVER's
@@ -343,9 +391,10 @@ local function onRelease(player: Player)
 		archHeight = archHeight,
 		startTime = startTime,
 		poseJoints = poseJoints,
+		luck = luck,
 	}
 
-	flightStartedRemote:FireClient(player, distance, archHeight, LaunchConfig.FLIGHT_DURATION_SECONDS, startPosition, startTime)
+	flightStartedRemote:FireClient(player, distance, archHeight, LaunchConfig.FLIGHT_DURATION_SECONDS, startPosition, startTime, luck)
 end
 
 releaseRemote.OnServerEvent:Connect(onRelease)
