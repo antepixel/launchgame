@@ -28,7 +28,6 @@ export type LaunchConfig = {
 	RUNWAY_WIDTH_STUDS: number,
 	BOX_DOUBLE_CHANCE: number,
 	BOX_ROLL_DELAY_SECONDS: number,
-	ACTIVE_SWING_TIER: number,
 	SWING_TIER_DISTANCE_SCALE: { number },
 }
 
@@ -200,18 +199,18 @@ local LaunchConfig: LaunchConfig = {
 	-- this many seconds, script or not.
 	BOX_ROLL_DELAY_SECONDS = 0.4,
 
-	-- ===== Swing tiers (scaling only -- see the written report; NOTHING reads
-	-- or writes this from a purchase/upgrade flow yet, there is no such system
-	-- in this pass) =====
-	-- Which tier is currently active, read once per launch by onRelease.
-	-- HARD-CODED to 1 -- change this number BY HAND, right here, to test any
-	-- other tier's distance/duration until a real upgrade system exists to
-	-- read/write it instead.
-	ACTIVE_SWING_TIER = 1,
-	-- One distance multiplier per swing tier -- ACTIVE_SWING_TIER indexes
-	-- straight into this (tier 1 reads index 1, tier 11 reads index 11; Luau
-	-- arrays are 1-indexed, so tier number IS the index, no off-by-one).
-	-- Applied on top of DISTANCE_PER_MULTIPLIER * multiplier, before
+	-- ===== Swing tiers (scaling only -- see the written report). Which tier
+	-- is ACTIVE is per-player state now, owned by PlayerProfile.luau (see
+	-- PlayerProfile.getSwingTier/buyNextTier and ShopConfig.luau for what
+	-- each tier costs) -- there used to be a single hard-coded
+	-- ACTIVE_SWING_TIER read here by every launch; it's gone, and
+	-- LaunchServer.server.luau's onRelease reads the releasing player's own
+	-- tier instead. This array itself is UNCHANGED -- still just the
+	-- distance-feel curve, nothing about who owns which tier. =====
+	-- One distance multiplier per swing tier -- indexed straight by tier
+	-- number (tier 1 reads index 1, tier 11 reads index 11; Luau arrays are
+	-- 1-indexed, so tier number IS the index, no off-by-one). Applied on top
+	-- of DISTANCE_PER_MULTIPLIER * multiplier, before
 	-- ARC_HEIGHT_FRACTION/duration -- everything downstream (arc height,
 	-- camera pull-back, flight duration) already scales off the resulting
 	-- distance, so scaling distance here is the ONLY change needed to make a

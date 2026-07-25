@@ -25,11 +25,18 @@ local Players = game:GetService("Players")
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local RunwayGeometry = require(ReplicatedStorage.Config.RunwayGeometry)
 local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
+local ShopConfig = require(ReplicatedStorage.Config.ShopConfig)
 local SlimeConfig = require(ReplicatedStorage.Config.SlimeConfig)
 -- Server-only siblings (see each module's own header for why these live in
 -- ServerScriptService, not ReplicatedStorage, specifically).
 local SlimeRoll = require(ServerScriptService.SlimeRoll)
-local SlimeCollection = require(ServerScriptService.SlimeCollection)
+-- Per-player base + income + collection + persistence + swing tier (see
+-- PlayerProfile.luau). Reads here are scoped to exactly what a launch needs
+-- to know (getSwingTier) and the two reveal-time calls from before
+-- (recordSeen/placeSlime) -- nothing about the reveal's or the swing's own
+-- timing/sequencing changes; see applySwingVisualForTier below for the one
+-- new piece of state this file itself now owns (the seat's cosmetic size).
+local PlayerProfile = require(ServerScriptService.PlayerProfile)
 
 Workspace.Gravity = LaunchConfig.GRAVITY
 
@@ -81,6 +88,27 @@ local slimeRevealedRemote = makeRemote("SlimeRevealed")
 local ridingAssignedRemote = makeRemote("RidingAssigned")
 
 local swingPivot = Workspace:WaitForChild("SwingPivot") :: BasePart
+
+-- ===== Swing tier visual (new this pass): a purely cosmetic size scale on
+-- the SEAT only -- see ShopConfig.SWING_VISUAL_SCALE_MIN/MAX and the
+-- written report for why seat-only, size-only was chosen as "something
+-- simple" for now. Deliberately NOT touching swingTheta/swingSeatPosition
+-- below (still the exact same phase math, still the ONLY thing that decides
+-- the seat's actual position every frame) -- this only ever writes .Size,
+-- driven off whoever the CURRENT rider is, since the swing itself is still
+-- the single shared structure it always was. =====
+local swingSeatPart = Workspace:WaitForChild("SwingSeat") :: BasePart
+local baseSwingSeatSize = swingSeatPart.Size
+
+local function swingVisualScaleForTier(tier: number): number
+	local tierCount = #LaunchConfig.SWING_TIER_DISTANCE_SCALE
+	local t = if tierCount <= 1 then 0 else (tier - 1) / (tierCount - 1)
+	return ShopConfig.SWING_VISUAL_SCALE_MIN + (ShopConfig.SWING_VISUAL_SCALE_MAX - ShopConfig.SWING_VISUAL_SCALE_MIN) * t
+end
+
+local function applySwingVisualForTier(tier: number)
+	swingSeatPart.Size = baseSwingSeatSize * swingVisualScaleForTier(tier)
+end
 
 -- ===== Swing math (unchanged from the previous pass) =====
 
@@ -287,6 +315,9 @@ local function clearActiveRider()
 	activeFlight = nil
 	activeBox = nil
 	state = "riding"
+	-- Nobody's riding -- the shared swing shows its baseline (tier 1) look
+	-- rather than holding on to whatever the last rider's tier looked like.
+	applySwingVisualForTier(1)
 end
 
 -- Shared by both the 0-luck landing path (no box) and the box's own "opened"
@@ -351,6 +382,9 @@ local function setupCharacter(player: Player, character: Model)
 		if rootPart then
 			rootPart.Anchored = true
 		end
+		-- Show THIS rider's own tier the moment they claim the seat -- see
+		-- applySwingVisualForTier above.
+		applySwingVisualForTier(PlayerProfile.getSwingTier(player))
 		ridingAssignedRemote:FireClient(player)
 	end
 end
@@ -409,12 +443,19 @@ local function onRelease(player: Player)
 	local phase = swingPhase()
 	local multiplier = launchMultiplier(phase)
 	-- Swing tier scaling: a plain multiplier on top of the usual timing-based
-	-- distance, read once here from the (currently hard-coded, see
-	-- LaunchConfig.ACTIVE_SWING_TIER) active tier. Bands themselves never
-	-- change length or count -- this is the ONLY place tier progression
-	-- enters the flight, which is what keeps it from having to touch the
-	-- trajectory formula, the camera, or the band curve at all.
-	local tierScale = LaunchConfig.SWING_TIER_DISTANCE_SCALE[LaunchConfig.ACTIVE_SWING_TIER]
+	-- distance, read once here from THIS PLAYER's OWN tier (see
+	-- PlayerProfile.getSwingTier/buyNextTier -- the old server-wide,
+	-- hand-edited LaunchConfig.ACTIVE_SWING_TIER is gone). Bands themselves
+	-- never change length or count -- this is the ONLY place tier
+	-- progression enters the flight, which is what keeps it from having to
+	-- touch the trajectory formula, the camera, or the band curve at all.
+	local riderTier = PlayerProfile.getSwingTier(player)
+	local tierScale = LaunchConfig.SWING_TIER_DISTANCE_SCALE[riderTier]
+	-- Also refresh the seat's cosmetic scale here -- covers a purchase made
+	-- while already sitting on the swing (setupCharacter only stamps this
+	-- once, at the moment the seat is claimed) showing up by the very next
+	-- launch, not just the next time someone re-claims the seat.
+	applySwingVisualForTier(riderTier)
 	local distance = LaunchConfig.DISTANCE_PER_MULTIPLIER * multiplier * tierScale
 	local archHeight = distance * LaunchConfig.ARC_HEIGHT_FRACTION
 	-- Flight duration now scales WITH distance instead of staying fixed --
@@ -493,10 +534,8 @@ Players.PlayerRemoving:Connect(function(player)
 	if player == activePlayer then
 		clearActiveRider()
 	end
-	-- Collection tracking is per-player regardless of rider status -- frees
-	-- their in-memory "seen" set so it doesn't outlive the connection (see
-	-- SlimeCollection.cleanup's own comment for why this matters).
-	SlimeCollection.cleanup(player)
+	-- PlayerProfile owns its own PlayerRemoving connection (save + base
+	-- teardown, see PlayerProfile.luau) -- nothing to do here anymore.
 end)
 
 -- This loop used to ALSO reposition the rider every Heartbeat while "riding"
@@ -634,7 +673,7 @@ local function onBoxPress(player: Player)
 			-- in a ServerScriptService module a client cannot even require,
 			-- let alone call.
 			local slime = SlimeRoll.rollSlime(finalLuck)
-			local isNew = SlimeCollection.recordSeen(landedPlayer, slime.globalIndex)
+			local isNew = PlayerProfile.recordSeen(landedPlayer, slime.globalIndex)
 
 			-- THE SECOND BEAT: the box's own "OPENED!" is already the first
 			-- (see BOX_ROLL_DELAY_SECONDS) -- this is a SEPARATE delay before
@@ -647,6 +686,12 @@ local function onBoxPress(player: Player)
 				if landedPlayer.Parent then
 					slimeRevealedRemote:FireClient(landedPlayer, slime.globalIndex, isNew)
 				end
+				-- THE BASE: handed off at the exact moment of the reveal, not
+				-- before -- see PlayerProfile.receiveSlime. Auto-placed if a
+				-- slot is free, otherwise added to that player's inventory
+				-- (never discarded -- see PlayerProfile.luau and the written
+				-- report); nothing here needs the return value.
+				PlayerProfile.receiveSlime(landedPlayer, slime)
 				scheduleReset(landedPlayer, landedCharacter)
 			end)
 		else
