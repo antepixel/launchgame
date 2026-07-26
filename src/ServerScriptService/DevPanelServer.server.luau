@@ -87,6 +87,9 @@ local function onDevAction(player: Player, actionName: string, payload: any)
 	elseif actionName == "SetSwingTier" and typeof(payload) == "number" then
 		PlayerProfile.devSetSwingTier(player, payload)
 		logAction(player, string.format("set swing tier to: %d", payload))
+	elseif actionName == "SetSlimeLevel" and typeof(payload) == "table" and typeof(payload.slot) == "number" and typeof(payload.level) == "number" then
+		PlayerProfile.devSetSlimeLevel(player, payload.slot, payload.level)
+		logAction(player, string.format("set slot %d's slime level to: %d", payload.slot, payload.level))
 	elseif actionName == "ClearBase" then
 		PlayerProfile.devClearBase(player)
 		logAction(player, "cleared base (all 10 slots emptied)")

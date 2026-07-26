@@ -17,6 +17,7 @@ local HttpService = game:GetService("HttpService")
 local InventoryConfig = require(ReplicatedStorage.Config.InventoryConfig)
 local MoneyFormat = require(ReplicatedStorage.Config.MoneyFormat)
 local SlimeData = require(ReplicatedStorage.Config.SlimeData)
+local SlimeUpgrade = require(ReplicatedStorage.Config.SlimeUpgrade)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -29,6 +30,13 @@ local removeSlimeRemote = remotesFolder:WaitForChild("RemoveSlime") :: RemoteEve
 local sellSlimeRemote = remotesFolder:WaitForChild("SellSlime") :: RemoteEvent
 local inventoryActionResultRemote = remotesFolder:WaitForChild("InventoryActionResult") :: RemoteEvent
 
+-- Separate remotes folder (see UpgradeServer.server.luau) -- upgrading is its
+-- own system, not a fourth inventory action, same reasoning as the swing shop
+-- getting its own ShopRemotes folder instead of living under this one.
+local upgradeRemotesFolder = ReplicatedStorage:WaitForChild("UpgradeRemotes")
+local upgradeSlimeRemote = upgradeRemotesFolder:WaitForChild("UpgradeSlime") :: RemoteEvent
+local upgradeResultRemote = upgradeRemotesFolder:WaitForChild("UpgradeResult") :: RemoteEvent
+
 local function incomeText(perSecond: number): string
 	return MoneyFormat.format(perSecond) .. "/s"
 end
@@ -36,6 +44,12 @@ end
 local function sellValue(perSecond: number, quantity: number): number
 	return perSecond * InventoryConfig.SELL_VALUE_INCOME_MULTIPLIER * quantity
 end
+
+-- The three buy buttons' nominal level counts -- capped further per-button
+-- below (near MAX_LEVEL, an actual purchase buys fewer) but this is what
+-- gets sent to the server; PlayerProfile.upgradeSlime does its own capping
+-- regardless of what's sent, so this is purely "which button is this."
+local UPGRADE_BUTTON_COUNTS = { 1, 10, 100 }
 
 -- ===== UI shell =====
 local screenGui = Instance.new("ScreenGui")
@@ -65,7 +79,7 @@ local panel = Instance.new("Frame")
 panel.Name = "InventoryPanel"
 panel.AnchorPoint = Vector2.new(0.5, 0.5)
 panel.Position = UDim2.new(0.5, 0, 0.5, 0)
-panel.Size = UDim2.new(0, 520, 0, 560)
+panel.Size = UDim2.new(0, 560, 0, 680)
 panel.BackgroundColor3 = Color3.new(0.06, 0.06, 0.09)
 panel.BackgroundTransparency = 0.05
 panel.BorderSizePixel = 0
@@ -124,7 +138,7 @@ closeButtonCorner.Parent = closeButton
 -- inventory stack doesn't).
 local baseSectionLabel = Instance.new("TextLabel")
 baseSectionLabel.AnchorPoint = Vector2.new(0, 0)
-baseSectionLabel.Position = UDim2.new(0.04, 0, 0.13, 0)
+baseSectionLabel.Position = UDim2.new(0.04, 0, 0.1, 0)
 baseSectionLabel.Size = UDim2.new(0.92, 0, 0, 20)
 baseSectionLabel.BackgroundTransparency = 1
 baseSectionLabel.Font = Enum.Font.GothamBold
@@ -137,8 +151,8 @@ baseSectionLabel.Parent = panel
 
 local baseListFrame = Instance.new("ScrollingFrame")
 baseListFrame.AnchorPoint = Vector2.new(0.5, 0)
-baseListFrame.Position = UDim2.new(0.5, 0, 0.17, 0)
-baseListFrame.Size = UDim2.new(1, -24, 0.33, 0)
+baseListFrame.Position = UDim2.new(0.5, 0, 0.14, 0)
+baseListFrame.Size = UDim2.new(1, -24, 0.46, 0)
 baseListFrame.BackgroundColor3 = Color3.new(0.1, 0.1, 0.12)
 baseListFrame.BorderSizePixel = 0
 baseListFrame.ScrollBarThickness = 6
@@ -159,7 +173,7 @@ baseListLayout.Parent = baseListFrame
 -- pass implements; no other sort options were added.
 local invSectionLabel = Instance.new("TextLabel")
 invSectionLabel.AnchorPoint = Vector2.new(0, 0)
-invSectionLabel.Position = UDim2.new(0.04, 0, 0.52, 0)
+invSectionLabel.Position = UDim2.new(0.04, 0, 0.62, 0)
 invSectionLabel.Size = UDim2.new(0.92, 0, 0, 20)
 invSectionLabel.BackgroundTransparency = 1
 invSectionLabel.Font = Enum.Font.GothamBold
@@ -172,8 +186,8 @@ invSectionLabel.Parent = panel
 
 local invListFrame = Instance.new("ScrollingFrame")
 invListFrame.AnchorPoint = Vector2.new(0.5, 0)
-invListFrame.Position = UDim2.new(0.5, 0, 0.56, 0)
-invListFrame.Size = UDim2.new(1, -24, 0.42, 0)
+invListFrame.Position = UDim2.new(0.5, 0, 0.66, 0)
+invListFrame.Size = UDim2.new(1, -24, 0.3, 0)
 invListFrame.BackgroundColor3 = Color3.new(0.1, 0.1, 0.12)
 invListFrame.BorderSizePixel = 0
 invListFrame.ScrollBarThickness = 6
@@ -187,16 +201,24 @@ invListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 invListLayout.Padding = UDim.new(0, 4)
 invListLayout.Parent = invListFrame
 
-local function makeSmallButton(parent: Instance, size: UDim2, position: UDim2, text: string, color: Color3, callback: () -> ()): TextButton
+-- `enabled` (default true) additionally gates input via Active -- setting it
+-- false is what makes an unaffordable/maxed upgrade button actually
+-- unclickable, not just dimmed-looking, since a modified client could
+-- otherwise still fire the click event on a "greyed out" button; the SERVER
+-- re-validates everything regardless (see PlayerProfile.upgradeSlime), so
+-- this is purely so a legitimate client can't even try.
+local function makeSmallButton(parent: Instance, size: UDim2, position: UDim2, text: string, color: Color3, callback: () -> (), enabled: boolean?): TextButton
+	local isEnabled = enabled ~= false
 	local button = Instance.new("TextButton")
 	button.AnchorPoint = Vector2.new(1, 0.5)
 	button.Position = position
 	button.Size = size
-	button.BackgroundColor3 = color
+	button.BackgroundColor3 = if isEnabled then color else Color3.new(0.22, 0.22, 0.25)
 	button.Font = Enum.Font.GothamBold
 	button.TextScaled = true
-	button.TextColor3 = Color3.new(1, 1, 1)
+	button.TextColor3 = if isEnabled then Color3.new(1, 1, 1) else Color3.new(0.55, 0.55, 0.58)
 	button.Text = text
+	button.Active = isEnabled
 	button.ZIndex = 10
 	button.Parent = parent
 
@@ -208,10 +230,16 @@ local function makeSmallButton(parent: Instance, size: UDim2, position: UDim2, t
 	return button
 end
 
-local function buildBaseRow(slotNumber: number, globalIndex: number?)
+-- One of the base's 10 slots -- level, current income, and the three
+-- upgrade buttons (+1/+10/+100), each showing the TOTAL cost of however many
+-- levels it will actually buy (capped at MAX_LEVEL -- see SlimeUpgrade.
+-- totalUpgradeCost) and greyed out if that cost exceeds `money` or the slime
+-- is already maxed. `money` is passed in (read once per refresh(), not per
+-- row) so every row's affordability check uses the exact same snapshot.
+local function buildBaseRow(slotNumber: number, globalIndex: number?, level: number, money: number)
 	local row = Instance.new("Frame")
 	row.LayoutOrder = slotNumber
-	row.Size = UDim2.new(1, 0, 0, 34)
+	row.Size = UDim2.new(1, 0, 0, 66)
 	row.BackgroundColor3 = Color3.new(0.12, 0.12, 0.15)
 	row.ZIndex = 10
 	row.Parent = baseListFrame
@@ -223,9 +251,9 @@ local function buildBaseRow(slotNumber: number, globalIndex: number?)
 	local slime = if globalIndex then SlimeData.SLIMES[globalIndex] else nil
 
 	local label = Instance.new("TextLabel")
-	label.AnchorPoint = Vector2.new(0, 0.5)
-	label.Position = UDim2.new(0.03, 0, 0.5, 0)
-	label.Size = UDim2.new(0.65, 0, 1, 0)
+	label.AnchorPoint = Vector2.new(0, 0)
+	label.Position = UDim2.new(0.03, 0, 0.04, 0)
+	label.Size = UDim2.new(0.94, 0, 0, 26)
 	label.BackgroundTransparency = 1
 	label.Font = Enum.Font.Gotham
 	label.TextScaled = true
@@ -235,11 +263,27 @@ local function buildBaseRow(slotNumber: number, globalIndex: number?)
 
 	if slime then
 		label.TextColor3 = slime.color
-		label.Text = string.format("Slot %d: %s -- %s", slotNumber, slime.name, incomeText(slime.incomePerSecond))
+		local currentIncome = SlimeUpgrade.incomeForLevel(slime.incomePerSecond, level)
+		label.Text = string.format("Slot %d: %s -- Lv %d -- %s", slotNumber, slime.name, level, incomeText(currentIncome))
 
-		makeSmallButton(row, UDim2.new(0.32, 0, 0.75, 0), UDim2.new(0.97, 0, 0.5, 0), "Remove", Color3.new(0.55, 0.4, 0.15), function()
+		makeSmallButton(row, UDim2.new(0.16, 0, 0.42, 0), UDim2.new(0.97, 0, 0.8, 0), "Remove", Color3.new(0.55, 0.4, 0.15), function()
 			removeSlimeRemote:FireServer(slotNumber)
 		end)
+
+		-- Three buy buttons, right-to-left: +100, +10, +1 -- same nominal
+		-- count/cost/enabled logic for all three, just a different requested
+		-- count and X position.
+		local buttonPositions = { 0.79, 0.55, 0.31 }
+		for i, requestedCount in UPGRADE_BUTTON_COUNTS do
+			local cost, actualCount = SlimeUpgrade.totalUpgradeCost(slime.incomePerSecond, level, requestedCount)
+			local atMax = actualCount <= 0
+			local affordable = not atMax and money >= cost
+			local text = if atMax then "MAX" else string.format("+%d\n(%s)", actualCount, MoneyFormat.format(cost))
+			local color = if atMax then Color3.new(0.35, 0.35, 0.38) else Color3.new(0.15, 0.55, 0.25)
+			makeSmallButton(row, UDim2.new(0.22, 0, 0.42, 0), UDim2.new(buttonPositions[i], 0, 0.8, 0), text, color, function()
+				upgradeSlimeRemote:FireServer(slotNumber, requestedCount)
+			end, affordable)
+		end
 	else
 		label.TextColor3 = Color3.new(0.5, 0.5, 0.55)
 		label.Text = string.format("Slot %d: Empty", slotNumber)
@@ -301,20 +345,27 @@ local function refresh()
 		end
 	end
 
+	local money = baseFolder:GetAttribute("Money")
+	if typeof(money) ~= "number" then
+		money = 0
+	end
+
 	local slotsJson = baseFolder:GetAttribute("Slots")
 	local slotsByNumber: { [number]: number } = {}
+	local levelsByNumber: { [number]: number } = {}
 	if typeof(slotsJson) == "string" and slotsJson ~= "" then
 		local ok, decoded = pcall(HttpService.JSONDecode, HttpService, slotsJson)
 		if ok and typeof(decoded) == "table" then
 			for _, entry in decoded do
 				if typeof(entry) == "table" and typeof(entry.slot) == "number" and typeof(entry.globalIndex) == "number" then
 					slotsByNumber[entry.slot] = entry.globalIndex
+					levelsByNumber[entry.slot] = if typeof(entry.level) == "number" then entry.level else 1
 				end
 			end
 		end
 	end
 	for slotNumber = 1, 10 do
-		buildBaseRow(slotNumber, slotsByNumber[slotNumber])
+		buildBaseRow(slotNumber, slotsByNumber[slotNumber], levelsByNumber[slotNumber] or 1, money)
 	end
 
 	local inventoryJson = baseFolder:GetAttribute("Inventory")
@@ -345,8 +396,22 @@ local function refresh()
 	end
 end
 
+-- Money changes every income tick (once a second, see PlayerProfile's income
+-- loop) whether or not this panel is even open -- rebuilding the whole list
+-- on every tick regardless would be pure waste while it's closed (affordability
+-- is only ever shown while the panel is visible; the open button already
+-- calls refresh() itself on open). Slots/Inventory changes are rare enough
+-- (only ever on an actual place/remove/sell/upgrade) that they're left
+-- rebuilding unconditionally.
+local function refreshIfVisible()
+	if panel.Visible then
+		refresh()
+	end
+end
+
 baseFolder:GetAttributeChangedSignal("Slots"):Connect(refresh)
 baseFolder:GetAttributeChangedSignal("Inventory"):Connect(refresh)
+baseFolder:GetAttributeChangedSignal("Money"):Connect(refreshIfVisible)
 refresh()
 
 openButton.MouseButton1Click:Connect(function()
@@ -367,6 +432,16 @@ inventoryActionResultRemote.OnClientEvent:Connect(function(success: boolean, rea
 		statusLabel.TextColor3 = Color3.new(0.3, 1, 0.4)
 	else
 		statusLabel.Text = reason or "Action failed"
+		statusLabel.TextColor3 = Color3.new(1, 0.4, 0.3)
+	end
+end)
+
+upgradeResultRemote.OnClientEvent:Connect(function(success: boolean, reason: string?, boughtCount: number?)
+	if success then
+		statusLabel.Text = string.format("Upgraded +%d level%s!", boughtCount or 0, if boughtCount == 1 then "" else "s")
+		statusLabel.TextColor3 = Color3.new(0.3, 1, 0.4)
+	else
+		statusLabel.Text = reason or "Upgrade failed"
 		statusLabel.TextColor3 = Color3.new(1, 0.4, 0.3)
 	end
 end)

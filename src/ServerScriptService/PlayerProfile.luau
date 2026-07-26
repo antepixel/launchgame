@@ -24,6 +24,8 @@ local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local PersistenceConfig = require(ReplicatedStorage.Config.PersistenceConfig)
 local ShopConfig = require(ReplicatedStorage.Config.ShopConfig)
 local SlimeData = require(ReplicatedStorage.Config.SlimeData)
+local SlimeUpgrade = require(ReplicatedStorage.Config.SlimeUpgrade)
+local SlimeUpgradeConfig = require(ReplicatedStorage.Config.SlimeUpgradeConfig)
 local PlayerStore = require(ServerScriptService.PlayerStore)
 
 local PlayerProfile = {}
@@ -45,6 +47,18 @@ type Profile = {
 	-- how many times the player has played).
 	inventory: { [number]: number },
 	seen: { [number]: boolean },
+	-- PLACED slimes only -- slot number -> level (1..SlimeUpgradeConfig.
+	-- MAX_LEVEL), missing = that slot is empty (never meaningfully queried
+	-- when empty). Deliberately keyed by SLOT, not by globalIndex: a level is
+	-- a property of "the individual slime currently working this slot," not
+	-- of "this slime species" -- see the written report for why that's what
+	-- makes leveling coexist with the stacked, count-only `inventory` above.
+	-- Set to 1 the moment a slime is placed into a slot (receiveSlime,
+	-- placeFromInventory) and cleared the moment it's removed
+	-- (removeToInventory) -- a slime's level is NOT preserved across a trip
+	-- back into inventory; it merges back into the fungible, unleveled stack
+	-- and starts over at 1 if placed again.
+	levels: { [number]: number },
 	-- Which swing tier this player has bought up to -- 1 for a fresh
 	-- player, never bought DOWN, never skips (see buyNextTier below).
 	-- Replaces the old server-wide, hand-edited LaunchConfig.
@@ -186,7 +200,7 @@ local function formatIncomePerSecond(perSecond: number): string
 	return "$" .. formatted .. suffix .. "/s"
 end
 
-local function spawnSlimeVisual(profile: Profile, slotNumber: number, slime: SlimeData.Slime)
+local function spawnSlimeVisual(profile: Profile, slotNumber: number, slime: SlimeData.Slime, level: number)
 	local part = Instance.new("Part")
 	part.Name = slime.name
 	part.Anchored = true
@@ -229,7 +243,7 @@ local function spawnSlimeVisual(profile: Profile, slotNumber: number, slime: Sli
 	nameLabel.TextScaled = true
 	nameLabel.TextColor3 = slime.color
 	nameLabel.TextStrokeTransparency = 0.3
-	nameLabel.Text = slime.name
+	nameLabel.Text = string.format("%s (Lv %d)", slime.name, level)
 	nameLabel.Parent = nameTag
 
 	local incomeLabel = Instance.new("TextLabel")
@@ -241,8 +255,39 @@ local function spawnSlimeVisual(profile: Profile, slotNumber: number, slime: Sli
 	incomeLabel.TextScaled = true
 	incomeLabel.TextColor3 = Color3.new(0.4, 1, 0.5)
 	incomeLabel.TextStrokeTransparency = 0.3
-	incomeLabel.Text = formatIncomePerSecond(slime.incomePerSecond)
+	incomeLabel.Text = formatIncomePerSecond(SlimeUpgrade.incomeForLevel(slime.incomePerSecond, level))
 	incomeLabel.Parent = nameTag
+end
+
+-- Updates an ALREADY-PLACED slime's world billboard (name+level, income) in
+-- place after a level change -- called from upgradeSlime and devSetSlimeLevel,
+-- so the 3D label over a slot never shows a stale level/income after an
+-- upgrade without waiting for the player to re-open the inventory panel.
+-- No-op if the slot's visual somehow doesn't exist (defensive only -- every
+-- occupied slot always has one, see spawnSlimeVisual's only two callers).
+local function refreshSlimeVisualLabel(profile: Profile, slotNumber: number)
+	local part = profile.visualParts[slotNumber]
+	local globalIndex = profile.slots[slotNumber]
+	if not part or not globalIndex then
+		return
+	end
+	local slime = SlimeData.SLIMES[globalIndex]
+	if not slime then
+		return
+	end
+	local level = profile.levels[slotNumber] or 1
+	local nameTag = part:FindFirstChild("NameTag")
+	if not nameTag then
+		return
+	end
+	local nameLabel = nameTag:FindFirstChild("Name") :: TextLabel?
+	local incomeLabel = nameTag:FindFirstChild("Income") :: TextLabel?
+	if nameLabel then
+		nameLabel.Text = string.format("%s (Lv %d)", slime.name, level)
+	end
+	if incomeLabel then
+		incomeLabel.Text = formatIncomePerSecond(SlimeUpgrade.incomeForLevel(slime.incomePerSecond, level))
+	end
 end
 
 -- ===== Client sync: the inventory UI (InventoryClient.client.luau) needs
@@ -260,7 +305,7 @@ local function syncClientState(profile: Profile)
 	for i = 1, BaseConfig.SLOT_COUNT do
 		local globalIndex = profile.slots[i]
 		if globalIndex then
-			table.insert(slotEntries, { slot = i, globalIndex = globalIndex })
+			table.insert(slotEntries, { slot = i, globalIndex = globalIndex, level = profile.levels[i] or 1 })
 		end
 	end
 	profile.baseFolder:SetAttribute("Slots", HttpService:JSONEncode(slotEntries))
@@ -281,8 +326,10 @@ end
 -- holes reliably) -- see PlayerStore.luau. =====
 local function toSaveShape(profile: Profile): { [string]: any }
 	local slotsOut = table.create(BaseConfig.SLOT_COUNT, 0)
+	local levelsOut = table.create(BaseConfig.SLOT_COUNT, 1)
 	for i = 1, BaseConfig.SLOT_COUNT do
 		slotsOut[i] = profile.slots[i] or 0
+		levelsOut[i] = profile.levels[i] or 1
 	end
 	local seenOut = {}
 	for globalIndex, _ in profile.seen do
@@ -301,6 +348,7 @@ local function toSaveShape(profile: Profile): { [string]: any }
 	return {
 		money = profile.money,
 		slots = slotsOut,
+		levels = levelsOut,
 		seen = seenOut,
 		swingTier = profile.swingTier,
 		inventory = inventoryOut,
@@ -315,11 +363,20 @@ local function applyLoadedData(profile: Profile, data: { [string]: any }?)
 		profile.money = data.money
 	end
 	local slots = data.slots
+	local levels = data.levels
 	if typeof(slots) == "table" then
 		for i = 1, BaseConfig.SLOT_COUNT do
 			local globalIndex = slots[i]
 			if typeof(globalIndex) == "number" and globalIndex > 0 and SlimeData.SLIMES[globalIndex] then
 				profile.slots[i] = globalIndex
+				-- Only meaningful for a slot that's actually occupied -- an
+				-- empty slot never gets a `levels` entry, matching the
+				-- in-memory invariant everywhere else in this file (missing
+				-- = empty). Defaults to 1 (fresh) if the saved level is
+				-- missing/malformed -- covers both a pre-leveling save (no
+				-- `levels` field at all) and a hand-edited bad value.
+				local savedLevel = typeof(levels) == "table" and levels[i]
+				profile.levels[i] = SlimeUpgrade.clampLevel(if typeof(savedLevel) == "number" then savedLevel else 1)
 			end
 		end
 	end
@@ -371,6 +428,7 @@ local function onPlayerAdded(player: Player)
 		visualParts = {},
 		inventory = {},
 		seen = {},
+		levels = {},
 		swingTier = 1,
 		canSave = false,
 	}
@@ -408,7 +466,7 @@ local function onPlayerAdded(player: Player)
 		for i = 1, BaseConfig.SLOT_COUNT do
 			local globalIndex = profile.slots[i]
 			if globalIndex then
-				spawnSlimeVisual(profile, i, SlimeData.SLIMES[globalIndex])
+				spawnSlimeVisual(profile, i, SlimeData.SLIMES[globalIndex], profile.levels[i] or 1)
 			end
 		end
 		syncClientState(profile)
@@ -476,7 +534,8 @@ function PlayerProfile.receiveSlime(player: Player, slime: SlimeData.Slime): boo
 	for i = 1, BaseConfig.SLOT_COUNT do
 		if not profile.slots[i] then
 			profile.slots[i] = slime.globalIndex
-			spawnSlimeVisual(profile, i, slime)
+			profile.levels[i] = 1
+			spawnSlimeVisual(profile, i, slime, 1)
 			syncClientState(profile)
 			return true
 		end
@@ -517,7 +576,8 @@ function PlayerProfile.placeFromInventory(player: Player, globalIndex: number): 
 	for i = 1, BaseConfig.SLOT_COUNT do
 		if not profile.slots[i] then
 			profile.slots[i] = globalIndex
-			spawnSlimeVisual(profile, i, slime)
+			profile.levels[i] = 1
+			spawnSlimeVisual(profile, i, slime, 1)
 			if owned <= 1 then
 				profile.inventory[globalIndex] = nil
 			else
@@ -546,6 +606,9 @@ function PlayerProfile.removeToInventory(player: Player, slotNumber: number): (b
 	end
 
 	profile.slots[slotNumber] = nil
+	-- Level is discarded here, not carried into the inventory stack -- see
+	-- the `levels` field's own comment on the Profile type for why.
+	profile.levels[slotNumber] = nil
 	local part = profile.visualParts[slotNumber]
 	if part then
 		part:Destroy()
@@ -592,6 +655,93 @@ function PlayerProfile.sellFromInventory(player: Player, globalIndex: number, qu
 	profile.baseFolder:SetAttribute("Money", profile.money)
 	syncClientState(profile)
 	return true, nil
+end
+
+-- ===== Upgrades: level up a PLACED slime with money -- see UpgradeServer.
+-- server.luau (the only caller) for the remote plumbing. THIS function is
+-- the entire server-side validation: slot occupancy, the count actually
+-- affordable/available, and the price (the SUM of each individual level's
+-- own cost, never `count` times the first one) are all decided here, from
+-- this player's own server-held profile and SlimeUpgrade's shared formula --
+-- never from a cost the client claims. =====
+
+-- Upgrades the slime in slot `slotNumber` by UP TO `count` levels (fewer if
+-- the slime hits MAX_LEVEL first, or if the player can only afford fewer --
+-- see below), charging the exact sum of each individual level's own cost.
+-- Fails outright (no partial charge) if the slime is already at MAX_LEVEL, or
+-- if the player can't afford even a single level.
+--
+-- AFFORDABILITY AND PARTIAL BUYS: unlike sellFromInventory/buyNextTier (all-
+-- or-nothing), this deliberately buys as many of the requested `count` levels
+-- as the player can actually afford, rather than failing the whole purchase
+-- because the LAST of, say, 100 requested levels was one dollar short. Same
+-- reasoning as the MAX_LEVEL cap below: a client showing "+100" already knows
+-- the cost of exactly 100, but money keeps changing underneath (income ticks
+-- every second) -- refusing a purchase entirely over a stale price the UI
+-- computed a moment ago would be a worse experience than simply buying what's
+-- affordable right now. Returns the actual number of levels bought so the
+-- caller can report it.
+function PlayerProfile.upgradeSlime(player: Player, slotNumber: number, count: number): (boolean, string?, number?)
+	local profile = profiles[player]
+	if not profile then
+		return false, "no profile", nil
+	end
+	if typeof(slotNumber) ~= "number" or slotNumber ~= math.floor(slotNumber) or slotNumber < 1 or slotNumber > BaseConfig.SLOT_COUNT then
+		return false, "invalid slot", nil
+	end
+	if typeof(count) ~= "number" or count ~= math.floor(count) or count < 1 then
+		return false, "invalid count", nil
+	end
+
+	local globalIndex = profile.slots[slotNumber]
+	if not globalIndex then
+		return false, "that slot is empty", nil
+	end
+	local slime = SlimeData.SLIMES[globalIndex]
+	if not slime then
+		return false, "unknown slime", nil
+	end
+
+	local currentLevel = profile.levels[slotNumber] or 1
+	if currentLevel >= SlimeUpgradeConfig.MAX_LEVEL then
+		return false, "already at max level", nil
+	end
+
+	-- totalUpgradeCost already caps `count` at however many levels remain
+	-- before MAX_LEVEL -- affordability (below) is the only OTHER thing that
+	-- can shrink the actual purchase further.
+	local fullCost, requestedCount = SlimeUpgrade.totalUpgradeCost(slime.incomePerSecond, currentLevel, count)
+	local buyCount = requestedCount
+	local cost = fullCost
+	if profile.money < cost then
+		-- Binary search the largest affordable count in [0, requestedCount] --
+		-- cost is monotonically increasing in count (every individual level's
+		-- cost is positive), so this always converges to the exact affordable
+		-- maximum in a handful of steps, never a loop over up to 1000 levels.
+		local low, high = 0, requestedCount
+		while low < high do
+			local mid = (low + high + 1) // 2
+			local midCost = SlimeUpgrade.totalUpgradeCost(slime.incomePerSecond, currentLevel, mid)
+			if midCost <= profile.money then
+				low = mid
+			else
+				high = mid - 1
+			end
+		end
+		buyCount = low
+		cost = SlimeUpgrade.totalUpgradeCost(slime.incomePerSecond, currentLevel, buyCount)
+	end
+
+	if buyCount <= 0 then
+		return false, "not enough money", nil
+	end
+
+	profile.money -= cost
+	profile.levels[slotNumber] = currentLevel + buyCount
+	profile.baseFolder:SetAttribute("Money", profile.money)
+	refreshSlimeVisualLabel(profile, slotNumber)
+	syncClientState(profile)
+	return true, nil, buyCount
 end
 
 -- ===== Swing shop: buy the next tier with money -- see ShopServer.server.
@@ -664,7 +814,7 @@ local function totalIncomePerSecond(profile: Profile): number
 		if globalIndex then
 			local slime = SlimeData.SLIMES[globalIndex]
 			if slime then
-				total += slime.incomePerSecond
+				total += SlimeUpgrade.incomeForLevel(slime.incomePerSecond, profile.levels[i] or 1)
 			end
 		end
 	end
@@ -823,6 +973,27 @@ function PlayerProfile.devSetSwingTier(player: Player, tier: number)
 	local tierCount = #LaunchConfig.SWING_TIER_DISTANCE_SCALE
 	profile.swingTier = math.clamp(math.floor(tier), 1, tierCount)
 	profile.baseFolder:SetAttribute("SwingTier", profile.swingTier)
+end
+
+-- Sets the level of the slime PLACED in slot `slotNumber` directly, bypassing
+-- cost entirely -- for testing income/upgrade-cost feel at any level without
+-- grinding or faking money. No-op if the slot is empty (there's no slime
+-- there to level). Clamped via SlimeUpgrade.clampLevel, same as a loaded save
+-- value -- a dev-panel typo can't leave a slot above MAX_LEVEL or below 1.
+function PlayerProfile.devSetSlimeLevel(player: Player, slotNumber: number, level: number)
+	local profile = profiles[player]
+	if not profile then
+		return
+	end
+	if typeof(slotNumber) ~= "number" or slotNumber ~= math.floor(slotNumber) or slotNumber < 1 or slotNumber > BaseConfig.SLOT_COUNT then
+		return
+	end
+	if not profile.slots[slotNumber] then
+		return
+	end
+	profile.levels[slotNumber] = SlimeUpgrade.clampLevel(level)
+	refreshSlimeVisualLabel(profile, slotNumber)
+	syncClientState(profile)
 end
 -- ===== END DEV PANEL SUPPORT =====
 

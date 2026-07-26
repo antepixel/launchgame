@@ -9,7 +9,7 @@ export type SlimeConfig = {
 	SLIME_TIER_NAMES: { string },
 	SLIME_TIER_COUNTS: { number },
 	SLIME_TIER_COLORS: { Color3 },
-	SLIME_TIER_BASE_INCOME: { number },
+	SLIME_INCOME_BY_TIER: { { number } },
 	SLIME_LUCK_ANCHOR_LOW: number,
 	SLIME_LUCK_ANCHOR_HIGH: number,
 	SLIME_WINDOW_WIDTH: number,
@@ -34,8 +34,8 @@ local SlimeConfig: SlimeConfig = {
 	-- ===== The catalog (see SlimeData.luau for the generator that reads
 	-- these into 65 actual slime records) =====
 	-- Ordered low-to-high rarity -- every array below (COUNTS, COLORS,
-	-- BASE_INCOME) is indexed by this SAME position, and the roll's window/
-	-- peak math further down works in these same 1-8 tier-index terms.
+	-- INCOME_BY_TIER) is indexed by this SAME position, and the roll's
+	-- window/peak math further down works in these same 1-8 tier-index terms.
 	SLIME_TIER_NAMES = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret", "Divine" },
 	-- How many distinct slimes exist in each tier -- 65 total
 	-- (6+6+6+6+6+6+21+8). Secret is the deliberate outlier: a wide bucket of
@@ -61,13 +61,31 @@ local SlimeConfig: SlimeConfig = {
 		Color3.fromRGB(140, 26, 191), -- Secret: deep violet
 		Color3.fromRGB(255, 237, 153), -- Divine: gold-white
 	},
-	-- Placeholder economy -- income-per-second per slime, flat within a tier
-	-- (no per-slime variance this pass). Nothing reads this yet (no income
-	-- accumulation exists) -- it's here so the field exists on every slime
-	-- record now rather than being bolted on later. Roughly 2.5-3x per tier,
-	-- echoing the luck curve's own tier-to-tier ratio (see LaunchConfig.
-	-- SWING_TIER_DISTANCE_SCALE's written report).
-	SLIME_TIER_BASE_INCOME = { 1, 3, 8, 20, 50, 125, 400, 1200 },
+	-- MEASURED economy -- income-per-second for every one of the 65 slimes,
+	-- read off the reference game's own index screen, one array per tier IN
+	-- THE SAME ORDER as that tier's slimes (SlimeData.luau's generator zips
+	-- entry i of this array to "<TierName> Slime i"). Replaces the old
+	-- guessed, flat-per-tier placeholder (every slime in a tier sharing one
+	-- number) -- these are real, distinct per-slime values, worst-to-best
+	-- within each tier, and the RATIOS between tiers (not just within one)
+	-- are now real too: Common's cheapest ($5/s) to Divine's priciest
+	-- ($350K/s) spans ~70,000x on its own, before any leveling. Each inner
+	-- array's length MUST match SLIME_TIER_COUNTS' entry at that same index
+	-- -- SlimeData.luau asserts this at load time rather than silently
+	-- truncating or leaving a slime's income nil.
+	SLIME_INCOME_BY_TIER = {
+		{ 5, 6, 7, 8, 9, 10 }, -- Common
+		{ 15, 17, 19, 21, 23, 25 }, -- Uncommon
+		{ 35, 40, 45, 50, 55, 60 }, -- Rare
+		{ 80, 95, 110, 125, 140, 150 }, -- Epic
+		{ 250, 300, 350, 400, 450, 500 }, -- Legendary
+		{ 800, 950, 1100, 1250, 1400, 1500 }, -- Mythic
+		-- Secret: 21 entries -- the deliberate wide "junk rare" bucket (see
+		-- SLIME_TIER_COUNTS' own comment), so its income spread is the
+		-- widest of any tier too (3000..20000, not a clean arithmetic step).
+		{ 3000, 3500, 4000, 4500, 5000, 5500, 6000, 6500, 7000, 8000, 9000, 10000, 11000, 12500, 14000, 15500, 16500, 17500, 18500, 19250, 20000 },
+		{ 50000, 65000, 80000, 100000, 130000, 170000, 220000, 350000 }, -- Divine
+	},
 
 	-- ===== The roll: luck slides a WINDOW of tiers, and reshapes the
 	-- weighting within it -- see SlimeRoll.luau for the full model and why.

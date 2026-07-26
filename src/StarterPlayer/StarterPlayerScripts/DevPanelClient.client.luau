@@ -22,9 +22,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 
 local DevConfig = require(ReplicatedStorage.Config.DevConfig)
+local BaseConfig = require(ReplicatedStorage.Config.BaseConfig)
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local SlimeConfig = require(ReplicatedStorage.Config.SlimeConfig)
 local SlimeData = require(ReplicatedStorage.Config.SlimeData)
+local SlimeUpgradeConfig = require(ReplicatedStorage.Config.SlimeUpgradeConfig)
 
 local player = Players.LocalPlayer
 
@@ -77,7 +79,7 @@ local panel = Instance.new("Frame")
 panel.Name = "Panel"
 panel.AnchorPoint = Vector2.new(1, 0.5)
 panel.Position = UDim2.new(0.99, 0, 0.5, 0)
-panel.Size = UDim2.new(0, 340, 0, 740)
+panel.Size = UDim2.new(0, 340, 0, 900)
 panel.BackgroundColor3 = Color3.new(0.06, 0.06, 0.08)
 panel.BackgroundTransparency = 0.05
 panel.BorderSizePixel = 0
@@ -347,6 +349,66 @@ do
 		end
 	end
 end
+
+-- ===== Slime level -- sets the level of whichever slot is picked below
+-- directly via PlayerProfile.devSetSlimeLevel, bypassing upgrade cost
+-- entirely, for testing income/cost feel at any level without grinding or
+-- faking money. Picking a slot is REQUIRED before "Set Level" does anything
+-- -- there's no default slot, same "pick before you act" pattern as the
+-- slime-tier picker above. =====
+makeSectionLabel(string.format("SET SLIME LEVEL (testing -- pick a slot, 1-%d)", SlimeUpgradeConfig.MAX_LEVEL))
+
+local selectedSlot: number? = nil
+local slotButtons: { [number]: TextButton } = {}
+
+local function selectSlot(slot: number)
+	selectedSlot = slot
+	for s, button in slotButtons do
+		button.BackgroundColor3 = if s == slot then Color3.new(0.2, 0.55, 0.75) else Color3.new(0.16, 0.16, 0.19)
+	end
+end
+
+do
+	local perRow = 5
+	local slot = 1
+	while slot <= BaseConfig.SLOT_COUNT do
+		local addToRow = makeRow(28)
+		for _ = 1, perRow do
+			if slot > BaseConfig.SLOT_COUNT then
+				break
+			end
+			local thisSlot = slot
+			local button = addToRow(UDim2.new(1 / perRow, -4, 1, 0), tostring(thisSlot), Color3.new(0.16, 0.16, 0.19), function()
+				selectSlot(thisSlot)
+			end)
+			slotButtons[thisSlot] = button
+			slot += 1
+		end
+	end
+end
+
+local levelBox = Instance.new("TextBox")
+levelBox.LayoutOrder = topOrder()
+levelBox.Size = UDim2.new(1, 0, 0, 32)
+levelBox.BackgroundColor3 = Color3.new(0.14, 0.14, 0.17)
+levelBox.Font = Enum.Font.Gotham
+levelBox.TextScaled = true
+levelBox.TextColor3 = Color3.new(1, 1, 1)
+levelBox.PlaceholderText = string.format("Level (1-%d)", SlimeUpgradeConfig.MAX_LEVEL)
+levelBox.Text = ""
+levelBox.ClearTextOnFocus = false
+levelBox.Parent = panel
+
+local levelBoxCorner = Instance.new("UICorner")
+levelBoxCorner.CornerRadius = UDim.new(0, 6)
+levelBoxCorner.Parent = levelBox
+
+makeWideButton("Set Level (selected slot)", Color3.new(0.2, 0.35, 0.55), function()
+	local level = tonumber(levelBox.Text)
+	if selectedSlot and level then
+		fireAction("SetSlimeLevel", { slot = selectedSlot, level = level })
+	end
+end)
 
 -- ===== Base / save =====
 makeSectionLabel("BASE / SAVE")
