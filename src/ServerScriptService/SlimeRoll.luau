@@ -23,7 +23,7 @@ end
 -- windowStart + WIDTH - 1].
 --
 -- t is luck's position between the two observed anchors, on a LOG scale
--- (luck spans 25 to 120,000 -- 4800x -- a linear scale would put almost
+-- (luck spans 220 to 120,000 -- ~545x -- a linear scale would put almost
 -- every real luck value within a hair of 0). t=0 at SLIME_LUCK_ANCHOR_LOW,
 -- t=1 at SLIME_LUCK_ANCHOR_HIGH; every other shape parameter below is a
 -- plain LERP on this same t, clamped to [EXTRAPOLATION_T_MIN,
@@ -38,22 +38,32 @@ end
 --
 -- SHAPE WITHIN THE WINDOW: weight_i = exp( -(|i - peak| / spread) ^ shape ),
 -- a generalised (super-)Gaussian. peak = windowStart + peakOffset, where
--- peakOffset lerps from 0 (peak sits AT the window's bottom tier -- Common
--- at low luck) to 1 (peak sits ONE tier in from the bottom -- Mythic, not
--- Legendary, at high luck). spread is SPLIT into spreadDown (i <= peak) and
--- spreadUp (i > peak) so the tail below the peak and the tail above it can
--- decay at different rates -- this is what produces the OBSERVED asymmetry
--- at luck 120,000 (Legendary's 15% below Mythic vs. Secret+Divine's 7% above
--- it), which a single symmetric spread cannot reproduce (a symmetric shape
--- would force Legendary and Secret, both exactly 1 tier from the peak, to
--- identical weight). shape itself also lerps: HIGH at low luck (>1, a wide
--- flat plateau near the peak with a steep cliff after -- reproduces "nearly
--- flat between the top two available tiers, small tail") down to LOW at
--- high luck (<1, a sharp single spike with a longer tail -- reproduces
--- "concentrated in one tier with a thin rare tail"). Every one of these six
--- curves (windowStart, peakOffset, spreadDown, spreadUp, shape, plus the two
--- luck anchors themselves) is a LOW/HIGH pair in SlimeConfig -- retuning the
--- whole curve is moving those numbers, never rewriting this function.
+-- peakOffset is a CONSTANT 1 (peak always sits one tier in from the window's
+-- bottom -- Uncommon at low luck, Mythic at high luck) -- see SlimeConfig for
+-- why this is fixed rather than lerped: it's what gives every stage the same
+-- three-part shape (a fading tier below the peak, the peak, a tail above).
+-- spread is SPLIT into spreadDown (i <= peak) and spreadUp (i > peak) so the
+-- tier below the peak and the tail above it can decay at different rates --
+-- this is what produces the OBSERVED asymmetry at luck 120,000 (Legendary's
+-- 15% below Mythic vs. Secret+Divine's 7% above it), which a single symmetric
+-- spread cannot reproduce (a symmetric shape would force Legendary and
+-- Secret, both exactly 1 tier from the peak, to identical weight), AND (at
+-- the low end) what keeps the tail two tiers above the peak sitting at a
+-- reachable 1-5% all the way up the curve, not just at the anchors. shape
+-- itself also lerps: HIGH at low luck (a moderately peaked middle) down to
+-- LOW at high luck (<1, a sharp single spike with a longer tail --
+-- reproduces "concentrated in one tier with a thin rare tail"). SHAPE_LOW
+-- and SPREAD_*_LOW sit deliberately CLOSE to their _HIGH twins rather than
+-- far from them -- see SlimeConfig's SLIME_SPREAD_DOWN_LOW comment for why:
+-- the gap between LOW and HIGH is exactly what makes expected roll VALUE
+-- dip as luck rises within a still-static window (concentration increasing
+-- while the window itself hasn't advanced yet drains the upper tail faster
+-- than the fading tier below it can compensate) -- so the two numbers were
+-- solved together to keep that dip negligible, not just to hit a target
+-- shape at the anchors in isolation. Every one of these curves (windowStart,
+-- peakOffset, spreadDown, spreadUp, shape, plus the two luck anchors
+-- themselves) is a LOW/HIGH pair in SlimeConfig -- retuning the whole curve
+-- is moving those numbers, never rewriting this function.
 function SlimeRoll.distributionForLuck(luck: number): { number }
 	local lnLow = math.log(SlimeConfig.SLIME_LUCK_ANCHOR_LOW)
 	local lnHigh = math.log(SlimeConfig.SLIME_LUCK_ANCHOR_HIGH)

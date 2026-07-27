@@ -94,9 +94,22 @@ local SlimeConfig: SlimeConfig = {
 	-- EXTRAPOLATION_T_MAX] beyond them. Retuning the curve's shape is
 	-- changing these numbers, never rewriting SlimeRoll's formula. =====
 
-	-- The two OBSERVED reference points (see the written report) everything
-	-- else is anchored to.
-	SLIME_LUCK_ANCHOR_LOW = 25,
+	-- The two reference points everything else is anchored to. These are
+	-- NOT measured the same way -- HIGH is an OBSERVED post-box-chaining
+	-- luck value (see the written report), but the original LOW (25) was the
+	-- reference game's raw, pre-chaining band value. Mixing a pre-chain point
+	-- with a post-chain point stretched the whole curve wrong: a swing-tier-2
+	-- player rolls at band 15 (luck 75), then a mystery box multiplies that
+	-- by ~3x on average before the roll actually happens, landing around luck
+	-- 220 -- well past where the old anchor's Common/Uncommon-heavy shape
+	-- still applied, so nearly every tier-2 pull came out Rare or above.
+	-- LOW is now 220 instead -- also a post-chain figure, matching HIGH's
+	-- measurement basis, and specifically tier 2's typical post-box luck, so
+	-- the anchor's own shape (see PEAK_OFFSET/SPREAD/SHAPE below -- roughly
+	-- 10% Common / 71% Uncommon / 16% Rare / 3% Epic) lands exactly where
+	-- tier-2 players actually roll instead of at a pre-chain value nobody's
+	-- actual roll uses.
+	SLIME_LUCK_ANCHOR_LOW = 220,
 	SLIME_LUCK_ANCHOR_HIGH = 120000,
 	-- How many consecutive tiers are ever eligible at once. 4 reproduces both
 	-- anchors exactly (Common-Epic at the low end, Legendary-Divine at the
@@ -109,38 +122,70 @@ local SlimeConfig: SlimeConfig = {
 	SLIME_WINDOW_START_LOW = 1,
 	SLIME_WINDOW_START_HIGH = 5,
 	-- Where the PEAK (most-likely tier) sits within the window, as an offset
-	-- from the window's bottom tier. 0 at low luck -- the peak sits AT the
-	-- bottom (Common is most likely, decaying upward -- matches "flat
-	-- between the top two, small tail"). 1 at high luck -- the peak sits ONE
-	-- tier in from the bottom (Mythic, not Legendary -- matches "concentrated
-	-- in one tier with a thin rare tail" AND leaves room for a below-peak
-	-- tail, which the low-luck anchor's peak-at-the-floor shape cannot have).
-	SLIME_PEAK_OFFSET_LOW = 0.0,
+	-- from the window's bottom tier. CONSTANT at 1.0 across the whole curve
+	-- (used to be 0.0 at low luck, peak AT the bottom tier -- that put the
+	-- modal result one tier too low for tier 2's target (Uncommon, not
+	-- Common) and left no room for a fading tier BELOW the peak). 1.0
+	-- everywhere means the peak always sits one tier in from the window's
+	-- bottom -- Uncommon at low luck, Mythic at high luck -- so every stage
+	-- gets the SAME three-part shape: a fading tier below the peak, the peak
+	-- itself, and a tail above.
+	SLIME_PEAK_OFFSET_LOW = 1.0,
 	SLIME_PEAK_OFFSET_HIGH = 1.0,
 	-- Decay rate BELOW the peak (toward lower tiers) and ABOVE it (toward
-	-- higher tiers) -- kept SEPARATE (not one symmetric spread) because the
-	-- high-luck anchor is observably asymmetric: Legendary (1 tier below
-	-- Mythic) sits at 15%, but Secret (1 tier above) sits at only 6% -- a
-	-- symmetric shape could never produce two different weights at the same
-	-- distance. Solved from the anchors, not guessed -- see the written
-	-- report for the algebra.
-	SLIME_SPREAD_DOWN_LOW = 1.668,
+	-- higher tiers) -- kept SEPARATE (not one symmetric spread) so the
+	-- fading tier below the peak and the tail above it can shrink at
+	-- different rates.
+	--
+	-- These LOW values (and SHAPE_LOW below) are constrained by a SECOND
+	-- invariant, not just "hit these percentages at luck 220": expected tier
+	-- value -- E[tier index], 1=Common..8=Divine, weighted by the roll's own
+	-- probabilities -- must never DECREASE as luck increases. An earlier
+	-- version of these three numbers (2.3 / 0.68 / 1.35) hit the luck-220
+	-- target exactly but broke that invariant badly: SHAPE and SPREAD_UP
+	-- interpolate continuously toward SHAPE_HIGH/SPREAD_UP_HIGH across the
+	-- ENTIRE anchor range, independent of which discrete 4-tier window is
+	-- currently active, and because the peak sits 1 tier below the window's
+	-- top but 2 tiers below nothing (it's 1-in-from-the-bottom, so there are
+	-- 2 tiers ABOVE it and only 1 below), rising concentration always drains
+	-- the upper tail faster than it can be offset by the fading tier below --
+	-- expected value fell continuously for the entire span BETWEEN two
+	-- window-advance jumps, only recovering when the window itself slid to
+	-- the next 4-tier range. That's why (with the old values) luck 600 rolled
+	-- BETTER on average than luck 2000 despite being strictly lower luck --
+	-- both sat inside the same Uncommon-Legendary window, and 2000 was
+	-- further along that internal decay. Verified by brute force: every
+	-- window segment showed the same pattern, dips of 2-7% relative.
+	--
+	-- The only way to make that dip EXACTLY zero is SHAPE_LOW/SPREAD_*_LOW
+	-- literally equal to their _HIGH twins (concentration constant, only the
+	-- window slides) -- but _HIGH can't move (it's the observed 120,000
+	-- reference), so that would revert the LOW anchor to the exact same
+	-- 15/78/6/1 spike shape as the high end, undoing this reshape entirely.
+	-- Instead, these values were solved to make the residual dip NEGLIGIBLE
+	-- (worst case ~0.002% relative, over 1000x smaller than the old 2-7%,
+	-- and only in the extrapolated region below luck 220) while keeping a
+	-- real three-tier spread at luck 220 (~10% Common / ~71% Uncommon / ~16%
+	-- Rare / ~3% Epic tail) -- see the written report for the search and the
+	-- full checkpoint table.
+	SLIME_SPREAD_DOWN_LOW = 0.54,
 	SLIME_SPREAD_DOWN_HIGH = 0.520,
-	SLIME_SPREAD_UP_LOW = 1.668,
+	SLIME_SPREAD_UP_LOW = 0.69,
 	SLIME_SPREAD_UP_HIGH = 0.292,
 	-- The generalised-Gaussian shape exponent: weight ~ exp(-(distance/
-	-- spread)^shape). HIGH (>1) at low luck gives a wide FLAT plateau near
-	-- the peak with a steep cliff just past it -- "nearly flat between the
-	-- top two available tiers, small tail." LOW (<1) at high luck gives a
-	-- sharp single SPIKE with a longer tail -- "concentrated in one tier
-	-- with a thin rare tail." The shape itself changing (not just sliding)
-	-- is what the task means by "the distribution's shape changes as it
-	-- climbs," not just the window moving.
-	SLIME_SHAPE_LOW = 4.4,
+	-- spread)^shape). LOW is 1.08 -- much closer to SHAPE_HIGH (0.764) than
+	-- earlier attempts at this curve used, specifically because the gap
+	-- between LOW and HIGH is what drives the expected-value dip described
+	-- in SPREAD_DOWN_LOW's comment above: the closer LOW sits to HIGH, the
+	-- smaller that dip, at the cost of a less dramatic shape change across
+	-- the climb. HIGH (0.764, a sharp single spike with a longer tail --
+	-- "concentrated in one tier with a thin rare tail") is unchanged --
+	-- that's the observed high-luck reference, not part of this reshape.
+	SLIME_SHAPE_LOW = 1.08,
 	SLIME_SHAPE_HIGH = 0.764,
 	-- How far past the two observed anchors (in the same log-luck t units,
 	-- where the anchors are t=0 and t=1) the interpolation is allowed to
-	-- extrapolate before clamping. MIN=-0.5 lets luck somewhat below 25
+	-- extrapolate before clamping. MIN=-0.5 lets luck somewhat below 220
 	-- still produce a smoothly-extrapolated (not wildly distorted)
 	-- distribution -- verified safe (SHAPE stays comfortably positive down
 	-- to well past this bound).
