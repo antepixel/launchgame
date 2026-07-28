@@ -25,17 +25,18 @@ local Players = game:GetService("Players")
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local RunwayGeometry = require(ReplicatedStorage.Config.RunwayGeometry)
 local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
-local ShopConfig = require(ReplicatedStorage.Config.ShopConfig)
 local SlimeConfig = require(ReplicatedStorage.Config.SlimeConfig)
+local SwingTierVisuals = require(ReplicatedStorage.Config.SwingTierVisuals)
 -- Server-only siblings (see each module's own header for why these live in
 -- ServerScriptService, not ReplicatedStorage, specifically).
 local SlimeRoll = require(ServerScriptService.SlimeRoll)
+local SwingBuilder = require(ServerScriptService.SwingBuilder)
 -- Per-player base + income + collection + persistence + swing tier (see
 -- PlayerProfile.luau). Reads here are scoped to exactly what a launch needs
 -- to know (getSwingTier) and the two reveal-time calls from before
 -- (recordSeen/placeSlime) -- nothing about the reveal's or the swing's own
--- timing/sequencing changes; see applySwingVisualForTier below for the one
--- new piece of state this file itself now owns (the seat's cosmetic size).
+-- timing/sequencing changes; see applySwingVisualForTier below for the
+-- cosmetic state this file owns (the swing structure's per-tier look).
 local PlayerProfile = require(ServerScriptService.PlayerProfile)
 
 Workspace.Gravity = LaunchConfig.GRAVITY
@@ -89,26 +90,33 @@ local ridingAssignedRemote = makeRemote("RidingAssigned")
 
 local swingPivot = Workspace:WaitForChild("SwingPivot") :: BasePart
 
--- ===== Swing tier visual (new this pass): a purely cosmetic size scale on
--- the SEAT only -- see ShopConfig.SWING_VISUAL_SCALE_MIN/MAX and the
--- written report for why seat-only, size-only was chosen as "something
--- simple" for now. Deliberately NOT touching swingTheta/swingSeatPosition
--- below (still the exact same phase math, still the ONLY thing that decides
--- the seat's actual position every frame) -- this only ever writes .Size,
--- driven off whoever the CURRENT rider is, since the swing itself is still
--- the single shared structure it always was. =====
-local swingSeatPart = Workspace:WaitForChild("SwingSeat") :: BasePart
-local baseSwingSeatSize = swingSeatPart.Size
-
-local function swingVisualScaleForTier(tier: number): number
-	local tierCount = #LaunchConfig.SWING_TIER_DISTANCE_SCALE
-	local t = if tierCount <= 1 then 0 else (tier - 1) / (tierCount - 1)
-	return ShopConfig.SWING_VISUAL_SCALE_MIN + (ShopConfig.SWING_VISUAL_SCALE_MAX - ShopConfig.SWING_VISUAL_SCALE_MIN) * t
-end
-
+-- ===== Swing tier visual: the ENTIRE structure -- posts, beam, bracing,
+-- caps, ground pads, seat, chain -- is a genuinely different, procedurally
+-- built OBJECT per tier band, not the same four boxes resized/recoloured.
+-- See SwingBuilder.luau for the construction code and SwingTierVisuals.luau
+-- for every per-tier number/shape/material/colour; this file only ever
+-- CALLS SwingBuilder.build(tier), never authors geometry itself. Deliberately
+-- NEVER touches swingPivot's Position or LaunchConfig.SWING_ROPE_LENGTH/
+-- SWING_ARC_HALF_ANGLE_DEGREES/SWING_PERIOD_SECONDS -- swingTheta/
+-- swingSeatPosition below stay exactly the same phase math regardless of
+-- tier, which is what keeps the seat's actual swept position (and therefore
+-- the scoring math, which reads that exact position at release) functionally
+-- identical no matter how the frame LOOKS. =====
 local function applySwingVisualForTier(tier: number)
-	swingSeatPart.Size = baseSwingSeatSize * swingVisualScaleForTier(tier)
+	SwingBuilder.build(tier)
 end
+
+-- BUG FIX: the swing used to exist from the moment the place file loaded --
+-- SwingPost1/2/SwingBeam/SwingSeat were hand-placed, static parts in
+-- default.project.json, so a fresh server had SOMETHING visible even before
+-- applySwingVisualForTier was ever called (every call site below is inside a
+-- player event handler -- clearActiveRider, setupCharacter, onRelease --
+-- none of which fire at server startup). Now that the whole structure is
+-- built by SwingBuilder instead of pre-placed, nothing would exist at all
+-- until the first such event -- an empty server would show only the
+-- invisible SwingPivot until a player joined and did something. Building
+-- tier 1 once, right here, restores "the swing exists from server start."
+applySwingVisualForTier(1)
 
 -- ===== Swing math (unchanged from the previous pass) =====
 
@@ -132,14 +140,31 @@ local function circularPhaseDistance(a: number, b: number): number
 	return math.min(d, 1 - d)
 end
 
--- The power curve: a flat 2.0x SNAP anywhere inside the sweet-spot window, and a
--- gradual ramp from 0.75x (farthest point in the cycle) up to 1.5x (right at the
--- window's edge) everywhere outside it.
+-- The power curve: two ramps with a deliberate jump between them, not one
+-- continuous curve and not a flat snap. Outside the sweet-spot window, a
+-- gradual ramp from 0.75x (farthest point in the cycle) up to 1.5x (right at
+-- the window's edge). Crossing INTO the window jumps straight to 1.8x -- that
+-- gap is what makes a hit feel like a hit -- then ramps again, smoothly, up to
+-- 2.0x at dead centre, so centring still rewards precision instead of the
+-- whole window being an identical plateau. Anything graded at or above
+-- SWEET_SPOT_SNAP_THRESHOLD then snaps up to exactly 2.0x -- landing on the
+-- single exact centre phase is luck, not skill, so "close enough" is a real,
+-- reachable perfect instead of a vanishingly rare bullseye.
 local function launchMultiplier(phase: number): number
 	local distanceFromSweetSpot = circularPhaseDistance(phase, LaunchConfig.SWEET_SPOT_PHASE)
 	local halfWidth = LaunchConfig.SWEET_SPOT_WIDTH / 2
 	if distanceFromSweetSpot <= halfWidth then
-		return LaunchConfig.SWEET_SPOT_MULTIPLIER
+		if halfWidth <= 0 then
+			return LaunchConfig.SWEET_SPOT_MULTIPLIER
+		end
+		-- t = 1 at dead centre (distance 0), t = 0 at the window's edge.
+		local t = 1 - (distanceFromSweetSpot / halfWidth)
+		local graded = LaunchConfig.SWEET_SPOT_EDGE_MULTIPLIER
+			+ (LaunchConfig.SWEET_SPOT_MULTIPLIER - LaunchConfig.SWEET_SPOT_EDGE_MULTIPLIER) * t
+		if graded >= LaunchConfig.SWEET_SPOT_SNAP_THRESHOLD then
+			return LaunchConfig.SWEET_SPOT_MULTIPLIER
+		end
+		return graded
 	end
 	local t = 1 - (distanceFromSweetSpot - halfWidth) / (0.5 - halfWidth)
 	t = math.clamp(t, 0, 1)
@@ -188,10 +213,11 @@ end
 -- blunt the sweet-spot's whole point of rewarding precision.
 --
 -- PAST the last band (distance-from-start >= #LuckCurve.VALUES * L): still
--- impossible today (50-stud max distance vs. a curve now ~1480 studs long --
--- see the written report) but must survive the road shrinking or distances
--- growing later. Clamped to the LAST band -- never an out-of-range index, and
--- never worse to travel farther than to travel less far.
+-- impossible today (100-stud DISTANCE_PER_MULTIPLIER vs. a curve now ~2960
+-- studs long -- see the written report) but must survive the road shrinking
+-- or distances growing later. Clamped to the LAST band -- never an
+-- out-of-range index, and never worse to travel farther than to travel less
+-- far.
 local function bandLuckForLandingZ(landingZ: number): number
 	local distanceFromStart = RunwayGeometry.RUNWAY_START_Z - landingZ
 	if distanceFromStart < 0 then
@@ -266,6 +292,160 @@ local function restoreFlightPose(joints: PoseJoints)
 	end
 end
 
+-- ===== Flight trail + launch burst (new this pass -- see SwingTierVisuals
+-- for every per-tier number). Both are ordinary REPLICATED Instances created
+-- SERVER-side (not in a LocalScript) specifically so every connected client
+-- sees the same effect on the same character -- "visible from across the
+-- map" requires that, not just the flying player's own view. =====
+
+type TrailInstance = {
+	trail: Trail,
+	attachment0: Attachment,
+	attachment1: Attachment,
+}
+type TrailRig = { TrailInstance }
+
+-- Turns a list of 1+ colours into an EVENLY-SPACED ColorSequence -- a real
+-- multi-stop gradient along the trail's length, not a flat hue, per the
+-- written report (a single-colour list still produces a valid, uniform
+-- ColorSequence).
+local function colorSequenceFromList(colors: { Color3 }): ColorSequence
+	if #colors <= 1 then
+		return ColorSequence.new(colors[1] or Color3.new(1, 1, 1))
+	end
+	local keypoints = {}
+	for i, color in colors do
+		table.insert(keypoints, ColorSequenceKeypoint.new((i - 1) / (#colors - 1), color))
+	end
+	return ColorSequence.new(keypoints)
+end
+
+-- One configured Trail + its two Attachments. `lateralOffset` shifts the
+-- whole attachment pair sideways on the root part -- how the SECOND, layered
+-- trail (top tiers only) sits beside the first instead of directly
+-- overlapping it.
+local function buildTrailInstance(
+	rootPart: BasePart,
+	colors: { Color3 },
+	widthStart: number,
+	widthEnd: number,
+	lateralOffset: number,
+	visual: SwingTierVisuals.TierVisual,
+	name: string
+): TrailInstance
+	local attachment0 = Instance.new("Attachment")
+	attachment0.Name = name .. "Attachment0"
+	attachment0.Position = Vector3.new(lateralOffset - widthStart / 2, 0, 0)
+	attachment0.Parent = rootPart
+
+	local attachment1 = Instance.new("Attachment")
+	attachment1.Name = name .. "Attachment1"
+	attachment1.Position = Vector3.new(lateralOffset + widthStart / 2, 0, 0)
+	attachment1.Parent = rootPart
+
+	local trail = Instance.new("Trail")
+	trail.Name = name
+	trail.Attachment0 = attachment0
+	trail.Attachment1 = attachment1
+	trail.Color = colorSequenceFromList(colors)
+	-- Fades from the tier's brightest point up to fully invisible over its
+	-- own Lifetime -- a fixed flat transparency would just be a solid ribbon
+	-- with a hard-cut end, not a fading streak.
+	trail.Transparency = NumberSequence.new(visual.trailMinTransparency, 1)
+	trail.Lifetime = visual.trailLifetime
+	-- Tapers the attachment-defined base width DOWN toward the tail (1.0 at
+	-- the character, widthEnd/widthStart at the far end) -- the "NumberSequence
+	-- tapering the tail" the written report calls for, independent of the
+	-- absolute width the attachments themselves define.
+	trail.WidthScale = NumberSequence.new(1, if widthStart > 0 then widthEnd / widthStart else 0)
+	trail.LightEmission = visual.trailLightEmission
+	trail.FaceCamera = true
+	-- Below this length the trail doesn't bother drawing a segment at all --
+	-- avoids a flickery sliver of trail during near-stationary moments.
+	-- NOT a custom Texture/TextureMode -- deliberately left at Roblox's
+	-- default (a plain built-in fill), since a chain-link-style or custom
+	-- texture would need an actual image asset, which the "no external
+	-- assets" constraint rules out; Color/Transparency/WidthScale/
+	-- LightEmission alone already give the tapering, gradient, glowing look
+	-- asked for.
+	trail.MinLength = visual.trailMinLength
+	trail.Parent = rootPart
+
+	return { trail = trail, attachment0 = attachment0, attachment1 = attachment1 }
+end
+
+-- nil at low tiers (visual.trailEnabled = false) -- "nothing at tier 1" is a
+-- real absence, not a trail with transparency so high it can't be seen. A
+-- SECOND, offset trail layers in at the top tiers (visual.secondTrailEnabled)
+-- for a doubled-streak look, not just one wider ribbon.
+local function createFlightTrail(rootPart: BasePart, visual: SwingTierVisuals.TierVisual): TrailRig?
+	if not visual.trailEnabled then
+		return nil
+	end
+	local rig: TrailRig = {
+		buildTrailInstance(rootPart, visual.trailColors, visual.trailWidthStart, visual.trailWidthEnd, 0, visual, "FlightTrail"),
+	}
+	if visual.secondTrailEnabled then
+		table.insert(
+			rig,
+			buildTrailInstance(
+				rootPart,
+				visual.secondTrailColors,
+				visual.trailWidthStart * 0.6,
+				visual.trailWidthEnd * 0.6,
+				visual.secondTrailOffset,
+				visual,
+				"FlightTrail2"
+			)
+		)
+	end
+	return rig
+end
+
+local function destroyFlightTrail(rig: TrailRig?)
+	if not rig then
+		return
+	end
+	for _, instance in rig do
+		instance.trail:Destroy()
+		instance.attachment0:Destroy()
+		instance.attachment1:Destroy()
+	end
+end
+
+-- A ONE-SHOT puff at the exact instant/position of release -- never a
+-- continuously-running emitter (Enabled stays false; :Emit fires the whole
+-- burst in a single call). Cleans itself up on its own timer shortly after
+-- its own particles would have faded, independent of the flight/landing
+-- timeline entirely -- deliberately brief (see SwingTierVisuals.burstLifetime)
+-- so it can never still be in frame interfering with the flight chase camera.
+local function fireLaunchBurst(rootPart: BasePart, visual: SwingTierVisuals.TierVisual)
+	local emitter = Instance.new("ParticleEmitter")
+	emitter.Name = "LaunchBurst"
+	emitter.Color = ColorSequence.new(visual.burstColor)
+	emitter.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, visual.burstSize),
+		NumberSequenceKeypoint.new(1, 0),
+	})
+	emitter.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	emitter.Lifetime = NumberRange.new(visual.burstLifetime * 0.7, visual.burstLifetime)
+	emitter.Speed = NumberRange.new(6, 14)
+	emitter.SpreadAngle = Vector2.new(45, 45)
+	emitter.Rate = 0
+	emitter.Enabled = false
+	emitter.Parent = rootPart
+	emitter:Emit(visual.burstCount)
+
+	task.delay(visual.burstLifetime + 0.1, function()
+		if emitter.Parent then
+			emitter:Destroy()
+		end
+	end)
+end
+
 type LoopState = "riding" | "inflight" | "box" | "cooldown"
 
 -- One shared rider slot for this prototype (same limitation every previous pass
@@ -286,6 +466,7 @@ type Flight = {
 	startTime: number,
 	poseJoints: PoseJoints,
 	luck: number,
+	trailRig: TrailRig?,
 }
 local activeFlight: Flight? = nil
 
@@ -310,6 +491,15 @@ local activeBox: Box? = nil
 -- `activeBox ~= box or state ~= "box"` the instant its delay elapses and
 -- simply bails if either has changed out from under it.
 local function clearActiveRider()
+	-- BUG FIX: an interrupted flight (e.g. the rider dies mid-air, see
+	-- setupCharacter's humanoid.Died below -- PlayerRemoving doesn't need
+	-- this, since a leaving player's whole character, trail included, is
+	-- destroyed by Roblox automatically) used to leave its Trail/Attachments
+	-- orphaned on the character forever, since this just discarded
+	-- activeFlight without checking it for one first.
+	if activeFlight then
+		destroyFlightTrail(activeFlight.trailRig)
+	end
 	activePlayer = nil
 	activeCharacter = nil
 	activeFlight = nil
@@ -451,10 +641,10 @@ local function onRelease(player: Player)
 	-- touch the trajectory formula, the camera, or the band curve at all.
 	local riderTier = PlayerProfile.getSwingTier(player)
 	local tierScale = LaunchConfig.SWING_TIER_DISTANCE_SCALE[riderTier]
-	-- Also refresh the seat's cosmetic scale here -- covers a purchase made
-	-- while already sitting on the swing (setupCharacter only stamps this
-	-- once, at the moment the seat is claimed) showing up by the very next
-	-- launch, not just the next time someone re-claims the seat.
+	-- Also refresh the whole swing's cosmetic look here -- covers a purchase
+	-- made while already sitting on the swing (setupCharacter only stamps
+	-- this once, at the moment the seat is claimed) showing up by the very
+	-- next launch, not just the next time someone re-claims the seat.
 	applySwingVisualForTier(riderTier)
 	local distance = LaunchConfig.DISTANCE_PER_MULTIPLIER * multiplier * tierScale
 	local archHeight = distance * LaunchConfig.ARC_HEIGHT_FRACTION
@@ -472,6 +662,17 @@ local function onRelease(player: Player)
 	-- stops, so this is a moving origin).
 	local startPosition = swingSeatPosition(swingTheta(phase)) + Vector3.new(0, 2, 0)
 	character:PivotTo(CFrame.lookAt(startPosition, startPosition + Vector3.new(0, 0, -1)))
+
+	-- Launch burst + flight trail: same per-tier visual record
+	-- applySwingVisualForTier above just applied to the swing structure
+	-- itself, reused here for the character. The burst fires once, right
+	-- now, at the exact instant/position the character was just placed at.
+	-- The trail (if this tier has one) attaches now and rides along for the
+	-- rest of the flight -- see destroyFlightTrail in the Heartbeat landing
+	-- handler below for where it comes off.
+	local tierVisual = SwingTierVisuals.forTier(riderTier)
+	fireLaunchBurst(rootPart, tierVisual)
+	local trailRig = createFlightTrail(rootPart, tierVisual)
 
 	-- NO PHYSICS: anchor the root part so gravity, collision, and the humanoid's
 	-- own controller cannot touch it. BUG FIX (see written report): the server
@@ -523,6 +724,7 @@ local function onRelease(player: Player)
 		startTime = startTime,
 		poseJoints = poseJoints,
 		luck = luck,
+		trailRig = trailRig,
 	}
 
 	flightStartedRemote:FireClient(player, distance, archHeight, duration, startPosition, startTime, luck)
@@ -580,6 +782,7 @@ RunService.Heartbeat:Connect(function()
 	local landingPosition = trajectoryPosition(flight.startPosition, flight.distance, flight.archHeight, 1)
 	activeCharacter:PivotTo(CFrame.lookAt(landingPosition, landingPosition + Vector3.new(0, 0, -1)))
 	restoreFlightPose(flight.poseJoints)
+	destroyFlightTrail(flight.trailRig)
 	flight.rootPart.Anchored = false
 	flight.humanoid.AutoRotate = true
 

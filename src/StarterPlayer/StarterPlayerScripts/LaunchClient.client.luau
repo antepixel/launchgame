@@ -51,7 +51,32 @@ local slimeRevealedRemote = remotesFolder:WaitForChild("SlimeRevealed") :: Remot
 local ridingAssignedRemote = remotesFolder:WaitForChild("RidingAssigned") :: RemoteEvent
 
 local swingPivot = Workspace:WaitForChild("SwingPivot") :: BasePart
-local swingSeatPart = Workspace:WaitForChild("SwingSeat") :: BasePart
+
+-- The swing STRUCTURE (posts/beam/seat/chain) is built by SwingBuilder.luau
+-- and completely REBUILT (destroyed and recreated) every time the rider's
+-- tier changes -- see the written report. That means SwingSeat/
+-- SwingChainAnchor/SwingChainLinks are NOT stable references for the life of
+-- the server the way SwingPivot is; a cached reference can go stale (its
+-- .Parent becomes nil) the instant a tier purchase rebuilds the structure.
+-- ensureSwingReferences() below re-acquires them on demand, cheaply checked
+-- every frame, rather than requiring this script to somehow learn "the
+-- structure just rebuilt" as a separate event.
+local swingStructureFolder = Workspace:WaitForChild("SwingStructure")
+local swingSeatModel = swingStructureFolder:WaitForChild("SwingSeat") :: Model
+local swingChainAnchor = swingStructureFolder:WaitForChild("SwingChainAnchor") :: BasePart
+local swingChainLinksFolder = swingStructureFolder:WaitForChild("SwingChainLinks") :: Folder
+
+local function ensureSwingReferences()
+	if not swingSeatModel.Parent then
+		swingSeatModel = swingStructureFolder:WaitForChild("SwingSeat") :: Model
+	end
+	if not swingChainAnchor.Parent then
+		swingChainAnchor = swingStructureFolder:WaitForChild("SwingChainAnchor") :: BasePart
+	end
+	if not swingChainLinksFolder.Parent then
+		swingChainLinksFolder = swingStructureFolder:WaitForChild("SwingChainLinks") :: Folder
+	end
+end
 
 -- Mirrors LaunchServer's swingPhase()/swingTheta() exactly -- same shared
 -- constants, same clock. Kept in this one script rather than a shared module
@@ -77,6 +102,63 @@ local function riderCFrame(seatPosition: Vector3): CFrame
 	return CFrame.lookAt(standPosition, standPosition + Vector3.new(0, 0, -1))
 end
 
+-- Repositions every discrete chain-link part (Rope/Chain/Rod tiers -- see
+-- SwingBuilder.luau) between the FIXED SwingChainAnchor and the CURRENT
+-- (swinging) seat position, every frame. Energy tiers build zero of these --
+-- their tether is a Beam, which auto-tracks its Attachments at the engine
+-- level and needs no script here at all, so this is a cheap no-op for them
+-- (GetChildren on an empty folder). Same "explicit basis vectors" orientation
+-- technique SwingBuilder itself uses server-side, for the same reason: no
+-- rotation-sign ambiguity to get backwards. "Chain" style's alternating
+-- 90-degree twist (the classic linked-chain read) is stored as a Twist90
+-- attribute at build time and re-applied here every frame, since this
+-- function recomputes each link's orientation from scratch rather than
+-- nudging whatever it had last frame.
+local function repositionChainLinks(seatTopPosition: Vector3)
+	if not swingChainAnchor.Parent then
+		return
+	end
+	local links = swingChainLinksFolder:GetChildren()
+	local count = #links
+	if count == 0 then
+		return
+	end
+	table.sort(links, function(a, b)
+		local indexA = (a:GetAttribute("ChainIndex") :: number?) or 0
+		local indexB = (b:GetAttribute("ChainIndex") :: number?) or 0
+		return indexA < indexB
+	end)
+
+	local topPoint = swingChainAnchor.Position
+	for i, link in links do
+		if link:IsA("BasePart") then
+			local segStart = topPoint:Lerp(seatTopPosition, (i - 1) / count)
+			local segEnd = topPoint:Lerp(seatTopPosition, i / count)
+			local delta = segEnd - segStart
+			local length = delta.Magnitude
+			if length > 1e-4 then
+				if link.Shape == Enum.PartType.Cylinder then
+					local xAxis = delta.Unit
+					local reference = if math.abs(xAxis.Y) > 0.9 then Vector3.new(1, 0, 0) else Vector3.new(0, 1, 0)
+					local yAxis = xAxis:Cross(reference).Unit
+					link.CFrame = CFrame.fromMatrix((segStart + segEnd) / 2, xAxis, yAxis)
+					link.Size = Vector3.new(length, link.Size.Y, link.Size.Z)
+				else
+					local yAxis = delta.Unit
+					local reference = if math.abs(yAxis.Y) > 0.9 then Vector3.new(1, 0, 0) else Vector3.new(0, 1, 0)
+					local xAxis = reference:Cross(yAxis).Unit
+					local cf = CFrame.fromMatrix((segStart + segEnd) / 2, xAxis, yAxis)
+					if link:GetAttribute("Twist90") then
+						cf = cf * CFrame.Angles(0, math.rad(90), 0)
+					end
+					link.CFrame = cf
+					link.Size = Vector3.new(link.Size.X, length, link.Size.Z)
+				end
+			end
+		end
+	end
+end
+
 local function fillFraction(phase: number): number
 	-- theta = ARC * sin(2pi*phase); fill = (theta/ARC + 1) / 2, i.e. just the sine
 	-- itself remapped from [-1, 1] to [0, 1]. ARC cancels out entirely, so the bar
@@ -96,7 +178,17 @@ local function launchMultiplier(phase: number): number
 	local distanceFromSweetSpot = circularPhaseDistance(phase, LaunchConfig.SWEET_SPOT_PHASE)
 	local halfWidth = LaunchConfig.SWEET_SPOT_WIDTH / 2
 	if distanceFromSweetSpot <= halfWidth then
-		return LaunchConfig.SWEET_SPOT_MULTIPLIER
+		if halfWidth <= 0 then
+			return LaunchConfig.SWEET_SPOT_MULTIPLIER
+		end
+		-- t = 1 at dead centre (distance 0), t = 0 at the window's edge.
+		local t = 1 - (distanceFromSweetSpot / halfWidth)
+		local graded = LaunchConfig.SWEET_SPOT_EDGE_MULTIPLIER
+			+ (LaunchConfig.SWEET_SPOT_MULTIPLIER - LaunchConfig.SWEET_SPOT_EDGE_MULTIPLIER) * t
+		if graded >= LaunchConfig.SWEET_SPOT_SNAP_THRESHOLD then
+			return LaunchConfig.SWEET_SPOT_MULTIPLIER
+		end
+		return graded
 	end
 	local t = 1 - (distanceFromSweetSpot - halfWidth) / (0.5 - halfWidth)
 	t = math.clamp(t, 0, 1)
@@ -106,6 +198,33 @@ end
 local function inSweetSpot(phase: number): boolean
 	return circularPhaseDistance(phase, LaunchConfig.SWEET_SPOT_PHASE) <= LaunchConfig.SWEET_SPOT_WIDTH / 2
 end
+
+-- LaunchConfig.OUTCOME_BANDS is ordered highest-threshold-first and covers the
+-- full multiplier range with no gaps -- first entry the multiplier meets or
+-- beats wins. Returns the INDEX (not the band itself) so the style table below,
+-- kept in this file rather than in config since colour/size is presentation
+-- only, can be looked up in lockstep by position.
+local function outcomeBandIndex(multiplier: number): number
+	local bands = LaunchConfig.OUTCOME_BANDS
+	for i, band in bands do
+		if multiplier >= band.threshold then
+			return i
+		end
+	end
+	return #bands
+end
+
+-- Styling for each OUTCOME_BANDS entry, same order/length (5) -- a perfect
+-- reads as a celebration (biggest, boldest, gold), a miss reads as flat (small,
+-- muted, regular weight, no bold) per the written report: this game is
+-- launched hundreds of times, so the low end has to stay gentle, not harsh.
+local OUTCOME_STYLES: { { color: Color3, size: UDim2, font: Enum.Font, strokeTransparency: number } } = {
+	{ color = Color3.new(1, 0.85, 0.25), size = UDim2.new(0, 320, 0, 46), font = Enum.Font.GothamBlack, strokeTransparency = 0.2 }, -- Perfect!
+	{ color = Color3.new(0.4, 1, 0.5), size = UDim2.new(0, 300, 0, 38), font = Enum.Font.GothamBold, strokeTransparency = 0.35 }, -- Great!
+	{ color = Color3.new(0.85, 0.85, 1), size = UDim2.new(0, 280, 0, 32), font = Enum.Font.GothamBold, strokeTransparency = 0.5 }, -- Good
+	{ color = Color3.new(0.75, 0.75, 0.8), size = UDim2.new(0, 260, 0, 28), font = Enum.Font.GothamBold, strokeTransparency = 0.5 }, -- Okay
+	{ color = Color3.new(0.55, 0.55, 0.6), size = UDim2.new(0, 240, 0, 24), font = Enum.Font.Gotham, strokeTransparency = 0.6 }, -- Lock in..
+}
 
 -- Mirrors LaunchServer's trajectoryPosition exactly -- same shared distance/arc
 -- height numbers, received once in FlightStarted below, not recomputed locally.
@@ -218,11 +337,26 @@ local barTrackCorner = Instance.new("UICorner")
 barTrackCorner.CornerRadius = UDim.new(0, 8)
 barTrackCorner.Parent = barTrack
 
+-- A thin rim so the track reads as a distinct object at a glance instead of a
+-- flat rectangle, even before the sweet-spot band draws the eye. Subtle by
+-- design -- this is polish, not a second signal competing with the indicator.
+local barTrackStroke = Instance.new("UIStroke")
+barTrackStroke.Name = "TrackRim"
+barTrackStroke.Color = Color3.new(1, 1, 1)
+barTrackStroke.Transparency = 0.85
+barTrackStroke.Thickness = 1.5
+barTrackStroke.Parent = barTrack
+
 -- Sweet-spot band: a static highlight at the TOP of the track (fill = 1 is the
 -- forward extreme of the arc -- see LaunchConfig.SWEET_SPOT_PHASE). Its height is
 -- computed from SWEET_SPOT_WIDTH using the same sine relationship as the server's
 -- circularPhaseDistance check, so it visually represents the actual accepted
--- window, not an approximation of it.
+-- window, not an approximation of it. The vertical gradient across it mirrors
+-- the actual grading curve (see LaunchConfig.SWEET_SPOT_EDGE_MULTIPLIER/
+-- SWEET_SPOT_MULTIPLIER) instead of just being decoration: brightest at the top
+-- of the band (dead centre, the 2.0x peak) fading to dimmer at the bottom (the
+-- window's edges, 1.8x) -- so the band ITSELF shows where the grading is
+-- heading, not just where the window is.
 do
 	local halfWidth = LaunchConfig.SWEET_SPOT_WIDTH / 2
 	-- fillFraction is symmetric around its peak (phase 0.25), so the fill value at
@@ -239,7 +373,7 @@ do
 	sweetBand.Position = UDim2.new(0.5, 0, 0, 0)
 	sweetBand.Size = UDim2.new(1, 0, bandHeightFraction, 0)
 	sweetBand.BackgroundColor3 = Color3.new(0.2, 1, 0.35)
-	sweetBand.BackgroundTransparency = 0.35
+	sweetBand.BackgroundTransparency = 0.3
 	sweetBand.BorderSizePixel = 0
 	sweetBand.ZIndex = 2
 	sweetBand.Parent = barTrack
@@ -247,6 +381,23 @@ do
 	local sweetBandCorner = Instance.new("UICorner")
 	sweetBandCorner.CornerRadius = UDim.new(0, 8)
 	sweetBandCorner.Parent = sweetBand
+
+	-- Rotation 90 turns the gradient vertical, offset 0 at the top of the frame.
+	local sweetBandGradient = Instance.new("UIGradient")
+	sweetBandGradient.Rotation = 90
+	sweetBandGradient.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.new(0.6, 1, 0.65)),
+		ColorSequenceKeypoint.new(1, Color3.new(0.1, 0.55, 0.25)),
+	})
+	sweetBandGradient.Parent = sweetBand
+
+	-- A crisp edge on the band is what sells the 1.5->1.8 jump visually: the
+	-- moment the indicator crosses this line, it's a hard boundary, not a fade.
+	local sweetBandStroke = Instance.new("UIStroke")
+	sweetBandStroke.Color = Color3.new(0.6, 1, 0.65)
+	sweetBandStroke.Transparency = 0.4
+	sweetBandStroke.Thickness = 1.5
+	sweetBandStroke.Parent = sweetBand
 end
 
 local barIndicator = Instance.new("Frame")
@@ -263,9 +414,22 @@ local barIndicatorCorner = Instance.new("UICorner")
 barIndicatorCorner.CornerRadius = UDim.new(0, 5)
 barIndicatorCorner.Parent = barIndicator
 
+-- Invisible outside the sweet spot, a bright gold glow the instant the indicator
+-- is inside it (set every frame below, alongside its size/color) -- this is the
+-- "at a glance, without reading" signal item 6 asks for: a distinct pop that
+-- doesn't depend on noticing a number change.
+local barIndicatorGlow = Instance.new("UIStroke")
+barIndicatorGlow.Name = "HitGlow"
+barIndicatorGlow.Thickness = 3
+barIndicatorGlow.Color = Color3.new(1, 0.85, 0.25)
+barIndicatorGlow.Transparency = 1
+barIndicatorGlow.Parent = barIndicator
+
 -- Live multiplier readout, right above the bar. Updated every frame alongside
 -- the indicator (same RenderStepped loop below) -- normal styling for the
--- gradual-ramp range, a distinct bigger/brighter look when in the sweet spot.
+-- gradual-ramp range, a distinct brighter look when in the sweet spot. Reads as
+-- a smoothly climbing/falling number now (grading removed the flat "2x!" snap
+-- text) -- the hit/miss signal lives in the bar, not in this label freezing.
 local multiplierLabel = Instance.new("TextLabel")
 multiplierLabel.Name = "MultiplierReadout"
 multiplierLabel.AnchorPoint = Vector2.new(1, 1)
@@ -278,6 +442,48 @@ multiplierLabel.TextColor3 = Color3.new(1, 1, 1)
 multiplierLabel.TextStrokeTransparency = 0.4
 multiplierLabel.Text = "0.75x"
 multiplierLabel.Parent = screenGui
+
+-- Outcome readout: the short result word (see LaunchConfig.OUTCOME_BANDS),
+-- set once per release, in doRelease below, from the same phase the release
+-- itself fires on -- this IS the feedback, meant to read instantly without
+-- parsing a number, styled per band (OUTCOME_STYLES above) so a perfect looks
+-- like a celebration and a miss looks flat. Left up through the whole flight
+-- and beyond (nothing clears it until the NEXT release overwrites it), so it
+-- also works as a "how did I just do" readout while lining up the next swing,
+-- not just an instant flash at release. Stacked directly under the distance
+-- readout (same horizontal centre, not a separate corner) so its size
+-- changing per band can't overlap that label on a narrow phone screen, where
+-- the distance readout's fixed 400px width already spans most of the width.
+local outcomeLabel = Instance.new("TextLabel")
+outcomeLabel.Name = "OutcomeReadout"
+outcomeLabel.AnchorPoint = Vector2.new(0.5, 0)
+outcomeLabel.Position = UDim2.new(0.5, 0, 0.05, 64)
+outcomeLabel.Size = UDim2.new(0, 260, 0, 28)
+outcomeLabel.BackgroundTransparency = 1
+outcomeLabel.Font = Enum.Font.GothamBold
+outcomeLabel.TextScaled = true
+outcomeLabel.TextColor3 = Color3.new(0.75, 0.75, 0.8)
+outcomeLabel.TextStrokeTransparency = 0.5
+outcomeLabel.Text = ""
+outcomeLabel.Parent = screenGui
+
+-- Distance sub-readout: small and muted on purpose -- the player launches for
+-- luck, not studs, so luck gets the big primary line (see distanceLabel's
+-- landed-text below) and distance is demoted to this quiet footnote instead of
+-- being the headline. Positioned below the outcome label's tallest ("Perfect!")
+-- size so it never gets covered as that label grows/shrinks per band.
+local distanceSubLabel = Instance.new("TextLabel")
+distanceSubLabel.Name = "DistanceSubReadout"
+distanceSubLabel.AnchorPoint = Vector2.new(0.5, 0)
+distanceSubLabel.Position = UDim2.new(0.5, 0, 0.05, 116)
+distanceSubLabel.Size = UDim2.new(0, 200, 0, 20)
+distanceSubLabel.BackgroundTransparency = 1
+distanceSubLabel.Font = Enum.Font.Gotham
+distanceSubLabel.TextScaled = true
+distanceSubLabel.TextColor3 = Color3.new(0.6, 0.6, 0.65)
+distanceSubLabel.TextStrokeTransparency = 0.6
+distanceSubLabel.Text = ""
+distanceSubLabel.Parent = screenGui
 
 local releaseButton = Instance.new("TextButton")
 releaseButton.Name = "ReleaseButton"
@@ -463,6 +669,36 @@ slimeNameLabel.Text = ""
 slimeNameLabel.ZIndex = 6
 slimeNameLabel.Parent = slimeRevealFrame
 
+-- Draws the bar/multiplier readout for a GIVEN phase -- shared by the live
+-- per-frame sweep (RenderStepped below) and doRelease's freeze-on-release
+-- (below), so the two can never disagree. BUG FIX (see written report): the
+-- live sweep used to keep animating for one extra frame after release --
+-- doRelease flips canRelease synchronously, but the bar's last on-screen
+-- value was whatever the PREVIOUS RenderStepped frame rendered, a fraction of
+-- a frame stale relative to the exact phase doRelease captures for the
+-- outcome text. Near the sweet spot's narrow window that stale frame can read
+-- a noticeably different multiplier (even flip in or out of a snap), so the
+-- bar and the outcome text could disagree. Calling this with the SAME phase
+-- doRelease grades the outcome from guarantees they always match.
+local function renderBarForPhase(phase: number)
+	local fill = fillFraction(phase)
+	barIndicator.Position = UDim2.new(0.5, 0, 1 - fill, 0)
+
+	local hit = inSweetSpot(phase)
+	multiplierLabel.Text = string.format("%.2fx", launchMultiplier(phase))
+	multiplierLabel.TextColor3 = hit and Color3.new(0.4, 1, 0.5) or Color3.new(1, 1, 1)
+
+	if hit then
+		barIndicator.Size = UDim2.new(1, 14, 0, 14)
+		barIndicator.BackgroundColor3 = Color3.new(1, 0.85, 0.25)
+		barIndicatorGlow.Transparency = 0.15
+	else
+		barIndicator.Size = UDim2.new(1, 8, 0, 10)
+		barIndicator.BackgroundColor3 = Color3.new(1, 1, 1)
+		barIndicatorGlow.Transparency = 1
+	end
+end
+
 -- ===== State =====
 local canRelease = true
 
@@ -479,6 +715,32 @@ local function doRelease()
 	if not canRelease or flightActive then
 		return
 	end
+
+	-- Grade THIS release for the outcome readout, from the same phase this
+	-- client would show on the bar the instant before firing -- cosmetic
+	-- prediction only, same caveat as the rest of this file's mirrored formulas
+	-- (the server's own phase, read when the signal actually arrives, is what
+	-- really decides the outcome). Close enough under normal latency to be a
+	-- trustworthy "what did that feel like" readout without waiting on a round
+	-- trip.
+	local releasePhase = swingPhase()
+	local releaseMultiplier = launchMultiplier(releasePhase)
+	local bandIndex = outcomeBandIndex(releaseMultiplier)
+	local band = LaunchConfig.OUTCOME_BANDS[bandIndex]
+	local style = OUTCOME_STYLES[bandIndex]
+	outcomeLabel.Text = string.format("%s  %.2fx", band.text, releaseMultiplier)
+	outcomeLabel.TextColor3 = style.color
+	outcomeLabel.Size = style.size
+	outcomeLabel.Font = style.font
+	outcomeLabel.TextStrokeTransparency = style.strokeTransparency
+
+	-- Freeze the bar/multiplier readout at this EXACT phase -- see
+	-- renderBarForPhase's comment. canRelease flips false right below, and the
+	-- RenderStepped loop's own "if not canRelease then return end" guard means
+	-- nothing overwrites this again until canRelease goes true (ResetReady, at
+	-- the start of the next swing).
+	renderBarForPhase(releasePhase)
+
 	canRelease = false
 	distanceLabel.Text = "0.0 studs"
 	releaseRemote:FireServer()
@@ -676,7 +938,33 @@ ridingAssignedRemote.OnClientEvent:Connect(function()
 	isRider = true
 end)
 
-RunService.RenderStepped:Connect(function()
+-- BUG FIX (real cause of the flight stutter, see the written report): a plain
+-- RunService.RenderStepped:Connect() is DOCUMENTED by Roblox to run at
+-- Enum.RenderPriority.Last -- i.e. AFTER the engine's own built-in camera
+-- update (which runs at Enum.RenderPriority.Camera, well before Last), every
+-- single frame. Since FlightStarted hands the camera back to Roblox's normal
+-- Custom-type follow behaviour (see below) and never touches camera.CFrame
+-- again, that built-in update reads the character's position ONCE per frame,
+-- at Camera priority -- which, under a plain :Connect(), was always the
+-- PREVIOUS frame's position: this script's own PivotTo (moving the character
+-- to THIS frame's position) didn't run until Last, strictly after the camera
+-- had already looked. Both character and camera were per-frame and
+-- client-side, exactly as the earlier jitter fix intended, but with an
+-- undeclared one-frame ordering gap between them on every single frame --
+-- invisible while riding at normal walking-scale motion, but readable as
+-- stutter during flight, where a single frame of lag is a large,
+-- speed-proportional position gap (tens of studs at these flight speeds).
+-- BindToRenderStep with an explicit priority BEFORE Camera guarantees this
+-- script's PivotTo (and the swing seat's CFrame) always lands before the
+-- built-in camera reads the character that same frame, closing the gap
+-- entirely instead of relying on both sides happening to be "per frame."
+local RENDER_STEP_NAME = "LaunchClientSwingAndFlightUpdate"
+RunService:BindToRenderStep(RENDER_STEP_NAME, Enum.RenderPriority.Camera.Value - 1, function()
+	-- Cheap (a couple of .Parent checks) every frame; only ever actually
+	-- re-fetches anything in the rare frame right after a tier purchase
+	-- rebuilds the structure -- see ensureSwingReferences's own comment.
+	ensureSwingReferences()
+
 	local phase = swingPhase()
 
 	-- The swing itself always swings, for every viewer, whether or not anyone
@@ -685,7 +973,12 @@ RunService.RenderStepped:Connect(function()
 	-- cheap, pure math, no reason to gate it to just the rider's own client.
 	local theta = swingTheta(phase)
 	local seatPosition = swingSeatPosition(theta)
-	swingSeatPart.CFrame = CFrame.new(seatPosition) * CFrame.Angles(theta, 0, 0)
+	-- :PivotTo, not .CFrame -- the seat is now a multi-part Model (see
+	-- SwingBuilder.luau), so every part in it (base, back, rails, whatever
+	-- this tier's seatStyle built) has to move together as one rigid unit,
+	-- same mechanism the character itself already uses.
+	swingSeatModel:PivotTo(CFrame.new(seatPosition) * CFrame.Angles(theta, 0, 0))
+	repositionChainLinks(seatPosition)
 
 	-- BUG FIX (see written report): this used to be the SERVER repositioning the
 	-- rider every Heartbeat and replicating the result -- arriving at whatever
@@ -720,21 +1013,22 @@ RunService.RenderStepped:Connect(function()
 		end
 
 		if u >= 1 then
-			-- Landed: swap the live countup for the final result -- distance AND
-			-- the luck it earned, together, since the luck IS the result of the
-			-- launch (see the written report). Server already computed luck at
-			-- release from the same landing Z the character is now standing at
-			-- (see LaunchServer's bandLuckForLandingZ) -- this is purely display,
-			-- nothing here can change or re-derive the value. Held on screen for
-			-- the rest of RESET_DELAY (unchanged), same as the plain distance
-			-- readout was before.
+			-- Landed: swap the live countup for the final result. LUCK is the
+			-- headline now (see the written report -- the player launches for
+			-- luck, not studs), distance demoted to the small sub-readout below
+			-- it. Server already computed luck at release from the same landing
+			-- Z the character is now standing at (see LaunchServer's
+			-- bandLuckForLandingZ) -- this is purely display, nothing here can
+			-- change or re-derive the value. Held on screen for the rest of
+			-- RESET_DELAY (unchanged), same as before.
 			if flightLuck > 0 then
-				distanceLabel.Text = string.format("%.1f studs  --  Luck x%s!", flightDistance, LuckCurve.formatLuck(flightLuck))
+				distanceLabel.Text = string.format("Luck x%s!", LuckCurve.formatLuck(flightLuck))
 				distanceLabel.TextColor3 = Color3.new(1, 0.85, 0.2)
 			else
-				distanceLabel.Text = string.format("%.1f studs  --  No luck (short of the road)", flightDistance)
+				distanceLabel.Text = "No luck (short of the road)"
 				distanceLabel.TextColor3 = Color3.new(1, 1, 1)
 			end
+			distanceSubLabel.Text = string.format("%.1f studs", flightDistance)
 			flightActive = false
 			return
 		end
@@ -749,14 +1043,5 @@ RunService.RenderStepped:Connect(function()
 	if not canRelease then
 		return
 	end
-	local fill = fillFraction(phase)
-	barIndicator.Position = UDim2.new(0.5, 0, 1 - fill, 0)
-
-	if inSweetSpot(phase) then
-		multiplierLabel.Text = "2x!"
-		multiplierLabel.TextColor3 = Color3.new(0.2, 1, 0.35)
-	else
-		multiplierLabel.Text = string.format("%.2fx", launchMultiplier(phase))
-		multiplierLabel.TextColor3 = Color3.new(1, 1, 1)
-	end
+	renderBarForPhase(phase)
 end)

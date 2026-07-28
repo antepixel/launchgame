@@ -28,8 +28,8 @@
         "$className": "Part",
         "$properties": {
           "Anchored": true,
-          "Position": [0, -2, 35],
-          "Size": [240, 4, 50],
+          "Position": [0, -2, 27.8679],
+          "Size": [240, 4, 64.2642],
           "Material": "Grass",
           "Color": [0.29, 0.56, 0.2]
         }
@@ -44,50 +44,6 @@
           "Size": [2, 0.2, 2]
         }
       },
-      "SwingPost1": {
-        "$className": "Part",
-        "$properties": {
-          "Anchored": true,
-          "CanCollide": false,
-          "Position": [-6, 6.5, 30],
-          "Size": [1.5, 13, 1.5],
-          "Material": "Wood",
-          "Color": [0.4, 0.27, 0.13]
-        }
-      },
-      "SwingPost2": {
-        "$className": "Part",
-        "$properties": {
-          "Anchored": true,
-          "CanCollide": false,
-          "Position": [6, 6.5, 30],
-          "Size": [1.5, 13, 1.5],
-          "Material": "Wood",
-          "Color": [0.4, 0.27, 0.13]
-        }
-      },
-      "SwingBeam": {
-        "$className": "Part",
-        "$properties": {
-          "Anchored": true,
-          "CanCollide": false,
-          "Position": [0, 13, 30],
-          "Size": [13.5, 1.2, 1.2],
-          "Material": "Wood",
-          "Color": [0.4, 0.27, 0.13]
-        }
-      },
-      "SwingSeat": {
-        "$className": "Part",
-        "$properties": {
-          "Anchored": true,
-          "CanCollide": false,
-          "Position": [0, 3, 30],
-          "Size": [4, 0.5, 3],
-          "Material": "WoodPlanks",
-          "Color": [0.55, 0.36, 0.18]
-        }
-      },
       "PlaceholderSpawn": {
         "$className": "SpawnLocation",
         "$properties": {
@@ -97,6 +53,17 @@
           "Duration": 0,
           "Position": [0, 1, 55],
           "Size": [8, 1, 8]
+        }
+      },
+      "RenderDistanceTestBlock": {
+        "$className": "Part",
+        "$properties": {
+          "Anchored": true,
+          "CanCollide": false,
+          "Position": [0, 100, -990],
+          "Size": [80, 80, 80],
+          "Material": "Neon",
+          "Color": [1, 0.05, 0.75]
         }
       }
     }

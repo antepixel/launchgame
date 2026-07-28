@@ -8,7 +8,10 @@
 export type LaunchConfig = {
 	WORST_MULTIPLIER: number,
 	EDGE_MULTIPLIER: number,
+	SWEET_SPOT_EDGE_MULTIPLIER: number,
 	SWEET_SPOT_MULTIPLIER: number,
+	SWEET_SPOT_SNAP_THRESHOLD: number,
+	OUTCOME_BANDS: { { threshold: number, text: string } },
 	DISTANCE_PER_MULTIPLIER: number,
 	FLIGHT_DURATION_SECONDS: number,
 	FLIGHT_DURATION_EXPONENT: number,
@@ -37,26 +40,54 @@ local LaunchConfig: LaunchConfig = {
 	-- farthest from the sweet spot). Raising this shrinks the gap between a bad
 	-- release and an edge-of-sweet-spot one.
 	WORST_MULTIPLIER = 0.75,
-	-- Multiplier at the EDGE of the sweet-spot window -- the top of the gradual
-	-- ramp, just before it snaps.
+	-- Multiplier at the EDGE of the sweet-spot window, approached from OUTSIDE --
+	-- the top of the gradual outer ramp, just before it jumps.
 	EDGE_MULTIPLIER = 1.5,
-	-- Multiplier ANYWHERE inside the sweet-spot window -- a flat snap, not a peak
-	-- of the ramp. Deliberately NOT continuous with EDGE_MULTIPLIER (1.5 -> 2.0 is
-	-- a jump, not a slope): landing in the window has to read as a distinct hit,
-	-- not the top of a curve you can back into by accident.
+	-- Multiplier at the EDGE of the sweet-spot window, approached from INSIDE --
+	-- the bottom of the inner ramp (see SWEET_SPOT_MULTIPLIER below). Deliberately
+	-- NOT continuous with EDGE_MULTIPLIER (1.5 -> 1.8 is a jump, not a slope):
+	-- landing in the window has to read as a distinct hit, not the top of a curve
+	-- you can back into by accident. This gap is the one thing that must NOT be
+	-- softened -- see the written report.
+	SWEET_SPOT_EDGE_MULTIPLIER = 1.8,
+	-- Multiplier at DEAD CENTRE of the sweet-spot window -- the peak of the inner
+	-- ramp and the maximum possible multiplier overall. Anywhere inside the
+	-- window now grades smoothly from SWEET_SPOT_EDGE_MULTIPLIER at the boundary
+	-- up to this value at the centre, instead of a flat snap -- so hitting the
+	-- window is guaranteed to feel like a hit (the 1.5->1.8 jump), but centring
+	-- it still rewards extra precision instead of being an identical plateau.
 	SWEET_SPOT_MULTIPLIER = 2.0,
+	-- Any GRADED value at or above this snaps up to exactly SWEET_SPOT_MULTIPLIER.
+	-- Landing on the single exact centre phase is luck, not skill -- this turns
+	-- "close enough to centre" into a genuine, reachable perfect instead of a
+	-- vanishingly rare bullseye. Only affects the TOP of the inner ramp (see
+	-- launchMultiplier in LaunchServer/LaunchClient) -- the outer ramp and the
+	-- 1.5->1.8 jump are untouched. Also doubles as the top OUTCOME_BANDS cutoff
+	-- below, since anything that snaps to 2.0 should read as "Perfect!" too.
+	-- 1.90 snaps the top HALF of the inner ramp's half-width (a graded value
+	-- reaches 1.90 at 50% of the way from edge to centre) -- so the "perfect"
+	-- zone is 50% of the full sweet-spot width, not a sliver you can only find
+	-- by luck.
+	SWEET_SPOT_SNAP_THRESHOLD = 1.90,
 
 	-- ===== Scripted flight (this pass: no more velocity/physics -- see the
 	-- written report for why) =====
 	-- Studs of landing distance per 1.0 of multiplier, AT TIER 1 (see
 	-- SWING_TIER_DISTANCE_SCALE below for other tiers) -- distance = multiplier
 	-- * this * the active tier's scale, a direct deterministic mapping, no
-	-- speed/angle/gravity physics involved. 50 is derived, not guessed: a
-	-- tier-1 perfect (2.0x) launch must land on band 5 (luck 25) -- see the
-	-- written report for the arithmetic (it works back from the swing-to-
-	-- runway gap, ~14.26 studs at the sweet-spot phase, plus the target
-	-- band's stud range, to this number).
-	DISTANCE_PER_MULTIPLIER = 50,
+	-- speed/angle/gravity physics involved. 100 is derived, not guessed: a
+	-- tier-1 perfect (2.0x) launch must land on band 5 (luck 25), UNCHANGED
+	-- from before RUNWAY_BAND_LENGTH_STUDS doubled to 40 -- see the written
+	-- report for the arithmetic. Exactly double the previous value (50)
+	-- because RUNWAY_BAND_LENGTH_STUDS below also exactly doubled (from 20 to
+	-- 40, to give the road's number signs more visual breathing room): every
+	-- distance in the game is DISTANCE_PER_MULTIPLIER * multiplier * tier
+	-- scale, so scaling this constant by the same factor as the band depth
+	-- scales EVERY flight's distance by that factor too, which is what keeps
+	-- every tier landing on the exact same band as before despite the deeper
+	-- bands. The swing-to-runway gap also had to scale by the same factor --
+	-- see the Baseplate's Size/Position in default.project.json.
+	DISTANCE_PER_MULTIPLIER = 100,
 	-- Seconds a flight takes AT THE BASE reference distance (DISTANCE_PER_
 	-- MULTIPLIER * SWEET_SPOT_MULTIPLIER, i.e. a tier-1 perfect launch) -- see
 	-- FLIGHT_DURATION_EXPONENT below for how every OTHER distance (other
@@ -69,25 +100,37 @@ local LaunchConfig: LaunchConfig = {
 	FLIGHT_DURATION_SECONDS = 1.8,
 	-- Exponent duration scales BY relative to distance: duration =
 	-- FLIGHT_DURATION_SECONDS * (distance / baseDistance) ^ this, where
-	-- baseDistance is the tier-1 perfect-launch distance above. 1.0 would
-	-- hold SPEED constant across every tier -- a tier-11 perfect launch
-	-- (14.8x farther) would take 14.8x as long, ~27s, which drags badly. 0.0
-	-- would hold DURATION constant regardless of distance -- the same
-	-- tier-11 flight would cross ~1480 studs in the same 1.8s as tier 1's
-	-- 100 studs, over 800 studs/sec, reading as a teleport, not a flight.
-	-- 0.5 (square root) is the middle ground: speed still climbs
-	-- noticeably with distance (a bigger tier reads as more powerful, ~55
-	-- studs/sec at tier 1 up to ~214 studs/sec at tier 11), but duration
-	-- grows far slower than distance does -- that same 14.8x-farther tier-11
-	-- flight takes only ~3.8x as long (~6.9s): long enough to register as a
-	-- big flight without dragging.
+	-- baseDistance is the tier-1 perfect-launch distance above. Because
+	-- baseDistance and every flight's distance scale by the SAME factor (see
+	-- DISTANCE_PER_MULTIPLIER/RUNWAY_BAND_LENGTH_STUDS), this ratio -- and
+	-- therefore duration -- is UNAFFECTED by that scaling; only the
+	-- illustrative stud numbers below changed. 1.0 would hold SPEED constant
+	-- across every tier -- a tier-11 perfect launch (14.8x farther) would
+	-- take 14.8x as long, ~27s, which drags badly. 0.0 would hold DURATION
+	-- constant regardless of distance -- the same tier-11 flight would cross
+	-- ~2960 studs in the same 1.8s as tier 1's 200 studs, over 1600
+	-- studs/sec, reading as a teleport, not a flight. 0.5 (square root) is
+	-- the middle ground: speed still climbs noticeably with distance (a
+	-- bigger tier reads as more powerful), but duration grows far slower
+	-- than distance does -- that same 14.8x-farther tier-11 flight takes
+	-- only ~3.8x as long (~6.9s): long enough to register as a big flight
+	-- without dragging.
+	--
+	-- SPEED DOUBLED AS OF THE BAND-DEPTH-DOUBLING PASS (see the written
+	-- report): duration only depends on the distance/baseDistance RATIO,
+	-- which is unchanged, so every flight now covers twice the studs (~111
+	-- studs/sec at tier 1, ~427 studs/sec at tier 11, up from ~55/~214) in
+	-- the SAME duration as before. Left unadjusted deliberately this pass --
+	-- see the written report for why and the proposed fix (scale
+	-- FLIGHT_DURATION_SECONDS by the same factor to restore the original
+	-- per-tier speeds exactly).
 	FLIGHT_DURATION_EXPONENT = 0.5,
 	-- Peak arc height as a FRACTION of that flight's total distance (not a fixed
 	-- stud value) -- a bigger release automatically gets a proportionally
 	-- bigger, more dramatic arc, which is also exactly what the camera's
 	-- pull-back (CAMERA_PULLBACK_FACTOR below) scales off of. 0.35 gives a
-	-- clearly visible rise (~17.5 studs at the 50-stud sweet-spot distance)
-	-- without reading as absurd.
+	-- clearly visible rise (~35 studs at the 100-stud DISTANCE_PER_MULTIPLIER
+	-- distance) without reading as absurd.
 	ARC_HEIGHT_FRACTION = 0.35,
 
 	-- ===== Physics environment (only affects normal walking-around now, not
@@ -156,25 +199,71 @@ local LaunchConfig: LaunchConfig = {
 	SWEET_SPOT_PHASE = 0.25,
 	-- Full width of the sweet-spot window, as a fraction of SWING_PERIOD_SECONDS,
 	-- centered on SWEET_SPOT_PHASE (half on each side). Outside this window, the
-	-- multiplier ramps gradually from WORST_MULTIPLIER up to EDGE_MULTIPLIER;
-	-- anywhere inside it, the multiplier snaps flat to SWEET_SPOT_MULTIPLIER. THE
+	-- multiplier ramps gradually from WORST_MULTIPLIER up to EDGE_MULTIPLIER; on
+	-- crossing into it, the multiplier jumps to SWEET_SPOT_EDGE_MULTIPLIER and then
+	-- ramps again, smoothly, up to SWEET_SPOT_MULTIPLIER at dead centre -- two
+	-- ramps with a deliberate jump between them, not one continuous curve. THE
 	-- single most feel-critical number here -- see the written report for why
 	-- 0.12 was chosen as the starting point and what to retune first.
 	SWEET_SPOT_WIDTH = 0.12,
+
+	-- ===== Outcome text: the short result word shown on release (see
+	-- LaunchClient's outcomeBandIndex) -- purely cosmetic feedback, reads
+	-- the SAME graded multiplier the bar/scoring already produced, just mapped to
+	-- a word instead of a number. Ordered HIGHEST threshold first; the first entry
+	-- whose threshold the multiplier meets or beats wins, so this list must stay
+	-- sorted descending and cover down to WORST_MULTIPLIER with no gaps. Styling
+	-- (colour/size/font) lives in LaunchClient, keyed by position in this array --
+	-- change the wording here freely, but keep the array the same length (5) or
+	-- update the client's parallel style list to match. =====
+	OUTCOME_BANDS = {
+		-- Matches SWEET_SPOT_SNAP_THRESHOLD -- anything that snaps to a perfect
+		-- 2.0x reads as a perfect result, not a coincidence of two separate numbers.
+		{ threshold = 1.95, text = "Perfect!" },
+		-- The rest of the graded interior of the sweet spot (1.8 up to the snap).
+		{ threshold = 1.8, text = "Great!" },
+		-- The top slice of the OUTER ramp -- a near miss close enough to the
+		-- window's edge (1.5) to deserve positive feedback, not a neutral shrug.
+		{ threshold = 1.3, text = "Good" },
+		-- The broad middle of the outer ramp -- neither a near miss nor a bad one.
+		{ threshold = 1.0, text = "Okay" },
+		-- The low end (down to WORST_MULTIPLIER, 0.75) -- deliberately gentle
+		-- wording (see the written report): this game is launched hundreds of
+		-- times, and a harsh word on a fifth of them would grate fast.
+		{ threshold = 0.75, text = "Lock in.." },
+	},
 
 	-- ===== Rainbow road: coloured distance bands under the flight path (built by
 	-- RunwayBuilder.server.luau -- generated at runtime, not hand-authored in the
 	-- project file, since it's a repeated/formulaic set of parts) =====
 	-- Studs each COLOURED band spans along the flight direction (how far you
-	-- travel while one band is under you). Unchanged this pass.
-	RUNWAY_BAND_LENGTH_STUDS = 20,
+	-- travel while one band is under you). DOUBLED again, from 20 to 40 --
+	-- see the written report: the road's number signs (RunwayBuilder's
+	-- floating "sign" parts, decoupled from this band's own length since a
+	-- couple of passes ago) still looked cramped sitting over a comparatively
+	-- shallow 20-stud coloured strip, even though the signs themselves don't
+	-- need this to be any bigger to render large text. This and
+	-- DISTANCE_PER_MULTIPLIER above (and the Baseplate's Size/Position in
+	-- default.project.json, which sets the swing-to-runway gap) all have to
+	-- scale together by the exact same factor, every time, or the floor-
+	-- division band lookup in LaunchServer's bandLuckForLandingZ drifts and a
+	-- tier that used to reach band N reaches a different one.
+	RUNWAY_BAND_LENGTH_STUDS = 40,
 	-- Studs wide (crosswise, perpendicular to the flight direction) each band
 	-- is -- and, with the support platform below, the whole playable width.
-	-- Quadrupled from the original 24: the flight path itself never drifts
-	-- sideways (X stays fixed at the launch origin's X for the whole
-	-- trajectory), so this was never load-bearing for containing the flight --
-	-- it was just too narrow to feel like an open space rather than a strip.
-	RUNWAY_WIDTH_STUDS = 96,
+	-- The flight path itself never drifts sideways (X stays fixed at the
+	-- launch origin's X for the whole trajectory), so this was never load-
+	-- bearing for containing the flight -- purely cosmetic, like the band
+	-- length above. WIDENED from 96 to 240 -- matches the Baseplate's own
+	-- width (default.project.json) so the coloured road now spans the FULL
+	-- platform edge-to-edge instead of a narrower strip down the middle, and
+	-- -- the actual reason for the change this pass -- gives the road number
+	-- labels enough available WIDTH to render large even for the longest
+	-- spelled-out values ("100,000"): a label's width budget is capped by
+	-- this number regardless of how tall its host sign is, so widening the
+	-- road is what let the numbers grow, not just a bigger sign. See
+	-- RunwayBuilder.server.luau and the written report.
+	RUNWAY_WIDTH_STUDS = 240,
 	-- Band COUNT and each band's LUCK value are no longer authored here at all
 	-- -- see ReplicatedStorage/Config/LuckCurve.luau. The road is now as long
 	-- as the generated curve says it is (#LuckCurve.VALUES bands), not a fixed

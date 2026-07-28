@@ -41,20 +41,22 @@ end
 LuckCurve.VALUES = values
 
 -- Shared display formatting so the SurfaceGui labels on the bands and the
--- HUD's landing readout always agree on how a given luck value reads. Values
--- under 1000 (all of decade 1, and most of decade 2) print as plain whole
--- numbers -- 5, 100, 950. From 1000 up, printed in thousands with a "K" suffix,
--- trimming a redundant ".0" (1000 -> "1K", 1500 -> "1.5K", 15000 -> "15K",
--- 100000 -> "100K") -- past four digits, a bare number stops reading as a
--- quantity at a glance, which is exactly the range this curve spends most of
--- its length in (56 of 74 bands, decades 3-4, are all >= 1500).
+-- HUD's landing readout always agree on how a given luck value reads. Spelled
+-- out IN FULL with comma separators (100000 -> "100,000"), not abbreviated --
+-- see the written report: a "K" suffix reads faster at a glance but is worse
+-- at a distance/in motion for exactly this game's purpose (the whole point of
+-- the road numbers is reading the PRECISE value as you fly over it), and
+-- comma-grouped full numbers are a more universally readable convention.
+-- Standard "insert a comma every 3 digits from the right" via a reverse/
+-- gsub/reverse round-trip -- works for any magnitude this curve produces
+-- (currently up to 100,000) without a hardcoded digit-count assumption.
 function LuckCurve.formatLuck(value: number): string
-	if value >= 1000 then
-		local thousands = string.format("%.1f", value / 1000)
-		thousands = thousands:gsub("%.0$", "")
-		return thousands .. "K"
-	end
-	return string.format("%d", value)
+	local digits = string.format("%d", value)
+	local reversed = digits:reverse()
+	local groupedReversed = reversed:gsub("(%d%d%d)", "%1,")
+	local grouped = groupedReversed:reverse()
+	local trimmed = grouped:gsub("^,", "")
+	return trimmed
 end
 
 return LuckCurve

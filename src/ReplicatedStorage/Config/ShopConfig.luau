@@ -3,13 +3,14 @@
 -- other Config module in this project. Tier PROGRESSION FEEL (how much
 -- farther each tier launches) stays in LaunchConfig.SWING_TIER_DISTANCE_
 -- SCALE, unchanged and untouched by this task -- this file is just what
--- buying into that curve costs, and how much bigger the swing itself looks
--- once you have.
+-- buying into that curve costs. How much bigger/flashier the swing looks per
+-- tier moved to ReplicatedStorage/Config/SwingTierVisuals.luau (previously a
+-- simple SWING_VISUAL_SCALE_MIN/MAX range lived here, but that only ever
+-- covered the seat's size -- see the written report for the full per-tier
+-- visual overhaul).
 
 export type ShopConfig = {
 	SWING_TIER_PRICES: { number },
-	SWING_VISUAL_SCALE_MIN: number,
-	SWING_VISUAL_SCALE_MAX: number,
 }
 
 local ShopConfig: ShopConfig = {
@@ -40,16 +41,6 @@ local ShopConfig: ShopConfig = {
 		5000000000000000000,
 		250000000000000000000,
 	},
-
-	-- The swing SEAT's cosmetic size multiplier at tier 1 and at the max
-	-- tier -- linearly interpolated between them by tier number (see
-	-- LaunchServer.server.luau's applySwingVisualForTier). Purely visual:
-	-- nothing here feeds into distance, timing, or the seat's actual
-	-- POSITION (still driven entirely by the swing's existing phase math,
-	-- completely untouched) -- see the written report for why size-only,
-	-- seat-only was chosen as this pass's "something simple."
-	SWING_VISUAL_SCALE_MIN = 1.0,
-	SWING_VISUAL_SCALE_MAX = 1.5,
 }
 
 return ShopConfig
