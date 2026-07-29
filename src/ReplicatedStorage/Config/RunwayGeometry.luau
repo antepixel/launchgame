@@ -18,4 +18,11 @@ local RunwayGeometry = {}
 -- platform actually sits in the place file.
 RunwayGeometry.RUNWAY_START_Z = baseplate.Position.Z - baseplate.Size.Z / 2
 
+-- Y coordinate of the road/platform surface -- the Baseplate's own top,
+-- same value RunwayBuilder places every band's top at. Also read by
+-- LaunchServer's trajectoryPosition, which now lands the flight ON this
+-- surface instead of back at launch height -- same "one formula, both
+-- consumers" reasoning as RUNWAY_START_Z above.
+RunwayGeometry.RUNWAY_TOP_Y = baseplate.Position.Y + baseplate.Size.Y / 2
+
 return RunwayGeometry

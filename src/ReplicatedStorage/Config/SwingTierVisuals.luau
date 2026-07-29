@@ -93,13 +93,24 @@ export type TierVisual = {
 
 -- Base dimensions (studs), BEFORE `scale`. Every tier's frame is built from
 -- these same base numbers times its own `scale` -- see SwingBuilder.build --
--- so "posts thick enough to plausibly hold the structure" and "beam
--- overhangs the posts slightly" hold true at every size, not just tier 1.
+-- so "legs thick enough to plausibly hold the structure" and "beam
+-- overhangs the apexes slightly" hold true at every size, not just tier 1.
 SwingTierVisuals.BASE_POST_HEIGHT = 13
 SwingTierVisuals.BASE_STAND_HALF_WIDTH = 6
 SwingTierVisuals.BASE_POST_THICKNESS = 1.6
 SwingTierVisuals.BASE_BEAM_THICKNESS = 1.3
-SwingTierVisuals.BASE_BEAM_OVERHANG = 1.5
+-- Beam overhang past each apex -- REDUCED from 1.5 to 0.5 in the A-frame
+-- rebuild (see the written report) so the beam's total length lands at the
+-- specified ~13 studs at tier 1 (2*BASE_STAND_HALF_WIDTH + 2*this = 13),
+-- not the old 15.
+SwingTierVisuals.BASE_BEAM_OVERHANG = 0.5
+-- Half the distance between an A-frame's two feet along Z (depth) -- NEW
+-- in the A-frame rebuild (see the written report): the old silhouette was
+-- two vertical posts and a crossbar with almost no depth at all (tier 1
+-- measured 3.8 studs deep against 14.4 tall); a real A-frame has FOUR legs,
+-- two per side, splayed outward along depth from a shared apex down to two
+-- feet 2x this far apart (9 studs at tier 1).
+SwingTierVisuals.BASE_LEG_SPLAY_HALF_DEPTH = 4.5
 
 SwingTierVisuals.TIERS = {
 	-- Tier 1: small wooden A-frame, weathered brown, a plain plank seat on

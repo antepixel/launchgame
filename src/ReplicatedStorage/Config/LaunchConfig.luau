@@ -25,6 +25,7 @@ export type LaunchConfig = {
 	SWING_PERIOD_SECONDS: number,
 	SWING_ARC_HALF_ANGLE_DEGREES: number,
 	SWING_ROPE_LENGTH: number,
+	SWING_BASE_PIVOT_HEIGHT_ABOVE_GROUND: number,
 	SWEET_SPOT_PHASE: number,
 	SWEET_SPOT_WIDTH: number,
 	RUNWAY_BAND_LENGTH_STUDS: number,
@@ -185,11 +186,25 @@ local LaunchConfig: LaunchConfig = {
 	-- at the extremes; does not change timing (period is independent of arc size
 	-- for this scripted pendulum, unlike a real one).
 	SWING_ARC_HALF_ANGLE_DEGREES = 35,
-	-- Studs from the fixed pivot (SwingPivot) to the seat. Longer = the seat
-	-- travels a bigger physical arc at the same angular size/period, reading as
-	-- slower, weightier motion; also sets how high the pivot/frame needs to be
-	-- built in the world.
+	-- BASE studs from the pivot to the seat, at tier 1 (scale = 1.0) -- this
+	-- number itself NEVER changes by tier; SwingGeometry.luau derives each
+	-- tier's EFFECTIVE rope length as this * scale, and the pivot's own
+	-- height above ground scales by the same `scale` right alongside it, so
+	-- the seat's height as a fraction of the frame stays constant and the
+	-- swing's physical arc radius grows with the frame instead of staying
+	-- fixed at this tier-1 size forever (see the written report). Longer =
+	-- the seat travels a bigger physical arc at the same angular size/
+	-- period, reading as slower, weightier motion.
 	SWING_ROPE_LENGTH = 10,
+	-- BASE pivot height above ground, at tier 1 (scale = 1.0) -- matches
+	-- SwingPivot's placed Y (13) in default.project.json, since the
+	-- Baseplate's own top also sits at world Y = 0. A CONFIG constant, not
+	-- read from whichever SwingPivot part happens to exist in Workspace, so
+	-- SwingGeometry.luau's pivotYForScale works identically for the one
+	-- real game swing (LaunchServer.server.luau) and for every independent
+	-- swing the dev-only gallery builds (SwingGallery.server.luau), none of
+	-- which share a single canonical pivot any more.
+	SWING_BASE_PIVOT_HEIGHT_ABOVE_GROUND = 13,
 	-- Where in the cycle (0-1, fraction of SWING_PERIOD_SECONDS) counts as the
 	-- sweet spot. 0.25 = the forward extreme of the arc, where the swing
 	-- momentarily pauses before reversing -- chosen deliberately over the center

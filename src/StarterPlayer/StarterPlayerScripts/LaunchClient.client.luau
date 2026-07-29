@@ -35,6 +35,8 @@ local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
 local SlimeConfig = require(ReplicatedStorage.Config.SlimeConfig)
 local SlimeData = require(ReplicatedStorage.Config.SlimeData)
+local SwingGeometry = require(ReplicatedStorage.Config.SwingGeometry)
+local RunwayGeometry = require(ReplicatedStorage.Config.RunwayGeometry)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -55,23 +57,28 @@ local swingPivot = Workspace:WaitForChild("SwingPivot") :: BasePart
 -- The swing STRUCTURE (posts/beam/seat/chain) is built by SwingBuilder.luau
 -- and completely REBUILT (destroyed and recreated) every time the rider's
 -- tier changes -- see the written report. That means SwingSeat/
--- SwingChainAnchor/SwingChainLinks are NOT stable references for the life of
--- the server the way SwingPivot is; a cached reference can go stale (its
--- .Parent becomes nil) the instant a tier purchase rebuilds the structure.
--- ensureSwingReferences() below re-acquires them on demand, cheaply checked
--- every frame, rather than requiring this script to somehow learn "the
--- structure just rebuilt" as a separate event.
+-- SwingChainAnchorLeft/SwingChainAnchorRight/SwingChainLinks are NOT stable
+-- references for the life of the server the way SwingPivot is; a cached
+-- reference can go stale (its .Parent becomes nil) the instant a tier
+-- purchase rebuilds the structure. ensureSwingReferences() below
+-- re-acquires them on demand, cheaply checked every frame, rather than
+-- requiring this script to somehow learn "the structure just rebuilt" as a
+-- separate event.
 local swingStructureFolder = Workspace:WaitForChild("SwingStructure")
 local swingSeatModel = swingStructureFolder:WaitForChild("SwingSeat") :: Model
-local swingChainAnchor = swingStructureFolder:WaitForChild("SwingChainAnchor") :: BasePart
+local swingChainAnchorLeft = swingStructureFolder:WaitForChild("SwingChainAnchorLeft") :: BasePart
+local swingChainAnchorRight = swingStructureFolder:WaitForChild("SwingChainAnchorRight") :: BasePart
 local swingChainLinksFolder = swingStructureFolder:WaitForChild("SwingChainLinks") :: Folder
 
 local function ensureSwingReferences()
 	if not swingSeatModel.Parent then
 		swingSeatModel = swingStructureFolder:WaitForChild("SwingSeat") :: Model
 	end
-	if not swingChainAnchor.Parent then
-		swingChainAnchor = swingStructureFolder:WaitForChild("SwingChainAnchor") :: BasePart
+	if not swingChainAnchorLeft.Parent then
+		swingChainAnchorLeft = swingStructureFolder:WaitForChild("SwingChainAnchorLeft") :: BasePart
+	end
+	if not swingChainAnchorRight.Parent then
+		swingChainAnchorRight = swingStructureFolder:WaitForChild("SwingChainAnchorRight") :: BasePart
 	end
 	if not swingChainLinksFolder.Parent then
 		swingChainLinksFolder = swingStructureFolder:WaitForChild("SwingChainLinks") :: Folder
@@ -93,8 +100,16 @@ local function swingTheta(phase: number): number
 end
 
 local function swingSeatPosition(theta: number): Vector3
-	local length = LaunchConfig.SWING_ROPE_LENGTH
-	return swingPivot.Position + Vector3.new(0, -length * math.cos(theta), -length * math.sin(theta))
+	local pivotPosition = swingPivot.Position
+	-- Effective rope length for WHATEVER tier is currently built -- derived
+	-- from the pivot's own live (replicated) Y, not a raw LaunchConfig.
+	-- SWING_ROPE_LENGTH read, since the rope is now scaled by tier right
+	-- alongside the pivot (see SwingBuilder.luau/SwingGeometry.luau). Mirrors
+	-- LaunchServer's own swingSeatPosition exactly -- same formula, same
+	-- derivation, just read from the replicated pivot instead of computed
+	-- fresh, since the server is the only thing that ever moves it.
+	local length = SwingGeometry.ropeLengthForPivotY(pivotPosition.Y)
+	return pivotPosition + Vector3.new(0, -length * math.cos(theta), -length * math.sin(theta))
 end
 
 local function riderCFrame(seatPosition: Vector3): CFrame
@@ -103,22 +118,20 @@ local function riderCFrame(seatPosition: Vector3): CFrame
 end
 
 -- Repositions every discrete chain-link part (Rope/Chain/Rod tiers -- see
--- SwingBuilder.luau) between the FIXED SwingChainAnchor and the CURRENT
--- (swinging) seat position, every frame. Energy tiers build zero of these --
--- their tether is a Beam, which auto-tracks its Attachments at the engine
--- level and needs no script here at all, so this is a cheap no-op for them
--- (GetChildren on an empty folder). Same "explicit basis vectors" orientation
--- technique SwingBuilder itself uses server-side, for the same reason: no
--- rotation-sign ambiguity to get backwards. "Chain" style's alternating
--- 90-degree twist (the classic linked-chain read) is stored as a Twist90
--- attribute at build time and re-applied here every frame, since this
--- function recomputes each link's orientation from scratch rather than
--- nudging whatever it had last frame.
-local function repositionChainLinks(seatTopPosition: Vector3)
-	if not swingChainAnchor.Parent then
-		return
-	end
-	local links = swingChainLinksFolder:GetChildren()
+-- SwingBuilder.luau), one side at a time, between THAT side's own fixed
+-- anchor and THAT side's own seat attachment -- never a shared centre point
+-- for both sides (see the written report on the crossed-chain bug this
+-- fixed). Energy tiers build zero of these -- their tether is a Beam, which
+-- auto-tracks its Attachments at the engine level and needs no script here
+-- at all, so this is a cheap no-op for them (GetChildren on an empty
+-- folder). Same "explicit basis vectors" orientation technique SwingBuilder
+-- itself uses server-side, for the same reason: no rotation-sign ambiguity
+-- to get backwards. "Chain" style's alternating 90-degree twist (the
+-- classic linked-chain read) is stored as a Twist90 attribute at build time
+-- and re-applied here every frame, since this function recomputes each
+-- link's orientation from scratch rather than nudging whatever it had last
+-- frame.
+local function repositionChainSide(links: { Instance }, topPoint: Vector3, seatTopPosition: Vector3)
 	local count = #links
 	if count == 0 then
 		return
@@ -129,7 +142,6 @@ local function repositionChainLinks(seatTopPosition: Vector3)
 		return indexA < indexB
 	end)
 
-	local topPoint = swingChainAnchor.Position
 	for i, link in links do
 		if link:IsA("BasePart") then
 			local segStart = topPoint:Lerp(seatTopPosition, (i - 1) / count)
@@ -157,6 +169,40 @@ local function repositionChainLinks(seatTopPosition: Vector3)
 			end
 		end
 	end
+end
+
+-- Splits the shared SwingChainLinks folder by each link's own "Side"
+-- attribute (set once at build time, see SwingBuilder.luau) and repositions
+-- each side against its OWN anchor and OWN seat attachment. The seat
+-- attachments live on SeatCore and move (and TILT) with it every frame via
+-- swingSeatModel:PivotTo below, so reading their WorldPosition here always
+-- reflects THIS frame's actual seat corner -- never a flat world-space
+-- +-seatWidth/2 guess that would drift once the seat tilts off theta=0.
+local function repositionChainLinks()
+	if not swingChainAnchorLeft.Parent or not swingChainAnchorRight.Parent then
+		return
+	end
+	local seatCore = swingSeatModel.PrimaryPart
+	if not seatCore then
+		return
+	end
+	local leftAttachment = seatCore:FindFirstChild("ChainBottomAttachmentLeft") :: Attachment?
+	local rightAttachment = seatCore:FindFirstChild("ChainBottomAttachmentRight") :: Attachment?
+	if not leftAttachment or not rightAttachment then
+		return
+	end
+
+	local leftLinks, rightLinks = {}, {}
+	for _, link in swingChainLinksFolder:GetChildren() do
+		local side = link:GetAttribute("Side")
+		if side == "Left" then
+			table.insert(leftLinks, link)
+		elseif side == "Right" then
+			table.insert(rightLinks, link)
+		end
+	end
+	repositionChainSide(leftLinks, swingChainAnchorLeft.Position, leftAttachment.WorldPosition)
+	repositionChainSide(rightLinks, swingChainAnchorRight.Position, rightAttachment.WorldPosition)
 end
 
 local function fillFraction(phase: number): number
@@ -228,10 +274,15 @@ local OUTCOME_STYLES: { { color: Color3, size: UDim2, font: Enum.Font, strokeTra
 
 -- Mirrors LaunchServer's trajectoryPosition exactly -- same shared distance/arc
 -- height numbers, received once in FlightStarted below, not recomputed locally.
+-- Y no longer returns to startPosition.Y at u=1 -- see LaunchServer's own
+-- copy for the full reasoning; this is the same lerp-to-road-surface-plus-
+-- bump formula, reading the SAME RunwayGeometry.RUNWAY_TOP_Y the server does.
 local function trajectoryPosition(startPosition: Vector3, distance: number, archHeight: number, u: number): Vector3
-	local horizontal = startPosition + Vector3.new(0, 0, -distance * u)
+	local x = startPosition.X
+	local z = startPosition.Z - distance * u
+	local descentY = startPosition.Y + (RunwayGeometry.RUNWAY_TOP_Y - startPosition.Y) * u
 	local heightOffset = archHeight * 4 * u * (1 - u)
-	return horizontal + Vector3.new(0, heightOffset, 0)
+	return Vector3.new(x, descentY + heightOffset, z)
 end
 
 -- BUG FIX (jitter, see written report): this pitch math, and the character
@@ -244,15 +295,22 @@ end
 -- from the exact same u, the exact same frame, as the camera that's looking at
 -- it -- ruling out "camera and character from different u values" by
 -- construction, not just by coincidence.
+--
+-- verticalRate now ALSO includes the constant descent slope trajectoryPosition
+-- added above (RUNWAY_TOP_Y - startPosition.Y, the same at every u) -- without
+-- it, the pitch would only ever reflect the parabolic bump's own rate and
+-- would visibly disagree with the character's actual (now sloped) path,
+-- worst at high tiers where the total descent is largest.
 local MAX_FLIGHT_PITCH = math.rad(25)
-local function trajectoryPitch(distance: number, archHeight: number, u: number): number
-	local verticalRate = archHeight * 4 * (1 - 2 * u)
+local function trajectoryPitch(startPosition: Vector3, distance: number, archHeight: number, u: number): number
+	local descentRate = RunwayGeometry.RUNWAY_TOP_Y - startPosition.Y
+	local verticalRate = descentRate + archHeight * 4 * (1 - 2 * u)
 	return math.clamp(math.atan2(verticalRate, distance), -MAX_FLIGHT_PITCH, MAX_FLIGHT_PITCH)
 end
 
 local function trajectoryCFrame(startPosition: Vector3, distance: number, archHeight: number, u: number): CFrame
 	local position = trajectoryPosition(startPosition, distance, archHeight, u)
-	local pitch = trajectoryPitch(distance, archHeight, u)
+	local pitch = trajectoryPitch(startPosition, distance, archHeight, u)
 	local facing = CFrame.lookAt(position, position + Vector3.new(0, 0, -1))
 	return facing * CFrame.Angles(pitch, 0, 0)
 end
@@ -978,7 +1036,7 @@ RunService:BindToRenderStep(RENDER_STEP_NAME, Enum.RenderPriority.Camera.Value -
 	-- this tier's seatStyle built) has to move together as one rigid unit,
 	-- same mechanism the character itself already uses.
 	swingSeatModel:PivotTo(CFrame.new(seatPosition) * CFrame.Angles(theta, 0, 0))
-	repositionChainLinks(seatPosition)
+	repositionChainLinks()
 
 	-- BUG FIX (see written report): this used to be the SERVER repositioning the
 	-- rider every Heartbeat and replicating the result -- arriving at whatever

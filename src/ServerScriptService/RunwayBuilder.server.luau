@@ -41,7 +41,9 @@ local swingPivot = Workspace:WaitForChild("SwingPivot") :: BasePart
 -- landing scores against is always the band physically built here.
 local RUNWAY_START_Z = RunwayGeometry.RUNWAY_START_Z
 local RUNWAY_X = swingPivot.Position.X
-local RUNWAY_TOP_Y = 0 -- matches the baseplate's own top surface height
+-- Now the SAME single source of truth LaunchServer's trajectoryPosition
+-- also reads (see RunwayGeometry.luau), not an independently-computed copy.
+local RUNWAY_TOP_Y = RunwayGeometry.RUNWAY_TOP_Y
 
 local runwayFolder = Instance.new("Folder")
 runwayFolder.Name = "Runway"

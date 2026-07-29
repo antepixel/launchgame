@@ -27,6 +27,7 @@ local RunwayGeometry = require(ReplicatedStorage.Config.RunwayGeometry)
 local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
 local SlimeConfig = require(ReplicatedStorage.Config.SlimeConfig)
 local SwingTierVisuals = require(ReplicatedStorage.Config.SwingTierVisuals)
+local SwingGeometry = require(ReplicatedStorage.Config.SwingGeometry)
 -- Server-only siblings (see each module's own header for why these live in
 -- ServerScriptService, not ReplicatedStorage, specifically).
 local SlimeRoll = require(ServerScriptService.SlimeRoll)
@@ -90,20 +91,47 @@ local ridingAssignedRemote = makeRemote("RidingAssigned")
 
 local swingPivot = Workspace:WaitForChild("SwingPivot") :: BasePart
 
+-- ===== The one real game swing's structure folder: this used to be owned
+-- (created once, module-level) by SwingBuilder.luau itself; that module now
+-- takes an explicit pivot/folder per call instead (see its own written
+-- report -- the gallery refactor let more than one swing exist, and this
+-- file's swingPivot/swingStructureFolder pair is what makes "the game's one
+-- swing" specifically). The defensive stale-folder cleanup that used to live
+-- in SwingBuilder moves here with it, for the exact same reason it existed
+-- before: a folder left over from a previous run of THIS script (e.g. a
+-- live code-sync without a full server restart) would never otherwise be
+-- cleaned up, and would sit there forever at whatever tier/scale it was
+-- last built at. =====
+for _, existing in Workspace:GetChildren() do
+	if existing.Name == "SwingStructure" then
+		existing:Destroy()
+	end
+end
+local swingStructureFolder = Instance.new("Folder")
+swingStructureFolder.Name = "SwingStructure"
+swingStructureFolder.Parent = Workspace
+
 -- ===== Swing tier visual: the ENTIRE structure -- posts, beam, bracing,
 -- caps, ground pads, seat, chain -- is a genuinely different, procedurally
 -- built OBJECT per tier band, not the same four boxes resized/recoloured.
 -- See SwingBuilder.luau for the construction code and SwingTierVisuals.luau
 -- for every per-tier number/shape/material/colour; this file only ever
--- CALLS SwingBuilder.build(tier), never authors geometry itself. Deliberately
--- NEVER touches swingPivot's Position or LaunchConfig.SWING_ROPE_LENGTH/
--- SWING_ARC_HALF_ANGLE_DEGREES/SWING_PERIOD_SECONDS -- swingTheta/
--- swingSeatPosition below stay exactly the same phase math regardless of
--- tier, which is what keeps the seat's actual swept position (and therefore
--- the scoring math, which reads that exact position at release) functionally
--- identical no matter how the frame LOOKS. =====
+-- CALLS SwingBuilder.build(tier, swingPivot, swingStructureFolder), never
+-- authors geometry itself. THIS FILE never touches LaunchConfig.
+-- SWING_ROPE_LENGTH/SWING_ARC_HALF_ANGLE_DEGREES/SWING_PERIOD_SECONDS, so
+-- swingTheta below stays exactly the same phase math regardless of tier.
+-- SwingBuilder.build DOES move swingPivot's Y (see SwingGeometry.luau) so
+-- the seat hangs proportionally higher on taller frames -- swingSeatPosition
+-- below reads swingPivot.Position fresh every call, so it automatically
+-- picks up whatever height the CURRENT rider's tier last set, with no
+-- further change to this file needed. That move is purely a translation of
+-- WHERE the arc sits, not its shape: swingTheta's amplitude and swingPhase's
+-- timing read no position at all, so the seat's actual swept position (and
+-- therefore the scoring math, which reads that exact position at release)
+-- is exactly as sensitive to release timing at every tier, just centred at
+-- a different height. =====
 local function applySwingVisualForTier(tier: number)
-	SwingBuilder.build(tier)
+	SwingBuilder.build(tier, swingPivot, swingStructureFolder)
 end
 
 -- BUG FIX: the swing used to exist from the moment the place file loaded --
@@ -131,8 +159,13 @@ local function swingTheta(phase: number): number
 end
 
 local function swingSeatPosition(theta: number): Vector3
-	local length = LaunchConfig.SWING_ROPE_LENGTH
-	return swingPivot.Position + Vector3.new(0, -length * math.cos(theta), -length * math.sin(theta))
+	local pivotPosition = swingPivot.Position
+	-- Effective rope length for WHATEVER tier is currently built -- derived
+	-- from the pivot's own live Y (see SwingGeometry.ropeLengthForPivotY),
+	-- not a raw LaunchConfig.SWING_ROPE_LENGTH read, since the rope is now
+	-- scaled by tier right alongside the pivot (see SwingBuilder.luau).
+	local length = SwingGeometry.ropeLengthForPivotY(pivotPosition.Y)
+	return pivotPosition + Vector3.new(0, -length * math.cos(theta), -length * math.sin(theta))
 end
 
 local function circularPhaseDistance(a: number, b: number): number
@@ -184,10 +217,22 @@ end
 -- height, peaks in the middle," which is also what a real constant-gravity
 -- projectile's height-over-time looks like for a fixed flight duration, even
 -- though nothing here is integrating gravity to get it.
+-- Y no longer returns to startPosition.Y at u=1 -- it lerps from launch
+-- height down to the road surface (RunwayGeometry.RUNWAY_TOP_Y) over the
+-- WHOLE flight, with the SAME parabolic bump layered on top it always had.
+-- archHeight itself is computed exactly as before (see onRelease) and still
+-- adds exactly archHeight at u=0.5 relative to this now-sloped baseline --
+-- only where u=1 lands changed, from launch height back to itself, to the
+-- actual road surface (see the written report: without this, a taller
+-- tier's launch height keeps climbing, per SwingGeometry, but the road
+-- surface never moves, so the character would land further and further
+-- above it as tier grows).
 local function trajectoryPosition(startPosition: Vector3, distance: number, archHeight: number, u: number): Vector3
-	local horizontal = startPosition + Vector3.new(0, 0, -distance * u)
+	local x = startPosition.X
+	local z = startPosition.Z - distance * u
+	local descentY = startPosition.Y + (RunwayGeometry.RUNWAY_TOP_Y - startPosition.Y) * u
 	local heightOffset = archHeight * 4 * u * (1 - u)
-	return horizontal + Vector3.new(0, heightOffset, 0)
+	return Vector3.new(x, descentY + heightOffset, z)
 end
 
 -- ===== Rainbow band -> luck =====
