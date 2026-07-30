@@ -112,6 +112,23 @@ SwingTierVisuals.BASE_BEAM_OVERHANG = 0.5
 -- feet 2x this far apart (9 studs at tier 1).
 SwingTierVisuals.BASE_LEG_SPLAY_HALF_DEPTH = 4.5
 
+-- Upper bound on the FOOTPRINT scale (see SwingBuilder.build) -- the
+-- factor applied to every dimension that drives the frame's X (width) or
+-- Z (depth) extent: standHalfWidth, beamOverhang, legSplayHalfDepth,
+-- postThickness, beamThickness, and the seat's own width/depth/thickness.
+-- Every tier's HEIGHT scale (visual.scale, above) is UNCLAMPED and
+-- unchanged -- postHeight, the pivot height, and the rope length all keep
+-- growing the full 1.00-3.60x every tier already used. Only the
+-- horizontal footprint stops growing past this factor, so a swing keeps
+-- getting taller (and its silhouette proportions stay internally
+-- consistent -- footprint scale still applies EQUALLY to width and depth,
+-- so an A-frame never reads deeper than it is wide) without spilling out
+-- of its 40-stud road lane. 2.21 is tuned so tier 11 (the largest,
+-- scale = 3.60) lands just under 35 studs wide -- tier 1 measures 15.84
+-- studs wide at scale 1.0, and 35.01 / 15.84 = 2.21 -- see the written
+-- report for the measured numbers this was tuned against.
+SwingTierVisuals.FOOTPRINT_SCALE_MAX = 2.21
+
 SwingTierVisuals.TIERS = {
 	-- Tier 1: small wooden A-frame, weathered brown, a plain plank seat on
 	-- rope. The baseline every other tier is a departure from.

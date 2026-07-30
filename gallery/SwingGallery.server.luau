@@ -57,6 +57,67 @@ for i = 0, TIER_COUNT do
 	marker.Parent = galleryFolder
 end
 
+-- ===== Explicit world-axis AABB -- REPLACES Model:GetExtentsSize()/
+-- GetBoundingBox(). Both of those orient to the model's PrimaryPart when
+-- one is set, and (per observed Studio behaviour, NOT the "falls back to
+-- world axes" the docs imply) to some other internal reference frame when
+-- it isn't -- which part ends up supplying that frame differs by tier, so
+-- the W/H/D axes those calls report get silently PERMUTED, differently
+-- per tier. See the written report.
+--
+-- This instead walks every descendant BasePart, transforms all 8 corners
+-- of ITS OWN oriented box by ITS OWN CFrame into world space, and takes
+-- the min/max across every one of those world-space corners. There is no
+-- "which part's rotation do we orient to" question to get wrong, by
+-- construction -- W is always the X extent, H is always Y, D is always Z,
+-- regardless of PrimaryPart, regardless of how any individual part inside
+-- the model happens to be rotated.
+--
+-- Runs IDENTICALLY under Lune and Studio: rbxshim.luau (the dev Lune shim
+-- used to iterate on this file outside Studio) implements GetDescendants,
+-- IsA("BasePart"), CFrame, and Size the same way real Roblox does, so this
+-- exact function -- not a second hand-rolled formula living only in the
+-- shim -- is what both platforms execute. Studio and the shim can no
+-- longer disagree about W/H/D, because they're now running the same code
+-- against the same per-part CFrame/Size data instead of each computing
+-- its own notion of "bounding box."
+local CORNER_SIGNS = {
+	Vector3.new(-1, -1, -1),
+	Vector3.new(-1, -1, 1),
+	Vector3.new(-1, 1, -1),
+	Vector3.new(-1, 1, 1),
+	Vector3.new(1, -1, -1),
+	Vector3.new(1, -1, 1),
+	Vector3.new(1, 1, -1),
+	Vector3.new(1, 1, 1),
+}
+
+local function measureWorldAABB(model: Model): (Vector3, Vector3)
+	local minPoint = Vector3.new(math.huge, math.huge, math.huge)
+	local maxPoint = Vector3.new(-math.huge, -math.huge, -math.huge)
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			local part = descendant :: BasePart
+			local cf = part.CFrame
+			local half = part.Size / 2
+			for _, sign in CORNER_SIGNS do
+				local corner = cf * Vector3.new(half.X * sign.X, half.Y * sign.Y, half.Z * sign.Z)
+				minPoint = Vector3.new(
+					math.min(minPoint.X, corner.X),
+					math.min(minPoint.Y, corner.Y),
+					math.min(minPoint.Z, corner.Z)
+				)
+				maxPoint = Vector3.new(
+					math.max(maxPoint.X, corner.X),
+					math.max(maxPoint.Y, corner.Y),
+					math.max(maxPoint.Z, corner.Z)
+				)
+			end
+		end
+	end
+	return minPoint, maxPoint
+end
+
 type Measurement = {
 	tier: number,
 	width: number,
@@ -65,19 +126,19 @@ type Measurement = {
 	ratio: number,
 	minX: number,
 	maxX: number,
+	minY: number,
 	topY: number,
 }
 local measurements: { Measurement } = {}
 
-print("===== Swing Gallery: measured bounding boxes (Model:GetExtentsSize) =====")
+print("===== Swing Gallery: measured bounding boxes (explicit world-axis AABB) =====")
 
 -- ===== Eleven swings, tier 1..11 left to right, each built from the exact
 -- SwingBuilder.build the real game calls -- not a copy, not a fork. Each
--- gets its OWN pivot Part and its OWN Model (a Model, not a Folder, so
--- GetExtentsSize/GetBoundingBox below are real Roblox measurements of the
--- actual parts SwingBuilder created, never a formula reconstruction of
--- them -- if SwingBuilder's geometry ever changes, these numbers change
--- with it automatically). =====
+-- gets its OWN pivot Part and its OWN Model (a Model, not a Folder, so the
+-- AABB below walks the actual parts SwingBuilder created, never a formula
+-- reconstruction of them -- if SwingBuilder's own geometry ever changes,
+-- these numbers change with it automatically). =====
 for tier = 1, TIER_COUNT do
 	local pivotX = (tier - 1) * LANE_SPACING_STUDS
 
@@ -96,23 +157,45 @@ for tier = 1, TIER_COUNT do
 
 	SwingBuilder.build(tier, pivot, swingModel)
 
-	-- MEASURED, not computed from any formula -- real Roblox geometry
+	-- ===== DIAGNOSTIC ONLY, tiers 1/5/11 -- NOT used for the measurement
+	-- below. Prints swingModel's own PrimaryPart (expected nil: neither
+	-- this script nor SwingBuilder.build ever sets it -- only the SEPARATE
+	-- nested SwingSeat model gets a PrimaryPart, and that's a different
+	-- Model than swingModel) and what Model:GetBoundingBox() -- the OLD,
+	-- now-unused API -- reports as its rotation basis (XVector/YVector/
+	-- ZVector). Run this in real Studio and compare against the shim's own
+	-- printout: the shim's GetBoundingBox always reports identity rotation
+	-- (it's a straight world-axis AABB by construction -- see rbxshim.luau)
+	-- and nil PrimaryPart at every tier; if Studio's XVector/YVector/
+	-- ZVector are NOT (1,0,0)/(0,1,0)/(0,0,1) at some tier despite
+	-- PrimaryPart also printing nil there, that CONFIRMS the axis-
+	-- permutation bug is real and is NOT simply "PrimaryPart is set" --
+	-- it's Studio's undocumented no-PrimaryPart fallback choosing some
+	-- other reference frame instead of true world axes. =====
+	if tier == 1 or tier == 5 or tier == 11 then
+		local diagnosticCFrame = swingModel:GetBoundingBox()
+		local primaryPartName = if swingModel.PrimaryPart then swingModel.PrimaryPart.Name else "nil"
+		print(string.format(
+			"Tier %2d DIAGNOSTIC: PrimaryPart=%s  GetBoundingBox rotation X=(%.3f,%.3f,%.3f) Y=(%.3f,%.3f,%.3f) Z=(%.3f,%.3f,%.3f)",
+			tier,
+			primaryPartName,
+			diagnosticCFrame.XVector.X, diagnosticCFrame.XVector.Y, diagnosticCFrame.XVector.Z,
+			diagnosticCFrame.YVector.X, diagnosticCFrame.YVector.Y, diagnosticCFrame.YVector.Z,
+			diagnosticCFrame.ZVector.X, diagnosticCFrame.ZVector.Y, diagnosticCFrame.ZVector.Z
+		))
+	end
+
+	-- MEASURED, not computed from any formula -- real per-part CFrame/Size
 	-- queries against the parts SwingBuilder actually created for THIS
-	-- tier, just now. Named IMMEDIATELY by axis (width = X = beam span,
-	-- height = Y = vertical, depth = Z = leg splay) so every consumer below
-	-- reads `width`/`height`/`depth` by NAME, never `size.X`/`size.Y`/
-	-- `size.Z` positionally -- a previous pass printed the raw components
-	-- in a fixed X,Y,Z order but labelled them W/H/D, which reads correctly
-	-- ONLY if a viewer already knows X=width/Y=height/Z=depth; this makes
-	-- that mapping the one and only place it's ever stated, instead of an
-	-- assumption repeated at every print/label call site.
-	local size = swingModel:GetExtentsSize()
-	local width, height, depth = size.X, size.Y, size.Z
-	local boundsCFrame = swingModel:GetBoundingBox()
-	-- W:H from the REAL width and height above, not "the first two
-	-- components" -- if width/height are ever reassigned from different
-	-- axes (e.g. GetExtentsSize's own convention ever changed), this still
-	-- computes the right ratio, because it never looks at .X/.Y again.
+	-- tier, just now, folded through the explicit world-axis AABB above.
+	-- Named IMMEDIATELY by axis (width = X = beam span, height = Y =
+	-- vertical, depth = Z = leg splay) so every consumer below reads
+	-- `width`/`height`/`depth` by NAME, never `size.X`/`size.Y`/`size.Z`
+	-- positionally.
+	local minPoint, maxPoint = measureWorldAABB(swingModel)
+	local width = maxPoint.X - minPoint.X
+	local height = maxPoint.Y - minPoint.Y
+	local depth = maxPoint.Z - minPoint.Z
 	local ratio = if height > 0 then width / height else 0
 
 	local measurement: Measurement = {
@@ -121,9 +204,10 @@ for tier = 1, TIER_COUNT do
 		height = height,
 		depth = depth,
 		ratio = ratio,
-		minX = boundsCFrame.Position.X - width / 2,
-		maxX = boundsCFrame.Position.X + width / 2,
-		topY = boundsCFrame.Position.Y + height / 2,
+		minX = minPoint.X,
+		maxX = maxPoint.X,
+		minY = minPoint.Y,
+		topY = maxPoint.Y,
 	}
 	table.insert(measurements, measurement)
 
@@ -134,22 +218,57 @@ for tier = 1, TIER_COUNT do
 
 	-- ===== Floating readout -- tier, MEASURED W x H x D, MEASURED W:H
 	-- ratio. Every number on this label comes from `width`/`height`/
-	-- `depth`/`ratio` above (the SAME GetExtentsSize call just printed),
-	-- never recomputed from SwingTierVisuals scale or any other formula --
-	-- if SwingBuilder's own geometry ever drifts from what this label says,
-	-- that means SwingBuilder changed, not this label going stale. =====
+	-- `depth`/`ratio` above (the SAME AABB just measured), never
+	-- recomputed from SwingTierVisuals scale or any other formula.
+	--
+	-- Two fixes over the previous version, both driven by the same
+	-- problem: at gallery viewing distance the labels piled into an
+	-- unreadable stack, worse toward the high tiers.
+	--   1. STAGGER: alternate tiers sit at a higher offset above their own
+	--      topY than their neighbours, so tier N and tier N+1 never share
+	--      a label Y -- true regardless of how close two tiers' own
+	--      topY values happen to land.
+	--   2. SCALE, not Offset: BillboardGui.Size's OFFSET component is in
+	--      SCREEN PIXELS -- a fixed apparent size regardless of camera
+	--      distance, same as a player nametag. That's exactly why the
+	--      previous (Offset-sized) labels completely covered the swings at
+	--      the far framing: every label rendered the same pixel size no
+	--      matter how far back the camera pulled to fit all 11 tiers in
+	--      frame. Using the SCALE component instead ties the label's real
+	--      on-screen size to labelAnchor's own Size (in STUDS), which DOES
+	--      shrink/grow under normal perspective with camera distance, same
+	--      as the swing it's labelling -- so labelAnchor is sized off this
+	--      tier's own MEASURED width (not a scale constant), and the
+	--      label reads at a size proportioned to that swing specifically,
+	--      at any camera distance.
+	-- =====
+	local LABEL_BASE_GAP_STUDS = 6
+	local LABEL_STAGGER_STEP_STUDS = 8
+	local staggerExtra = if tier % 2 == 0 then LABEL_STAGGER_STEP_STUDS else 0
+	local labelY = measurement.topY + LABEL_BASE_GAP_STUDS + staggerExtra
+
 	local labelAnchor = Instance.new("Part")
 	labelAnchor.Name = "LabelAnchor"
 	labelAnchor.Anchored = true
 	labelAnchor.CanCollide = false
 	labelAnchor.Transparency = 1
-	labelAnchor.Size = Vector3.new(1, 1, 1)
-	labelAnchor.Position = Vector3.new(pivotX, measurement.topY + 6, PIVOT_Z)
+	-- Sized off THIS tier's own measured width -- the Scale reference
+	-- BillboardGui.Size below reads from. Y/Z don't matter for that
+	-- reference (BillboardGui always faces the camera), left equal to X
+	-- only so the part itself isn't a degenerate sliver.
+	labelAnchor.Size = Vector3.new(measurement.width, measurement.width, measurement.width)
+	labelAnchor.Position = Vector3.new(pivotX, labelY, PIVOT_Z)
 	labelAnchor.Parent = galleryFolder
 
+	-- Fractions of labelAnchor's width (i.e. of measurement.width studs),
+	-- not pixels -- 0.6 wide keeps the label narrower than the swing it's
+	-- labelling; the height fraction preserves the original 220:90 aspect
+	-- ratio.
+	local LABEL_WIDTH_FRACTION = 0.6
+	local LABEL_HEIGHT_FRACTION = LABEL_WIDTH_FRACTION * (90 / 220)
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "MeasurementLabel"
-	billboard.Size = UDim2.new(0, 220, 0, 90)
+	billboard.Size = UDim2.fromScale(LABEL_WIDTH_FRACTION, LABEL_HEIGHT_FRACTION)
 	billboard.AlwaysOnTop = true
 	billboard.Parent = labelAnchor
 
@@ -189,53 +308,107 @@ if not anyOverflow then
 	print("(none)")
 end
 
--- ===== Camera marker -- positioned from the ACTUAL measured overall
--- extent above (every gallery swing's real minX/maxX/topY), not a guess,
--- so moving the viewport camera to this marker's CFrame exactly reproduces
--- "all 11 swings, head-on, fully in frame" every time this script runs,
--- regardless of any future geometry change. Framed along +Z looking toward
--- -Z (the same flight-direction convention LaunchConfig/RunwayGeometry use
--- elsewhere in the real game), pulled back far enough for a ~70-degree
--- vertical FOV (Roblox Studio's default) to fit BOTH the full measured
--- width and the tallest swing's height, whichever needs more room, plus a
--- 15% margin. =====
-local overallMinX, overallMaxX, overallMaxTopY = math.huge, -math.huge, -math.huge
-for _, measurement in measurements do
-	overallMinX = math.min(overallMinX, measurement.minX)
-	overallMaxX = math.max(overallMaxX, measurement.maxX)
-	overallMaxTopY = math.max(overallMaxTopY, measurement.topY)
+-- ===== Camera framing -- derived from the ACTUAL measured world AABB of
+-- the built row (every gallery swing's real minX/maxX/minY/topY above),
+-- not assumed fractions of it. Both cameras are built the same way:
+--   - eye X = the row's true centre X (average of the row's own min/max X,
+--     not a guess)
+--   - eye Y = the row's true MID height (average of the row's own min/max
+--     Y) -- and the look-AT target uses the exact same Y, so the camera is
+--     dead level (no downward tilt) by construction, not by picking two
+--     fractions (0.55 vs 0.4) that happened to differ.
+--   - eye Z = pulled back along +Z (matching the LaunchConfig/
+--     RunwayGeometry flight-direction convention used elsewhere) far
+--     enough that the row's full WIDTH fits inside the camera's
+--     HORIZONTAL field of view, not its vertical one -- Roblox's
+--     Camera.FieldOfView is a VERTICAL angle, so fitting a horizontal
+--     extent (width) against the vertical half-angle understates how much
+--     horizontal room a widescreen viewport actually has, which is why
+--     the previous version's framing came out too far back (row reads
+--     small). The horizontal half-angle here is derived from the vertical
+--     one via a reference 16:9 aspect ratio (Studio's common default;
+--     retune ASSUMED_ASPECT_RATIO if your viewport is materially
+--     different).
+--   - distance also checks the HEIGHT fit against the vertical half-angle,
+--     and takes whichever (width or height) needs more room, plus a 15%
+--     margin so nothing clips the frame edge.
+-- =====
+local function rowAABB(list: { Measurement }): (number, number, number, number)
+	local minX, maxX, minY, maxY = math.huge, -math.huge, math.huge, -math.huge
+	for _, measurement in list do
+		minX = math.min(minX, measurement.minX)
+		maxX = math.max(maxX, measurement.maxX)
+		minY = math.min(minY, measurement.minY)
+		maxY = math.max(maxY, measurement.topY)
+	end
+	return minX, maxX, minY, maxY
 end
 
-local galleryCenterX = (overallMinX + overallMaxX) / 2
-local galleryWidth = overallMaxX - overallMinX
-local HALF_FOV_RADIANS = math.rad(35) -- Roblox Studio's default vertical FOV is 70 degrees
-local distanceForWidth = (galleryWidth / 2) / math.tan(HALF_FOV_RADIANS)
-local distanceForHeight = overallMaxTopY / math.tan(HALF_FOV_RADIANS)
-local cameraDistance = math.max(distanceForWidth, distanceForHeight) * 1.15
-local cameraPosition = Vector3.new(galleryCenterX, overallMaxTopY * 0.55, PIVOT_Z + cameraDistance)
-local cameraTarget = Vector3.new(galleryCenterX, overallMaxTopY * 0.4, PIVOT_Z)
-local cameraCFrame = CFrame.lookAt(cameraPosition, cameraTarget)
+local VERTICAL_FOV_DEGREES = 70 -- Roblox Studio's default Camera.FieldOfView (vertical)
+local ASSUMED_ASPECT_RATIO = 16 / 9 -- viewport width:height used to derive the horizontal FOV
+local FRAME_MARGIN = 1.15
 
-local cameraMarker = Instance.new("Part")
-cameraMarker.Name = "GalleryCameraMarker"
-cameraMarker.Anchored = true
-cameraMarker.CanCollide = false
-cameraMarker.Material = Enum.Material.Neon
-cameraMarker.Color = Color3.fromRGB(255, 60, 60)
-cameraMarker.Shape = Enum.PartType.Ball
-cameraMarker.Size = Vector3.new(2, 2, 2)
-cameraMarker.CFrame = cameraCFrame
-cameraMarker.Parent = galleryFolder
+local VERTICAL_HALF_FOV_RADIANS = math.rad(VERTICAL_FOV_DEGREES / 2)
+local HORIZONTAL_HALF_FOV_RADIANS = math.atan(math.tan(VERTICAL_HALF_FOV_RADIANS) * ASSUMED_ASPECT_RATIO)
 
--- The exact, reproducible framing CFrame -- printed here (not hardcoded as
--- a comment) because it depends on THIS run's measured gallery extent, not
--- a fixed constant. Paste the printed line straight into Studio's command
--- bar to snap the viewport camera to the same framing every time; the
--- GalleryCameraMarker part (a red ball, above) shows/holds the same CFrame
--- in its own Properties panel if you'd rather select-and-align instead.
-print("===== Camera framing (paste into the Studio command bar) =====")
+local function frameRow(list: { Measurement }): (Vector3, Vector3)
+	local minX, maxX, minY, maxY = rowAABB(list)
+	local centerX = (minX + maxX) / 2
+	local midY = (minY + maxY) / 2
+	local halfWidth = (maxX - minX) / 2
+	local halfHeight = (maxY - minY) / 2
+
+	local distanceForWidth = halfWidth / math.tan(HORIZONTAL_HALF_FOV_RADIANS)
+	local distanceForHeight = halfHeight / math.tan(VERTICAL_HALF_FOV_RADIANS)
+	local cameraDistance = math.max(distanceForWidth, distanceForHeight) * FRAME_MARGIN
+
+	local cameraPosition = Vector3.new(centerX, midY, PIVOT_Z + cameraDistance)
+	local cameraTarget = Vector3.new(centerX, midY, PIVOT_Z)
+	return cameraPosition, cameraTarget
+end
+
+local function buildCameraMarker(name: string, position: Vector3, target: Vector3)
+	local marker = Instance.new("Part")
+	marker.Name = name
+	marker.Anchored = true
+	marker.CanCollide = false
+	marker.Material = Enum.Material.Neon
+	marker.Color = Color3.fromRGB(255, 60, 60)
+	marker.Shape = Enum.PartType.Ball
+	marker.Size = Vector3.new(2, 2, 2)
+	marker.CFrame = CFrame.lookAt(position, target)
+	marker.Parent = galleryFolder
+end
+
+-- FAR camera: all 11 tiers, for comparing silhouettes side by side.
+local farPosition, farTarget = frameRow(measurements)
+buildCameraMarker("GalleryCameraMarkerFar", farPosition, farTarget)
+
+-- CLOSE camera: tiers 9-11 only, for judging one swing's own detail.
+local closeTierMeasurements: { Measurement } = {}
+for _, measurement in measurements do
+	if measurement.tier >= 9 then
+		table.insert(closeTierMeasurements, measurement)
+	end
+end
+local closePosition, closeTarget = frameRow(closeTierMeasurements)
+buildCameraMarker("GalleryCameraMarkerClose", closePosition, closeTarget)
+
+-- The exact, reproducible framing CFrames -- printed here (not hardcoded as
+-- a comment) because they depend on THIS run's measured extents, not a
+-- fixed constant. Paste either printed line straight into Studio's command
+-- bar to snap the viewport camera to that framing; the two
+-- GalleryCameraMarker parts (red balls, above) hold the same CFrames in
+-- their own Properties panels if you'd rather select-and-align instead.
+print("===== FAR camera (all 11 tiers) -- paste into the Studio command bar =====")
 print(string.format(
 	"game.Workspace.CurrentCamera.CFrame = CFrame.lookAt(Vector3.new(%.2f, %.2f, %.2f), Vector3.new(%.2f, %.2f, %.2f))",
-	cameraPosition.X, cameraPosition.Y, cameraPosition.Z,
-	cameraTarget.X, cameraTarget.Y, cameraTarget.Z
+	farPosition.X, farPosition.Y, farPosition.Z,
+	farTarget.X, farTarget.Y, farTarget.Z
+))
+print("===== CLOSE camera (tiers 9-11 only) -- paste into the Studio command bar =====")
+print(string.format(
+	"game.Workspace.CurrentCamera.CFrame = CFrame.lookAt(Vector3.new(%.2f, %.2f, %.2f), Vector3.new(%.2f, %.2f, %.2f))",
+	closePosition.X, closePosition.Y, closePosition.Z,
+	closeTarget.X, closeTarget.Y, closeTarget.Z
 ))

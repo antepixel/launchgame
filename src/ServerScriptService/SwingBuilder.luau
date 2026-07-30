@@ -170,33 +170,51 @@ function SwingBuilder.build(tier: number, pivotPart: BasePart, parentFolder: Ins
 	parentFolder:ClearAllChildren()
 
 	local visual = SwingTierVisuals.forTier(tier)
-	local scale = visual.scale
+	-- TWO scales, split from what used to be one `scale` -- see the
+	-- written report on the swing-lane footprint clamp. HEIGHT scale
+	-- (visual.scale) is UNCLAMPED, exactly the 1.00-3.60 per-tier values
+	-- this always used -- it's the only scale allowed to drive vertical
+	-- quantities (postHeight below, and SwingGeometry.pivotYForScale/
+	-- ropeLengthForScale, both called with `heightScale`, never
+	-- `footprintScale`). FOOTPRINT scale is the SAME per-tier value,
+	-- clamped at SwingTierVisuals.FOOTPRINT_SCALE_MAX, and drives every
+	-- dimension that determines the frame's X (width) or Z (depth) extent
+	-- -- applied EQUALLY to both, so a clamped tier's A-frame silhouette
+	-- stays proportioned (never reads deeper than it is wide) instead of
+	-- only capping width and leaving depth to keep growing unclamped.
+	local heightScale = visual.scale
+	local footprintScale = math.min(visual.scale, SwingTierVisuals.FOOTPRINT_SCALE_MAX)
 
-	-- Raise the pivot's height above ground by `scale` (see SwingGeometry.
-	-- luau) -- always computed from the config baseline, never from
-	-- pivotPart.Position.Y as it currently sits, so repeated tier changes
-	-- land on the same absolute height for a given tier rather than
-	-- compounding. X/Z are re-passed through unchanged -- this only ever
-	-- touches Y.
+	-- Raise the pivot's height above ground by the HEIGHT scale (see
+	-- SwingGeometry.luau) -- always computed from the config baseline,
+	-- never from pivotPart.Position.Y as it currently sits, so repeated
+	-- tier changes land on the same absolute height for a given tier
+	-- rather than compounding. X/Z are re-passed through unchanged -- this
+	-- only ever touches Y. Pivot height is a VERTICAL quantity, so this
+	-- reads heightScale, not footprintScale, even for a clamped tier.
 	pivotPart.Position = Vector3.new(
 		pivotPart.Position.X,
-		SwingGeometry.pivotYForScale(scale),
+		SwingGeometry.pivotYForScale(heightScale),
 		pivotPart.Position.Z
 	)
 
-	local postHeight = SwingTierVisuals.BASE_POST_HEIGHT * scale
-	local standHalfWidth = SwingTierVisuals.BASE_STAND_HALF_WIDTH * scale
-	local postThickness = SwingTierVisuals.BASE_POST_THICKNESS * scale
-	local beamThickness = SwingTierVisuals.BASE_BEAM_THICKNESS * scale
-	local beamOverhang = SwingTierVisuals.BASE_BEAM_OVERHANG * scale
-	local legSplayHalfDepth = SwingTierVisuals.BASE_LEG_SPLAY_HALF_DEPTH * scale
+	local postHeight = SwingTierVisuals.BASE_POST_HEIGHT * heightScale
+	local standHalfWidth = SwingTierVisuals.BASE_STAND_HALF_WIDTH * footprintScale
+	local postThickness = SwingTierVisuals.BASE_POST_THICKNESS * footprintScale
+	local beamThickness = SwingTierVisuals.BASE_BEAM_THICKNESS * footprintScale
+	local beamOverhang = SwingTierVisuals.BASE_BEAM_OVERHANG * footprintScale
+	local legSplayHalfDepth = SwingTierVisuals.BASE_LEG_SPLAY_HALF_DEPTH * footprintScale
 	-- Seat dimensions, needed early too: the two chain anchors/attachments
 	-- below are offset by seatHalfWidth so each tether hangs directly
 	-- above/below its own seat corner instead of both sharing one
 	-- dead-centre point (see the written report on the crossed-chain bug).
-	local seatWidth = 4 * scale
-	local seatDepth = 3 * scale
-	local seatThickness = 0.5 * scale
+	-- Seat width/depth/thickness are the seat's own X/Z/Y size -- footprint
+	-- scale, same as the frame around it, so a clamped tier's seat stays
+	-- proportioned to its (also clamped) frame instead of ballooning past
+	-- it.
+	local seatWidth = 4 * footprintScale
+	local seatDepth = 3 * footprintScale
+	local seatThickness = 0.5 * footprintScale
 	local seatHalfWidth = seatWidth / 2
 
 	local centerX = pivotPart.Position.X
@@ -305,10 +323,14 @@ function SwingBuilder.build(tier: number, pivotPart: BasePart, parentFolder: Ins
 	-- Built as a Model (PrimaryPart = SeatCore) so a multi-part seat moves
 	-- rigidly as one unit via Model:PivotTo, same mechanism the character
 	-- itself already uses. =====
-	-- Effective rope length for THIS tier -- derived from the same `scale`
-	-- the pivot was just placed with (see SwingGeometry.luau), not a second
-	-- independently-read copy of LaunchConfig.SWING_ROPE_LENGTH.
-	local effectiveRopeLength = SwingGeometry.ropeLengthForScale(scale)
+	-- Effective rope length for THIS tier -- derived from the same
+	-- `heightScale` the pivot was just placed with (see SwingGeometry.
+	-- luau), not a second independently-read copy of LaunchConfig.
+	-- SWING_ROPE_LENGTH. Rope length is a VERTICAL quantity (the seat's
+	-- radius below the pivot), so this stays on heightScale -- unclamped --
+	-- even for a tier whose FOOTPRINT is capped; only the frame's X/Z
+	-- extent stops growing, never the arc radius.
+	local effectiveRopeLength = SwingGeometry.ropeLengthForScale(heightScale)
 	local referenceSeatPosition = pivotPart.Position + Vector3.new(0, -effectiveRopeLength, 0)
 
 	local seatModel = Instance.new("Model")
@@ -344,7 +366,7 @@ function SwingBuilder.build(tier: number, pivotPart: BasePart, parentFolder: Ins
 	chainSeatAttachmentRight.Parent = seatCore
 
 	if visual.seatStyle == "Plank" then
-		local knotSize = math.max(0.4, 0.5 * scale)
+		local knotSize = math.max(0.4, 0.5 * footprintScale)
 		newPart(
 			Enum.PartType.Ball,
 			Vector3.new(knotSize, knotSize, knotSize),
