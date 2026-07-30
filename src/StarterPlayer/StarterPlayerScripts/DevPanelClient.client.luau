@@ -350,6 +350,15 @@ do
 	end
 end
 
+-- Rebuilds the CURRENT rider's swing structure at whatever tier they're
+-- already on -- for iterating on SwingBuilder.luau/SwingTierVisuals.luau
+-- without needing an actual tier change (the only other thing that
+-- triggers a rebuild) to see the edit. Does not touch tier or any other
+-- profile state.
+makeWideButton("Rebuild Swing (current tier, no tier change)", Color3.new(0.35, 0.3, 0.55), function()
+	fireAction("RebuildSwing", nil)
+end)
+
 -- ===== Slime level -- sets the level of whichever slot is picked below
 -- directly via PlayerProfile.devSetSlimeLevel, bypassing upgrade cost
 -- entirely, for testing income/cost feel at any level without grinding or

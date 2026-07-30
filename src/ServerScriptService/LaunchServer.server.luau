@@ -528,6 +528,27 @@ type Box = {
 }
 local activeBox: Box? = nil
 
+-- ===== DEV PANEL SUPPORT: rebuild the current rider's swing structure at
+-- their CURRENT tier, touching no profile/tier state at all -- lets
+-- SwingBuilder.luau/SwingTierVisuals.luau edits show up on an
+-- already-seated rider without forcing an actual tier change (the only
+-- other thing that ever calls applySwingVisualForTier). A BindableEvent,
+-- not a RemoteEvent: DevPanelServer.server.luau (the only thing that ever
+-- fires this) already owns both real gates (Studio-only + UserId
+-- allowlist, re-checked per action) -- this is server-internal plumbing a
+-- client can never reach directly regardless. Still created only in Studio,
+-- same as DevPanelServer's own Gate 1, purely so no dev-only Instance
+-- exists at all in a published server. =====
+if RunService:IsStudio() then
+	local devRebuildSwingEvent = Instance.new("BindableEvent")
+	devRebuildSwingEvent.Name = "DevRebuildCurrentSwing"
+	devRebuildSwingEvent.Parent = ServerScriptService
+	devRebuildSwingEvent.Event:Connect(function()
+		local tier = if activePlayer then PlayerProfile.getSwingTier(activePlayer) else 1
+		applySwingVisualForTier(tier)
+	end)
+end
+
 -- Frees the rider slot (on disconnect, death, or a missing character) without
 -- otherwise touching the swing itself -- the seat keeps swinging empty either
 -- way. Clearing activeBox here too (on TOP of resetting state away from

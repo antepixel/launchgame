@@ -19,8 +19,44 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 -- Named deterministically by UserId (see PlayerProfile.buildBaseFolder) --
--- same lookup BaseClient.client.luau uses for the money HUD.
-local baseFolder = Workspace:WaitForChild(string.format("Base_%d", player.UserId))
+-- same lookup BaseClient.client.luau uses for the money HUD. Bounded wait +
+-- visible failure state -- see BaseClient.client.luau's own comment on this
+-- exact pattern for why an unbounded wait here was never actually load-
+-- failure-shaped (the folder is built synchronously before the load evens
+-- starts) but still needed a ceiling for the rarer "server-side never built
+-- it at all" case.
+local BASE_FOLDER_WAIT_TIMEOUT_SECONDS = 10
+local baseFolder = Workspace:WaitForChild(string.format("Base_%d", player.UserId), BASE_FOLDER_WAIT_TIMEOUT_SECONDS)
+if not baseFolder then
+	warn(string.format(
+		"[ShopClient] Base_%d never appeared after %d seconds -- this player's base likely failed to initialise server-side. Swing shop will not render this session; the rest of the client is unaffected.",
+		player.UserId, BASE_FOLDER_WAIT_TIMEOUT_SECONDS
+	))
+	local errorGui = Instance.new("ScreenGui")
+	errorGui.Name = "ShopHud"
+	errorGui.ResetOnSpawn = false
+	errorGui.IgnoreGuiInset = true
+	errorGui.Parent = playerGui
+
+	local errorButton = Instance.new("TextButton")
+	errorButton.Name = "ShopUnavailable"
+	errorButton.AnchorPoint = Vector2.new(1, 0)
+	errorButton.Position = UDim2.new(0.98, 0, 0.02, 0)
+	errorButton.Size = UDim2.new(0, 220, 0, 44)
+	errorButton.BackgroundColor3 = Color3.new(0.5, 0.15, 0.15)
+	errorButton.AutoButtonColor = false
+	errorButton.Active = false
+	errorButton.Font = Enum.Font.GothamBold
+	errorButton.TextScaled = true
+	errorButton.TextColor3 = Color3.new(1, 1, 1)
+	errorButton.Text = "SHOP UNAVAILABLE"
+	errorButton.Parent = errorGui
+
+	local errorButtonCorner = Instance.new("UICorner")
+	errorButtonCorner.CornerRadius = UDim.new(0, 8)
+	errorButtonCorner.Parent = errorButton
+	return
+end
 
 local shopRemotesFolder = ReplicatedStorage:WaitForChild("ShopRemotes")
 local buyTierRemote = shopRemotesFolder:WaitForChild("BuyTier") :: RemoteEvent

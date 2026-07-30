@@ -54,17 +54,6 @@
           "Position": [0, 1, 55],
           "Size": [8, 1, 8]
         }
-      },
-      "RenderDistanceTestBlock": {
-        "$className": "Part",
-        "$properties": {
-          "Anchored": true,
-          "CanCollide": false,
-          "Position": [0, 100, -990],
-          "Size": [80, 80, 80],
-          "Material": "Neon",
-          "Color": [1, 0.05, 0.75]
-        }
       }
     }
   }

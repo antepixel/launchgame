@@ -153,7 +153,13 @@ local function groundPadMaterialColor(visual: SwingTierVisuals.TierVisual): (Enu
 	elseif visual.groundPad == "Metal" then
 		return Enum.Material.DiamondPlate, Color3.fromRGB(150, 150, 158)
 	end
-	return Enum.Material.Neon, visual.glowColor
+	-- "Glow" pads keep the tier's own glowColor (per-tier colour preserved)
+	-- but on a SOLID material -- Neon here made the ground pad itself part
+	-- of "everything glowing solid", the same over-application this pass
+	-- fixes for the frame; the glow accent trim (GlowTrimBeam/GlowTrimLeg,
+	-- still hardcoded Neon just below) is where the glow is supposed to
+	-- live.
+	return Enum.Material.DiamondPlate, visual.glowColor
 end
 
 -- pivotPart: moved (Y only) to this tier's target height, X/Z left exactly

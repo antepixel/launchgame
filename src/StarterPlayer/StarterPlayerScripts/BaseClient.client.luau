@@ -18,7 +18,45 @@ local playerGui = player:WaitForChild("PlayerGui")
 
 -- Named deterministically by UserId (see PlayerProfile.buildBaseFolder) so
 -- this client can find its OWN base without any remote round-trip.
-local baseFolder = Workspace:WaitForChild(string.format("Base_%d", player.UserId))
+--
+-- BOUNDED wait, not the unbounded WaitForChild this used to be: PlayerProfile.
+-- onPlayerAdded builds this folder synchronously, before the profile even
+-- starts loading (see its own "Join" comment), so it normally exists within a
+-- frame or two of joining regardless of whether the load itself later
+-- succeeds or fails -- a LOAD failure alone was never what could make this
+-- wait hang. If it's still missing after this timeout, something server-side
+-- is actually broken (PlayerProfile errored before creating it, etc.), and an
+-- unbounded wait here would leave this player with no money HUD, no visible
+-- error, and nothing but an "Infinite yield possible" console warning to go
+-- on -- see BASE_FOLDER_WAIT_TIMEOUT_SECONDS below.
+local BASE_FOLDER_WAIT_TIMEOUT_SECONDS = 10
+local baseFolder = Workspace:WaitForChild(string.format("Base_%d", player.UserId), BASE_FOLDER_WAIT_TIMEOUT_SECONDS)
+if not baseFolder then
+	warn(string.format(
+		"[BaseClient] Base_%d never appeared after %d seconds -- this player's base likely failed to initialise server-side. Money HUD will not render this session; the rest of the client is unaffected.",
+		player.UserId, BASE_FOLDER_WAIT_TIMEOUT_SECONDS
+	))
+	local errorGui = Instance.new("ScreenGui")
+	errorGui.Name = "BaseHud"
+	errorGui.ResetOnSpawn = false
+	errorGui.IgnoreGuiInset = true
+	errorGui.Parent = playerGui
+
+	local errorLabel = Instance.new("TextLabel")
+	errorLabel.Name = "BaseUnavailable"
+	errorLabel.AnchorPoint = Vector2.new(0, 1)
+	errorLabel.Position = UDim2.new(0.02, 0, 0.98, 0)
+	errorLabel.Size = UDim2.new(0, 480, 0, 40)
+	errorLabel.BackgroundTransparency = 1
+	errorLabel.Font = Enum.Font.GothamBold
+	errorLabel.TextScaled = true
+	errorLabel.TextXAlignment = Enum.TextXAlignment.Left
+	errorLabel.TextColor3 = Color3.new(1, 0.35, 0.3)
+	errorLabel.TextStrokeTransparency = 0.3
+	errorLabel.Text = "Money HUD unavailable -- failed to load your base"
+	errorLabel.Parent = errorGui
+	return
+end
 
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "BaseHud"

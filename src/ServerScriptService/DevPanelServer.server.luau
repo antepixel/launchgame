@@ -30,6 +30,17 @@ local SlimeData = require(ReplicatedStorage.Config.SlimeData)
 -- as a normal reveal -- see PlayerProfile.luau's "DEV PANEL SUPPORT" block.
 local PlayerProfile = require(ServerScriptService.PlayerProfile)
 
+-- Rebuilding the current rider's swing structure needs LaunchServer's own
+-- local state (swingPivot, swingStructureFolder, activePlayer) -- state that
+-- has no business living in PlayerProfile, which is data/persistence, not
+-- presentation. LaunchServer.server.luau exposes exactly this one action as
+-- a BindableEvent (server-internal, never reachable by a client directly)
+-- instead -- see its own "DEV PANEL SUPPORT" comment. Only created in
+-- Studio (same Gate 1 as this whole file), so this WaitForChild is safe/
+-- expected to resolve quickly, same reasoning as DevPanelClient's own
+-- WaitForChild("DevRemotes").
+local devRebuildSwingEvent = ServerScriptService:WaitForChild("DevRebuildCurrentSwing") :: BindableEvent
+
 -- GATE 2 -- USERID ALLOWLIST (belt and braces): independent of Gate 1 --
 -- checked again on EVERY action below, not cached, not checked only once at
 -- connection time. If Gate 1 above is ever loosened or removed by mistake
@@ -87,6 +98,12 @@ local function onDevAction(player: Player, actionName: string, payload: any)
 	elseif actionName == "SetSwingTier" and typeof(payload) == "number" then
 		PlayerProfile.devSetSwingTier(player, payload)
 		logAction(player, string.format("set swing tier to: %d", payload))
+	elseif actionName == "RebuildSwing" then
+		-- Rebuilds whatever the CURRENT rider's tier already is (or tier 1 if
+		-- no one is riding) -- does not read `payload`, does not touch tier or
+		-- any other profile state, purely a fresh SwingBuilder.build() call.
+		devRebuildSwingEvent:Fire()
+		logAction(player, "rebuilt current rider's swing at their current tier")
 	elseif actionName == "SetSlimeLevel" and typeof(payload) == "table" and typeof(payload.slot) == "number" and typeof(payload.level) == "number" then
 		PlayerProfile.devSetSlimeLevel(player, payload.slot, payload.level)
 		logAction(player, string.format("set slot %d's slime level to: %d", payload.slot, payload.level))

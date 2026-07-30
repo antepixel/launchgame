@@ -22,7 +22,40 @@ local SlimeUpgrade = require(ReplicatedStorage.Config.SlimeUpgrade)
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-local baseFolder = Workspace:WaitForChild(string.format("Base_%d", player.UserId))
+-- Bounded wait + visible failure state -- see BaseClient.client.luau's own
+-- comment on this exact pattern.
+local BASE_FOLDER_WAIT_TIMEOUT_SECONDS = 10
+local baseFolder = Workspace:WaitForChild(string.format("Base_%d", player.UserId), BASE_FOLDER_WAIT_TIMEOUT_SECONDS)
+if not baseFolder then
+	warn(string.format(
+		"[InventoryClient] Base_%d never appeared after %d seconds -- this player's base likely failed to initialise server-side. Inventory will not render this session; the rest of the client is unaffected.",
+		player.UserId, BASE_FOLDER_WAIT_TIMEOUT_SECONDS
+	))
+	local errorGui = Instance.new("ScreenGui")
+	errorGui.Name = "InventoryHud"
+	errorGui.ResetOnSpawn = false
+	errorGui.IgnoreGuiInset = true
+	errorGui.Parent = playerGui
+
+	local errorButton = Instance.new("TextButton")
+	errorButton.Name = "InventoryUnavailable"
+	errorButton.AnchorPoint = Vector2.new(0.5, 1)
+	errorButton.Position = UDim2.new(0.5, 0, 0.98, 0)
+	errorButton.Size = UDim2.new(0, 260, 0, 44)
+	errorButton.BackgroundColor3 = Color3.new(0.5, 0.15, 0.15)
+	errorButton.AutoButtonColor = false
+	errorButton.Active = false
+	errorButton.Font = Enum.Font.GothamBold
+	errorButton.TextScaled = true
+	errorButton.TextColor3 = Color3.new(1, 1, 1)
+	errorButton.Text = "INVENTORY UNAVAILABLE"
+	errorButton.Parent = errorGui
+
+	local errorButtonCorner = Instance.new("UICorner")
+	errorButtonCorner.CornerRadius = UDim.new(0, 8)
+	errorButtonCorner.Parent = errorButton
+	return
+end
 
 local remotesFolder = ReplicatedStorage:WaitForChild("InventoryRemotes")
 local placeSlimeRemote = remotesFolder:WaitForChild("PlaceSlime") :: RemoteEvent
