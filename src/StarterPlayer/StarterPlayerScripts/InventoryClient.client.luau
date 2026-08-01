@@ -23,13 +23,17 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 -- Bounded wait + visible failure state -- see BaseClient.client.luau's own
--- comment on this exact pattern.
+-- comment on this exact pattern. Extended to EVERY WaitForChild below, not
+-- just the base folder -- see the written report: a folder being bounded
+-- doesn't mean the children inside it are, and that one-level-deeper gap
+-- was exactly what left LaunchClient hung despite its own folder-level fix.
 local BASE_FOLDER_WAIT_TIMEOUT_SECONDS = 10
-local baseFolder = Workspace:WaitForChild(string.format("Base_%d", player.UserId), BASE_FOLDER_WAIT_TIMEOUT_SECONDS)
-if not baseFolder then
+local INVENTORY_REMOTES_WAIT_TIMEOUT_SECONDS = 10
+
+local function failInventoryHud(reason: string)
 	warn(string.format(
-		"[InventoryClient] Base_%d never appeared after %d seconds -- this player's base likely failed to initialise server-side. Inventory will not render this session; the rest of the client is unaffected.",
-		player.UserId, BASE_FOLDER_WAIT_TIMEOUT_SECONDS
+		"[InventoryClient] %s never appeared after %d seconds -- server-side setup likely failed. Inventory will not render this session; the rest of the client is unaffected.",
+		reason, INVENTORY_REMOTES_WAIT_TIMEOUT_SECONDS
 	))
 	local errorGui = Instance.new("ScreenGui")
 	errorGui.Name = "InventoryHud"
@@ -54,21 +58,48 @@ if not baseFolder then
 	local errorButtonCorner = Instance.new("UICorner")
 	errorButtonCorner.CornerRadius = UDim.new(0, 8)
 	errorButtonCorner.Parent = errorButton
+end
+
+local baseFolder = Workspace:WaitForChild(string.format("Base_%d", player.UserId), BASE_FOLDER_WAIT_TIMEOUT_SECONDS)
+if not baseFolder then
+	failInventoryHud(string.format("Base_%d", player.UserId))
 	return
 end
 
-local remotesFolder = ReplicatedStorage:WaitForChild("InventoryRemotes")
-local placeSlimeRemote = remotesFolder:WaitForChild("PlaceSlime") :: RemoteEvent
-local removeSlimeRemote = remotesFolder:WaitForChild("RemoveSlime") :: RemoteEvent
-local sellSlimeRemote = remotesFolder:WaitForChild("SellSlime") :: RemoteEvent
-local inventoryActionResultRemote = remotesFolder:WaitForChild("InventoryActionResult") :: RemoteEvent
+local remotesFolder = ReplicatedStorage:WaitForChild("InventoryRemotes", INVENTORY_REMOTES_WAIT_TIMEOUT_SECONDS)
+if not remotesFolder then
+	failInventoryHud("ReplicatedStorage.InventoryRemotes")
+	return
+end
+local placeSlimeRemoteMaybe = remotesFolder:WaitForChild("PlaceSlime", INVENTORY_REMOTES_WAIT_TIMEOUT_SECONDS)
+local removeSlimeRemoteMaybe = remotesFolder:WaitForChild("RemoveSlime", INVENTORY_REMOTES_WAIT_TIMEOUT_SECONDS)
+local sellSlimeRemoteMaybe = remotesFolder:WaitForChild("SellSlime", INVENTORY_REMOTES_WAIT_TIMEOUT_SECONDS)
+local inventoryActionResultRemoteMaybe = remotesFolder:WaitForChild("InventoryActionResult", INVENTORY_REMOTES_WAIT_TIMEOUT_SECONDS)
+if not (placeSlimeRemoteMaybe and removeSlimeRemoteMaybe and sellSlimeRemoteMaybe and inventoryActionResultRemoteMaybe) then
+	failInventoryHud("one or more remotes inside ReplicatedStorage.InventoryRemotes")
+	return
+end
+local placeSlimeRemote = placeSlimeRemoteMaybe :: RemoteEvent
+local removeSlimeRemote = removeSlimeRemoteMaybe :: RemoteEvent
+local sellSlimeRemote = sellSlimeRemoteMaybe :: RemoteEvent
+local inventoryActionResultRemote = inventoryActionResultRemoteMaybe :: RemoteEvent
 
 -- Separate remotes folder (see UpgradeServer.server.luau) -- upgrading is its
 -- own system, not a fourth inventory action, same reasoning as the swing shop
 -- getting its own ShopRemotes folder instead of living under this one.
-local upgradeRemotesFolder = ReplicatedStorage:WaitForChild("UpgradeRemotes")
-local upgradeSlimeRemote = upgradeRemotesFolder:WaitForChild("UpgradeSlime") :: RemoteEvent
-local upgradeResultRemote = upgradeRemotesFolder:WaitForChild("UpgradeResult") :: RemoteEvent
+local upgradeRemotesFolder = ReplicatedStorage:WaitForChild("UpgradeRemotes", INVENTORY_REMOTES_WAIT_TIMEOUT_SECONDS)
+if not upgradeRemotesFolder then
+	failInventoryHud("ReplicatedStorage.UpgradeRemotes")
+	return
+end
+local upgradeSlimeRemoteMaybe = upgradeRemotesFolder:WaitForChild("UpgradeSlime", INVENTORY_REMOTES_WAIT_TIMEOUT_SECONDS)
+local upgradeResultRemoteMaybe = upgradeRemotesFolder:WaitForChild("UpgradeResult", INVENTORY_REMOTES_WAIT_TIMEOUT_SECONDS)
+if not (upgradeSlimeRemoteMaybe and upgradeResultRemoteMaybe) then
+	failInventoryHud("one or more remotes inside ReplicatedStorage.UpgradeRemotes")
+	return
+end
+local upgradeSlimeRemote = upgradeSlimeRemoteMaybe :: RemoteEvent
+local upgradeResultRemote = upgradeResultRemoteMaybe :: RemoteEvent
 
 local function incomeText(perSecond: number): string
 	return MoneyFormat.format(perSecond) .. "/s"

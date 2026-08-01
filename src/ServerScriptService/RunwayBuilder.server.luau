@@ -31,8 +31,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local RunwayGeometry = require(ReplicatedStorage.Config.RunwayGeometry)
 local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
-
-local swingPivot = Workspace:WaitForChild("SwingPivot") :: BasePart
+local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
 
 -- The flight always travels in -Z (see LaunchServer.server.luau's
 -- launchDirection) -- a fixed fact about this world's layout, not recomputed
@@ -40,7 +39,14 @@ local swingPivot = Workspace:WaitForChild("SwingPivot") :: BasePart
 -- ends -- see RunwayGeometry.luau, also read by LaunchServer so the band a
 -- landing scores against is always the band physically built here.
 local RUNWAY_START_Z = RunwayGeometry.RUNWAY_START_Z
-local RUNWAY_X = swingPivot.Position.X
+-- BUG FIX (see the written report -- six-lane pass 1): this used to read
+-- Workspace.SwingPivot.Position.X, which only ever worked because there was
+-- exactly one swing. The road is shared and singular even now that swings
+-- aren't -- LaneConfig.ROAD_CENTER_X is the road's own centerline,
+-- independent of any specific lane's pivot (there are up to six now, none
+-- of them privileged). Numerically unchanged (0), so the generated bands
+-- sit exactly where they always did.
+local RUNWAY_X = LaneConfig.ROAD_CENTER_X
 -- Now the SAME single source of truth LaunchServer's trajectoryPosition
 -- also reads (see RunwayGeometry.luau), not an independently-computed copy.
 local RUNWAY_TOP_Y = RunwayGeometry.RUNWAY_TOP_Y

@@ -3,23 +3,24 @@
 -- LaunchConfig.luau and SlimeConfig.luau, just for the base-and-income
 -- system bolted onto a slime reveal's outcome (see the written report).
 --
--- THIS PASS: bases are per-player (see BaseGeometry.luau and
--- PlayerProfile.luau) -- SLOT_COUNT and the inner-grid constants describe
--- ONE player's own base; the BASE_SIDE_START_STUDS..BASE_ROW_SPACING_STUDS
--- block below is what places different players' bases next to each other
--- without overlapping. There used to be a single BASE_OFFSET_FROM_SWING for
--- the one shared base -- gone now, replaced by that block.
+-- THIS PASS: bases are per-LANE now, not fanned out from a shared swing
+-- (see BaseGeometry.luau and the written report -- six-lane pass 1). SLOT_
+-- COUNT and the inner-grid constants describe ONE player's own base; a
+-- base's WORLD X comes from LaneConfig.laneCenterX (that player's own lane,
+-- the same index their swing pivot uses), never from an offset computed
+-- here. BASE_ROW_START_STUDS is the only placement constant left in this
+-- file -- how far behind a lane's own swing (in Z) that lane's base sits.
+-- The old BASE_SIDE_START_STUDS/BASE_COLUMN_SPACING_STUDS/BASE_COLUMNS_PER_
+-- ROW/BASE_ROW_SPACING_STUDS side/column/row fan-out is gone outright, not
+-- just its dead row-wrap term -- that whole scheme assumed one central
+-- swing to fan out from, which no longer exists.
 
 export type BaseConfig = {
 	SLOT_COUNT: number,
 	BASE_INCOME_TICK_SECONDS: number,
 	BASE_GRID_COLUMNS: number,
 	BASE_SLOT_SPACING_STUDS: number,
-	BASE_SIDE_START_STUDS: number,
-	BASE_COLUMN_SPACING_STUDS: number,
-	BASE_COLUMNS_PER_ROW: number,
 	BASE_ROW_START_STUDS: number,
-	BASE_ROW_SPACING_STUDS: number,
 	BASE_SLOT_PAD_SIZE: Vector3,
 	BASE_SLOT_PAD_COLOR: Color3,
 	BASE_SLIME_PART_SIZE: Vector3,
@@ -47,30 +48,15 @@ local BaseConfig: BaseConfig = {
 	-- Studs between adjacent slot centers, both across a row and between rows.
 	BASE_SLOT_SPACING_STUDS = 8,
 
-	-- ===== Placing DIFFERENT players' bases next to each other (see
-	-- BaseGeometry.luau's blockOrigin) -- fans outward from the swing,
-	-- alternating left/right of it so consecutive joiners land on opposite
-	-- sides, filling BASE_COLUMNS_PER_ROW block-columns per side before
-	-- wrapping to a new row further from the swing. Sized to keep every
-	-- block within the existing Baseplate (240 studs wide, Z 10-60) for a
-	-- modest player count -- see the written report for the exact capacity
-	-- and what happens past it (blocks start landing off the platform's
-	-- edge; not addressed this pass). =====
-	-- Studs from the swing's own X to the FIRST block-column's center, on
-	-- either side -- clear of the swing posts (at X = +-6).
-	BASE_SIDE_START_STUDS = 30,
-	-- Studs between successive block-columns on the same side.
-	BASE_COLUMN_SPACING_STUDS = 35,
-	-- Block-columns per side before wrapping to a new row (further from the
-	-- swing in +Z). 3 keeps every column's block (16-stud half-width, see
-	-- BASE_GRID_COLUMNS/BASE_SLOT_SPACING_STUDS above) inside the
-	-- Baseplate's +-120 stud width with margin to spare.
-	BASE_COLUMNS_PER_ROW = 3,
-	-- Studs from the swing's own Z to the FIRST row's center.
+	-- ===== Placing one player's base behind their OWN lane (see
+	-- BaseGeometry.luau's blockOrigin) -- X comes from LaneConfig.
+	-- laneCenterX(baseIndex), the same lane center that player's own swing
+	-- pivot sits at; this is the only placement constant left in this
+	-- file. =====
+	-- Studs from a lane's own swing Z (LaneConfig.SWING_PIVOT_Z) to that
+	-- lane's base row center, further along +Z (away from the runway,
+	-- which runs -Z).
 	BASE_ROW_START_STUDS = 10,
-	-- Studs between successive rows. 16 keeps a second row's block (4-stud
-	-- half-depth) just inside the Baseplate's Z <= 60 edge.
-	BASE_ROW_SPACING_STUDS = 16,
 
 	-- ===== Visuals (placeholder only -- see the written report) =====
 	-- Each slot's pad -- a flat marker showing where a slime would go,

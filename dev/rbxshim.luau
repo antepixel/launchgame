@@ -334,6 +334,14 @@ InstanceMt.__index = function(t, k)
 			end
 			return nil
 		end
+	elseif k == "GetChildren" then
+		return function(self)
+			local out = {}
+			for _, child in ipairs(self._children) do
+				table.insert(out, child)
+			end
+			return out
+		end
 	elseif k == "GetDescendants" then
 		return function(self)
 			local out = {}
@@ -516,6 +524,8 @@ end
 registerModule(ConfigFolder, "LaunchConfig", "src/ReplicatedStorage/Config/LaunchConfig.luau")
 registerModule(ConfigFolder, "SwingTierVisuals", "src/ReplicatedStorage/Config/SwingTierVisuals.luau")
 registerModule(ConfigFolder, "SwingGeometry", "src/ReplicatedStorage/Config/SwingGeometry.luau")
+registerModule(ConfigFolder, "BaseConfig", "src/ReplicatedStorage/Config/BaseConfig.luau")
+registerModule(ConfigFolder, "BaseGeometry", "src/ReplicatedStorage/Config/BaseGeometry.luau")
 registerModule(ServerScriptService, "SwingBuilder", "src/ServerScriptService/SwingBuilder.luau")
 
 return {
@@ -529,4 +539,7 @@ return {
 	Workspace = Workspace,
 	ServerScriptService = ServerScriptService,
 	ReplicatedStorage = ReplicatedStorage,
+	-- Exposed so an ad-hoc driver script can register additional modules
+	-- (e.g. for a one-off diagnostic) without editing this file.
+	registerModule = registerModule,
 }

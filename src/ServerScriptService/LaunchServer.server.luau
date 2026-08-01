@@ -28,6 +28,7 @@ local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
 local SlimeConfig = require(ReplicatedStorage.Config.SlimeConfig)
 local SwingTierVisuals = require(ReplicatedStorage.Config.SwingTierVisuals)
 local SwingGeometry = require(ReplicatedStorage.Config.SwingGeometry)
+local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
 -- Server-only siblings (see each module's own header for why these live in
 -- ServerScriptService, not ReplicatedStorage, specifically).
 local SlimeRoll = require(ServerScriptService.SlimeRoll)
@@ -42,11 +43,46 @@ local PlayerProfile = require(ServerScriptService.PlayerProfile)
 
 Workspace.Gravity = LaunchConfig.GRAVITY
 
--- Remotes are created here, synchronously, before any LocalScript can run, so a
--- client's WaitForChild for these can never race a missing folder.
+-- BUG FIX (see the written report): a client's WaitForChild("Remotes") could
+-- resolve to a Folder that ReplicatedStorage already has a reference to
+-- before every remote inside it exists -- Roblox replicates "this Instance
+-- now has this Parent" as its own event, independently per instance, so a
+-- client watching ReplicatedStorage can observe the FOLDER the instant it's
+-- parented, which is not the same instant as "every remote inside it has
+-- also finished replicating." The folder used to be parented to
+-- ReplicatedStorage FIRST, then populated -- meaning there was a real
+-- (if usually brief) window where a client could legitimately see a Remotes
+-- folder missing some or all of its remotes, exactly matching the observed
+-- "Infinite yield possible on ReplicatedStorage.Remotes:WaitForChild(
+-- 'Release')" even though nothing in this script actually throws between
+-- creating the folder and creating Release (traced every statement in that
+-- window -- Instance.new/.Name=/.Parent= calls only, no yield, no branch,
+-- nothing capable of erroring under normal conditions).
+--
+-- Fixed at the ROOT instead of just bounding the client's wait (see
+-- LaunchClient.client.luau, which now also does that, belt-and-braces):
+-- the whole folder is now built and fully populated with every remote
+-- WHILE UNPARENTED (Parent stays nil, invisible to any client, exactly like
+-- a part sitting in nothing), and only parented to ReplicatedStorage as the
+-- LAST step, once -- see the bottom of this block. A client's
+-- WaitForChild("Remotes") can now only ever resolve to a folder that
+-- already has every remote inside it, by construction; there is no
+-- intermediate state to observe.
+--
+-- Also added the SAME stale-folder cleanup SwingStructure already had below
+-- (a leftover Remotes folder from a previous run of this exact script
+-- without a full server restart -- e.g. a live code-sync re-run -- would
+-- otherwise sit there forever, and a client could bind to THAT stale
+-- instance instead of the fresh one this run creates).
+local existingRemotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
+if existingRemotesFolder then
+	existingRemotesFolder:Destroy()
+end
+
 local remotesFolder = Instance.new("Folder")
 remotesFolder.Name = "Remotes"
-remotesFolder.Parent = ReplicatedStorage
+-- NOT parented yet -- see the comment above; parented once, at the bottom
+-- of this block, only after every remote below already exists as its child.
 
 local function makeRemote(name: string): RemoteEvent
 	local remote = Instance.new("RemoteEvent")
@@ -88,63 +124,252 @@ local slimeRevealedRemote = makeRemote("SlimeRevealed")
 -- yourself on the swing." See setupCharacter and the bug-2 fix in the written
 -- report for why the client needs to know this now.
 local ridingAssignedRemote = makeRemote("RidingAssigned")
+-- Client -> server: fired ONCE by a rider's LaunchClient the moment it has
+-- finished initialising (past every WaitForChild gate, listening for
+-- RidingAssigned, about to start driving the seat/character every
+-- RenderStepped) -- see setupCharacter's watchdog below, and the written
+-- report on why the server otherwise has no way to tell "a legitimately
+-- slow-to-release rider" apart from "a rider whose client never came up at
+-- all," both of which look identical from server state alone (state ==
+-- "riding", root anchored, no Release received).
+local riderReadyRemote = makeRemote("RiderReady")
 
-local swingPivot = Workspace:WaitForChild("SwingPivot") :: BasePart
+-- Reveal the whole subtree ATOMICALLY, now that every remote above already
+-- exists as this folder's child -- see the comment at the top of this
+-- block. Nothing before this line ever set remotesFolder.Parent.
+remotesFolder.Parent = ReplicatedStorage
 
--- ===== The one real game swing's structure folder: this used to be owned
--- (created once, module-level) by SwingBuilder.luau itself; that module now
--- takes an explicit pivot/folder per call instead (see its own written
--- report -- the gallery refactor let more than one swing exist, and this
--- file's swingPivot/swingStructureFolder pair is what makes "the game's one
--- swing" specifically). The defensive stale-folder cleanup that used to live
--- in SwingBuilder moves here with it, for the exact same reason it existed
--- before: a folder left over from a previous run of THIS script (e.g. a
--- live code-sync without a full server restart) would never otherwise be
--- cleaned up, and would sit there forever at whatever tier/scale it was
--- last built at. =====
-for _, existing in Workspace:GetChildren() do
-	if existing.Name == "SwingStructure" then
-		existing:Destroy()
-	end
+-- ===== Six per-player swings, one per lane (see the written report --
+-- six-lane pass 1). Workspace.SwingPivot/SwingStructure (the ONE hand-placed
+-- pivot + one shared structure folder every previous pass built) are GONE:
+-- there is no more "the game's one swing" to own module-level. Each
+-- connected player gets their OWN pivot + structure folder instead, named
+-- SwingPivot_<UserId>/SwingStructure_<UserId> (the same Base_<UserId>
+-- naming convention PlayerProfile.luau already uses), built the instant
+-- they're assigned a lane and destroyed the instant they leave -- an
+-- unoccupied lane has no tier to display, so it renders nothing at all,
+-- same as an unjoined player has no base folder either.
+--
+-- THIS PASS DELIBERATELY DOES NOT touch state/activePlayer/activeCharacter/
+-- riderReady/activeFlight/activeBox below -- there is still only ONE shared
+-- rider slot, and only ONE player can press Release and have it do
+-- anything, exactly as before. What changed is only WHICH physical pivot/
+-- folder that single slot's own visual rebuilds (setupCharacter/onRelease/
+-- clearActiveRider/the dev rebuild action) now point at: whichever pivot/
+-- folder belongs to activePlayer specifically, looked up in
+-- playerSwingPivots/playerSwingFolders below, instead of a single
+-- module-level swingPivot/swingStructureFolder that no longer exists. =====
+local baseplate = Workspace:WaitForChild("Baseplate") :: BasePart
+-- Ground level -- same reasoning BaseGeometry/SwingGeometry/SwingBuilder
+-- already use elsewhere in this project; this file needs its own copy only
+-- because the six pivots below are built HERE now, at runtime, rather than
+-- hand-placed once in default.project.json.
+local groundY = baseplate.Position.Y + baseplate.Size.Y / 2
+
+local function laneInstanceNames(userId: number): (string, string)
+	return string.format("SwingPivot_%d", userId), string.format("SwingStructure_%d", userId)
 end
-local swingStructureFolder = Instance.new("Folder")
-swingStructureFolder.Name = "SwingStructure"
-swingStructureFolder.Parent = Workspace
+
+-- Every currently-connected player's own pivot/folder -- populated by
+-- buildPlayerSwing below the instant that player's lane index is known,
+-- cleared by destroyPlayerSwing the instant they leave. Deliberately keyed
+-- by Player, not by lane index: activePlayer/activeCharacter below are
+-- already Player-keyed, so every lookup this file needs to do ("which pivot
+-- does the current rider's slot belong to") is a single table read, no
+-- second index translation.
+local playerSwingPivots: { [Player]: BasePart } = {}
+local playerSwingFolders: { [Player]: Folder } = {}
 
 -- ===== Swing tier visual: the ENTIRE structure -- posts, beam, bracing,
 -- caps, ground pads, seat, chain -- is a genuinely different, procedurally
 -- built OBJECT per tier band, not the same four boxes resized/recoloured.
 -- See SwingBuilder.luau for the construction code and SwingTierVisuals.luau
 -- for every per-tier number/shape/material/colour; this file only ever
--- CALLS SwingBuilder.build(tier, swingPivot, swingStructureFolder), never
--- authors geometry itself. THIS FILE never touches LaunchConfig.
--- SWING_ROPE_LENGTH/SWING_ARC_HALF_ANGLE_DEGREES/SWING_PERIOD_SECONDS, so
--- swingTheta below stays exactly the same phase math regardless of tier.
--- SwingBuilder.build DOES move swingPivot's Y (see SwingGeometry.luau) so
--- the seat hangs proportionally higher on taller frames -- swingSeatPosition
--- below reads swingPivot.Position fresh every call, so it automatically
--- picks up whatever height the CURRENT rider's tier last set, with no
--- further change to this file needed. That move is purely a translation of
--- WHERE the arc sits, not its shape: swingTheta's amplitude and swingPhase's
--- timing read no position at all, so the seat's actual swept position (and
--- therefore the scoring math, which reads that exact position at release)
--- is exactly as sensitive to release timing at every tier, just centred at
--- a different height. =====
-local function applySwingVisualForTier(tier: number)
-	SwingBuilder.build(tier, swingPivot, swingStructureFolder)
+-- CALLS SwingBuilder.build(tier, pivot, folder), never authors geometry
+-- itself. THIS FILE never touches LaunchConfig.SWING_ROPE_LENGTH/
+-- SWING_ARC_HALF_ANGLE_DEGREES/SWING_PERIOD_SECONDS, so swingTheta below
+-- stays exactly the same phase math regardless of tier. SwingBuilder.build
+-- DOES move the given pivot's Y (see SwingGeometry.luau) so the seat hangs
+-- proportionally higher on taller frames -- swingSeatPosition below reads
+-- the pivot's Position fresh every call, so it automatically picks up
+-- whatever height that lane's CURRENT tier last set, with no further change
+-- to this file needed. That move is purely a translation of WHERE the arc
+-- sits, not its shape: swingTheta's amplitude and swingPhase's timing read
+-- no position at all, so the seat's actual swept position (and therefore
+-- the scoring math, which reads that exact position at release) is exactly
+-- as sensitive to release timing at every tier, just centred at a different
+-- height. Takes an explicit pivot/folder now (used to close over the one
+-- module-level swingPivot/swingStructureFolder) -- see every call site
+-- below for which player's own instances it's pointed at. =====
+local function applySwingVisualForTier(tier: number, pivot: BasePart, folder: Instance)
+	SwingBuilder.build(tier, pivot, folder)
 end
 
--- BUG FIX: the swing used to exist from the moment the place file loaded --
--- SwingPost1/2/SwingBeam/SwingSeat were hand-placed, static parts in
--- default.project.json, so a fresh server had SOMETHING visible even before
--- applySwingVisualForTier was ever called (every call site below is inside a
--- player event handler -- clearActiveRider, setupCharacter, onRelease --
--- none of which fire at server startup). Now that the whole structure is
--- built by SwingBuilder instead of pre-placed, nothing would exist at all
--- until the first such event -- an empty server would show only the
--- invisible SwingPivot until a player joined and did something. Building
--- tier 1 once, right here, restores "the swing exists from server start."
-applySwingVisualForTier(1)
+-- Builds (or rebuilds, on a tier change) ONE player's own pivot + structure
+-- at their own lane's X, the shared LaneConfig.SWING_PIVOT_Z every lane
+-- uses, and their own currently-owned tier. Defensive stale-instance cleanup
+-- first, same reasoning the old single-swing setup always used (a leftover
+-- instance from a previous run of THIS exact script, e.g. a live code-sync
+-- without a full server restart, would otherwise sit there forever).
+local function buildPlayerSwing(player: Player, baseIndex: number)
+	local pivotName, structureName = laneInstanceNames(player.UserId)
+
+	local existingPivot = Workspace:FindFirstChild(pivotName)
+	if existingPivot then
+		existingPivot:Destroy()
+	end
+	local existingFolder = Workspace:FindFirstChild(structureName)
+	if existingFolder then
+		existingFolder:Destroy()
+	end
+
+	local pivot = Instance.new("Part")
+	pivot.Name = pivotName
+	pivot.Anchored = true
+	pivot.CanCollide = false
+	pivot.Transparency = 1
+	pivot.Size = Vector3.new(2, 0.2, 2)
+	-- X is this player's own lane center, never touched again after this --
+	-- SwingBuilder.build only ever moves a pivot's Y (see its own header).
+	-- Y here is a placeholder (SwingBuilder.build corrects it to the real
+	-- tier-scaled height on the very next line) -- same "doesn't matter,
+	-- gets overwritten immediately" reasoning SwingGallery.server.luau's own
+	-- per-tier pivots use.
+	pivot.Position = Vector3.new(LaneConfig.laneCenterX(baseIndex), groundY, LaneConfig.SWING_PIVOT_Z)
+	pivot.Parent = Workspace
+
+	local structureFolder = Instance.new("Folder")
+	structureFolder.Name = structureName
+	-- NOT parented until fully built -- same reasoning the old single shared
+	-- folder used (invisible to any client until SwingBuilder.build has
+	-- finished populating it), just now per-player instead of once.
+	applySwingVisualForTier(PlayerProfile.getSwingTier(player), pivot, structureFolder)
+	structureFolder.Parent = Workspace
+
+	playerSwingPivots[player] = pivot
+	playerSwingFolders[player] = structureFolder
+end
+
+local function destroyPlayerSwing(player: Player)
+	local pivot = playerSwingPivots[player]
+	if pivot then
+		pivot:Destroy()
+	end
+	local folder = playerSwingFolders[player]
+	if folder then
+		folder:Destroy()
+	end
+	playerSwingPivots[player] = nil
+	playerSwingFolders[player] = nil
+end
+
+-- ===== Six per-lane spawns, replacing the single hand-placed
+-- PlaceholderSpawn (see the written report: default.project.json's own copy
+-- is removed -- Rojo cannot remove instances from an already-published
+-- place, so the old PlaceholderSpawn must be deleted by hand in Studio and
+-- republished; this defensive cleanup loop is a safety net for that, not a
+-- substitute for actually doing it). Built here, at runtime, from the same
+-- LaneConfig.laneCenterX every pivot above uses -- not hand-placed, for the
+-- same "derive, don't hardcode six literals" reasoning. Built ONCE, at
+-- server start, for all six lanes regardless of who's currently connected
+-- (unlike the pivots, an idle spawn nobody is using yet costs nothing and
+-- doesn't need a build/destroy lifecycle) -- onLaneAssignmentPlayerAdded
+-- below assigns each joining player their OWN lane's spawn via
+-- player.RespawnLocation once their lane index is known, so a later respawn
+-- returns them next to their own swing instead of Roblox picking any of the
+-- six at random. =====
+for _, existing in Workspace:GetChildren() do
+	if existing.Name == "PlaceholderSpawn" or existing:IsA("SpawnLocation") then
+		existing:Destroy()
+	end
+end
+
+local laneSpawns: { SpawnLocation } = {}
+for laneIndex = 0, LaneConfig.LANE_COUNT - 1 do
+	local spawnPart = Instance.new("SpawnLocation")
+	spawnPart.Name = string.format("LaneSpawn%d", laneIndex)
+	spawnPart.Anchored = true
+	spawnPart.CanCollide = true
+	spawnPart.Neutral = true
+	spawnPart.Duration = 0
+	spawnPart.Size = Vector3.new(8, 1, 8)
+	-- Matches the old single PlaceholderSpawn's own Y (groundY + 1) and Z
+	-- (LaneConfig.SPAWN_Z, = the old part's own placed Z) exactly -- only X
+	-- now varies, per lane.
+	spawnPart.Position = Vector3.new(LaneConfig.laneCenterX(laneIndex), groundY + 1, LaneConfig.SPAWN_Z)
+	spawnPart.Parent = Workspace
+	laneSpawns[laneIndex + 1] = spawnPart
+end
+
+-- ===== Lane assignment lifecycle: build this player's own swing the
+-- instant their lane index is known, destroy it the instant they leave.
+-- Deliberately a SEPARATE Players.PlayerAdded/PlayerRemoving pair from
+-- setupCharacter's own below -- that one is about the single shared rider
+-- slot (untouched this pass); this one is purely about per-lane geometry
+-- existing/not existing, which has nothing to do with who currently holds
+-- the rider slot. =====
+--
+-- ORDERING (see the written report): PlayerProfile.luau's own
+-- Players.PlayerAdded listener is what actually allocates the lane index
+-- (PlayerProfile.getBaseIndex) -- and it is a COMPLETELY INDEPENDENT
+-- listener on the same event, with no guaranteed order against this file's
+-- own. The allocation itself is synchronous/in-memory (instant) once
+-- PlayerProfile's listener runs, so the only real ambiguity is WHICH
+-- script's top-level :Connect() (or startup Players:GetPlayers() loop)
+-- happens to run first -- resolved within, at most, a frame or two in
+-- practice, never seconds. Bounded poll/retry here, not an assumption of
+-- ordering: matches this file's own existing RIDER_READY_TIMEOUT_SECONDS
+-- shape (generous bound, loud warning, fail open/skip rather than hang) --
+-- see waitForBaseIndex below.
+local LANE_INDEX_WAIT_TIMEOUT_SECONDS = 10
+local LANE_INDEX_POLL_INTERVAL_SECONDS = 0.1
+
+local function waitForBaseIndex(player: Player): number?
+	local elapsed = 0
+	while elapsed < LANE_INDEX_WAIT_TIMEOUT_SECONDS do
+		local baseIndex = PlayerProfile.getBaseIndex(player)
+		if baseIndex then
+			return baseIndex
+		end
+		if not player.Parent then
+			-- Left before ever getting a lane -- nothing to build.
+			return nil
+		end
+		task.wait(LANE_INDEX_POLL_INTERVAL_SECONDS)
+		elapsed += LANE_INDEX_POLL_INTERVAL_SECONDS
+	end
+	return nil
+end
+
+local function onLaneAssignmentPlayerAdded(player: Player)
+	task.spawn(function()
+		local baseIndex = waitForBaseIndex(player)
+		if not player.Parent then
+			return
+		end
+		if not baseIndex then
+			warn(string.format(
+				"[LaunchServer] %s never received a lane index within %d seconds -- PlayerProfile likely failed to allocate one (see its own onPlayerAdded). No swing will be built for them this session.",
+				player.Name, LANE_INDEX_WAIT_TIMEOUT_SECONDS
+			))
+			return
+		end
+		buildPlayerSwing(player, baseIndex)
+		-- This player's OWN lane spawn, so a respawn returns them next to
+		-- their own swing instead of Roblox picking any of the six at
+		-- random -- see laneSpawns above.
+		local spawnPart = laneSpawns[baseIndex + 1]
+		if spawnPart then
+			player.RespawnLocation = spawnPart
+		end
+	end)
+end
+
+Players.PlayerAdded:Connect(onLaneAssignmentPlayerAdded)
+for _, player in Players:GetPlayers() do
+	onLaneAssignmentPlayerAdded(player)
+end
+Players.PlayerRemoving:Connect(destroyPlayerSwing)
 
 -- ===== Swing math (unchanged from the previous pass) =====
 
@@ -158,8 +383,14 @@ local function swingTheta(phase: number): number
 	return arc * math.sin(2 * math.pi * phase)
 end
 
-local function swingSeatPosition(theta: number): Vector3
-	local pivotPosition = swingPivot.Position
+-- Takes an explicit pivot now (used to close over the one module-level
+-- swingPivot, which no longer exists -- see the six-per-lane setup above).
+-- Every call site passes the CURRENT rider's own pivot (playerSwingPivots
+-- [activePlayer]) -- swingTheta's amplitude and swingPhase's timing still
+-- read no position at all, so which pivot gets passed in only ever affects
+-- WHERE the arc sits, never its shape or timing.
+local function swingSeatPosition(theta: number, pivot: BasePart): Vector3
+	local pivotPosition = pivot.Position
 	-- Effective rope length for WHATEVER tier is currently built -- derived
 	-- from the pivot's own live Y (see SwingGeometry.ropeLengthForPivotY),
 	-- not a raw LaunchConfig.SWING_ROPE_LENGTH read, since the rope is now
@@ -278,14 +509,14 @@ end
 -- physics, no ragdoll, no Animation asset. This is a DIRECT CFrame edit, not an
 -- animation track: set once at release, held for the whole flight (the body's
 -- overall tilt is what moves, via the CLIENT's trajectoryCFrame pitch -- see
--- LaunchClient.client.luau), restored to whatever the joint's C0 actually was
--- the instant the character lands. STAYS SERVER-SIDE (unlike the per-frame
--- position/rotation, which moved to the client this pass): it's set exactly
--- ONCE per flight and held, not written every frame, so it was never the
--- source of the jitter and has nothing to gain from moving. Handles both R15
--- (space-less joint names, split UpperTorso/LowerTorso) and R6 (spaced names,
--- single Torso) rigs; if a rig has neither, the pose is silently skipped and
--- only the overall body tilt still applies -- never an error.
+-- LaunchClient.client.luau), restored to true neutral the instant the
+-- character lands. STAYS SERVER-SIDE (unlike the per-frame position/rotation,
+-- which moved to the client this pass): it's set exactly ONCE per flight and
+-- held, not written every frame, so it was never the source of the jitter and
+-- has nothing to gain from moving. Handles both R15 (space-less joint names,
+-- split UpperTorso/LowerTorso) and R6 (spaced names, single Torso) rigs; if a
+-- rig has neither, the pose is silently skipped and only the overall body
+-- tilt still applies -- never an error.
 local ARM_SPREAD = math.rad(65)
 local ARM_LIFT = math.rad(35)
 local LEG_TRAIL = math.rad(20)
@@ -303,37 +534,84 @@ local function findMotor6D(container: Instance?, nameA: string, nameB: string): 
 	return nil
 end
 
-local function applyFlightPose(character: Model): PoseJoints
+local function findFlightJoints(character: Model): (Motor6D?, Motor6D?, Motor6D?, Motor6D?)
 	local upperTorso = character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
 	local lowerTorso = character:FindFirstChild("LowerTorso") or character:FindFirstChild("Torso")
 	local leftShoulder = findMotor6D(upperTorso, "LeftShoulder", "Left Shoulder")
 	local rightShoulder = findMotor6D(upperTorso, "RightShoulder", "Right Shoulder")
 	local leftHip = findMotor6D(lowerTorso, "LeftHip", "Left Hip")
 	local rightHip = findMotor6D(lowerTorso, "RightHip", "Right Hip")
+	return leftShoulder, rightShoulder, leftHip, rightHip
+end
 
-	local original: PoseJoints = {}
+-- BUG FIX (see the written report -- compounding flight pose): applyFlightPose
+-- used to offset each joint from its CURRENT C0 at apply time. If
+-- restoreFlightPose was ever skipped (death or disconnect mid-flight, see
+-- clearActiveRider below), the next flight captured the still-bent C0 as
+-- "neutral" and added another layer of offset on top -- repeatable without
+-- bound, since nothing ever re-anchored to the rig's ACTUAL neutral pose.
+-- Fixed by capturing each character's true neutral C0 exactly ONCE, in
+-- setupCharacter, before any pose has ever been applied to it, and keeping
+-- every later apply/restore anchored to that one stored snapshot instead of
+-- whatever the joint currently reads. Weak-keyed so a respawned character's
+-- entry (and its now-destroyed Motor6Ds) can be collected instead of leaking
+-- for the life of the server.
+local characterNeutralPose: { [Model]: PoseJoints } = setmetatable({}, { __mode = "k" }) :: any
+
+local function captureNeutralPose(character: Model): PoseJoints
+	local leftShoulder, rightShoulder, leftHip, rightHip = findFlightJoints(character)
+	local neutral: PoseJoints = {}
 	if leftShoulder then
-		original[leftShoulder] = leftShoulder.C0
-		leftShoulder.C0 = leftShoulder.C0 * CFrame.Angles(-ARM_LIFT, 0, -ARM_SPREAD)
+		neutral[leftShoulder] = leftShoulder.C0
 	end
 	if rightShoulder then
-		original[rightShoulder] = rightShoulder.C0
-		rightShoulder.C0 = rightShoulder.C0 * CFrame.Angles(-ARM_LIFT, 0, ARM_SPREAD)
+		neutral[rightShoulder] = rightShoulder.C0
 	end
 	if leftHip then
-		original[leftHip] = leftHip.C0
-		leftHip.C0 = leftHip.C0 * CFrame.Angles(LEG_TRAIL, 0, 0)
+		neutral[leftHip] = leftHip.C0
 	end
 	if rightHip then
-		original[rightHip] = rightHip.C0
-		rightHip.C0 = rightHip.C0 * CFrame.Angles(LEG_TRAIL, 0, 0)
+		neutral[rightHip] = rightHip.C0
 	end
-	return original
+	return neutral
+end
+
+-- Always offsets from the STORED neutral captured by captureNeutralPose, never
+-- from the joint's current C0 -- see the bug-fix comment above. Returns that
+-- same neutral map, which restoreFlightPose below writes straight back: apply
+-- and restore always agree on exactly what "neutral" means for this
+-- character, so a skipped restore can never compound -- the next apply simply
+-- overwrites from neutral again.
+local function applyFlightPose(character: Model): PoseJoints
+	local neutral = characterNeutralPose[character]
+	if not neutral then
+		-- Defensive only: setupCharacter captures this for every character
+		-- before it can ever become the active rider, so this should be
+		-- unreachable. Falls back to capturing now rather than offsetting
+		-- from a possibly-already-bent current C0.
+		neutral = captureNeutralPose(character)
+		characterNeutralPose[character] = neutral
+	end
+
+	local leftShoulder, rightShoulder, leftHip, rightHip = findFlightJoints(character)
+	if leftShoulder and neutral[leftShoulder] then
+		leftShoulder.C0 = neutral[leftShoulder] * CFrame.Angles(-ARM_LIFT, 0, -ARM_SPREAD)
+	end
+	if rightShoulder and neutral[rightShoulder] then
+		rightShoulder.C0 = neutral[rightShoulder] * CFrame.Angles(-ARM_LIFT, 0, ARM_SPREAD)
+	end
+	if leftHip and neutral[leftHip] then
+		leftHip.C0 = neutral[leftHip] * CFrame.Angles(LEG_TRAIL, 0, 0)
+	end
+	if rightHip and neutral[rightHip] then
+		rightHip.C0 = neutral[rightHip] * CFrame.Angles(LEG_TRAIL, 0, 0)
+	end
+	return neutral
 end
 
 local function restoreFlightPose(joints: PoseJoints)
-	for joint, originalC0 in joints do
-		joint.C0 = originalC0
+	for joint, neutralC0 in joints do
+		joint.C0 = neutralC0
 	end
 end
 
@@ -498,6 +776,13 @@ type LoopState = "riding" | "inflight" | "box" | "cooldown"
 local state: LoopState = "riding"
 local activePlayer: Player? = nil
 local activeCharacter: Model? = nil
+-- True once the current rider's own LaunchClient has fired RiderReady --
+-- see setupCharacter's watchdog and riderReadyRemote above. Reset to false
+-- every time a NEW rider claims the seat; a stale true from a PREVIOUS
+-- rider can never leak into a new rider's own watchdog check because that
+-- check also compares `character == activeCharacter` (a fresh Model every
+-- claim).
+local riderReady = false
 
 -- The active flight's fixed, precomputed description -- set once at release,
 -- read every Heartbeat until duration elapses. Nothing here ever changes mid-flight.
@@ -543,9 +828,33 @@ if RunService:IsStudio() then
 	local devRebuildSwingEvent = Instance.new("BindableEvent")
 	devRebuildSwingEvent.Name = "DevRebuildCurrentSwing"
 	devRebuildSwingEvent.Parent = ServerScriptService
-	devRebuildSwingEvent.Event:Connect(function()
-		local tier = if activePlayer then PlayerProfile.getSwingTier(activePlayer) else 1
-		applySwingVisualForTier(tier)
+	-- BUG FIX (see written report): this used to fall back to tier 1 whenever
+	-- nobody was riding, regardless of who pressed the button or what tier
+	-- their OWN profile says -- pressing it while standing built a tier-1
+	-- swing even for a tier-9 player, leaving the visible structure (pivot
+	-- height, rope length) mismatched against the tier LaunchServer.onRelease
+	-- actually computes distance from the next time they ride. Falls back to
+	-- the REQUESTING player's own tier instead now (DevPanelServer.server.
+	-- luau passes the firing player through Fire()) -- only ever falls all
+	-- the way back to 1 if this is invoked with no requesting player at all
+	-- (defensive only; DevPanelServer always passes one).
+	devRebuildSwingEvent.Event:Connect(function(requestingPlayer: Player?)
+		-- Rebuilds whichever PLAYER's own lane this should affect -- the
+		-- current rider if there is one, else the requesting player -- since
+		-- there is no more single shared pivot/folder to fall back to (see
+		-- the six-per-lane setup above). No-ops if that player doesn't have
+		-- a lane pivot yet (e.g. still mid-join); nothing sensible to
+		-- rebuild in that case.
+		local targetPlayer = activePlayer or requestingPlayer
+		if not targetPlayer then
+			return
+		end
+		local pivot = playerSwingPivots[targetPlayer]
+		local folder = playerSwingFolders[targetPlayer]
+		if not pivot or not folder then
+			return
+		end
+		applySwingVisualForTier(PlayerProfile.getSwingTier(targetPlayer), pivot, folder)
 	end)
 end
 
@@ -565,15 +874,31 @@ local function clearActiveRider()
 	-- activeFlight without checking it for one first.
 	if activeFlight then
 		destroyFlightTrail(activeFlight.trailRig)
+		-- BUG FIX (see the written report -- compounding flight pose): this
+		-- also used to discard activeFlight.poseJoints unrestored, leaving a
+		-- rider who died or disconnected mid-flight with bent hip/shoulder
+		-- C0s forever. Harmless on its own now that applyFlightPose always
+		-- offsets from the stored neutral pose (a skipped restore can no
+		-- longer compound), but restoring here still matters for a rider who
+		-- dies mid-flight and is revived/keeps the same character without a
+		-- full respawn -- and it's free.
+		restoreFlightPose(activeFlight.poseJoints)
 	end
 	activePlayer = nil
 	activeCharacter = nil
 	activeFlight = nil
 	activeBox = nil
+	riderReady = false
 	state = "riding"
-	-- Nobody's riding -- the shared swing shows its baseline (tier 1) look
-	-- rather than holding on to whatever the last rider's tier looked like.
-	applySwingVisualForTier(1)
+	-- BUG FIX (see the written report -- six-lane pass 1): this used to
+	-- reset the ONE shared swing to a baseline tier-1 look here, since
+	-- "nobody riding" meant the single swing had no owner's tier to show.
+	-- That concept doesn't exist any more -- every lane always shows its
+	-- OWN occupant's own tier, maintained independently by the per-lane
+	-- lifecycle above, whether or not that occupant currently holds this
+	-- shared rider slot. Resetting to tier 1 here would incorrectly stomp a
+	-- departing/dying rider's own owned-tier look with a baseline that has
+	-- nothing to do with them.
 end
 
 -- Shared by both the 0-luck landing path (no box) and the box's own "opened"
@@ -613,9 +938,22 @@ end
 -- riding and while flying (see the written report for the flight half of that),
 -- and AutoRotate fighting that is still exactly the kind of jitter the
 -- camera-whip fix several passes ago was written to avoid.
+-- Bounded grace period for a freshly-anchored rider's OWN LaunchClient to
+-- fire RiderReady (see setupCharacter's watchdog below) -- generous enough
+-- to comfortably cover normal loading variance (including LaunchClient's
+-- own up-to-10-second bounded WaitForChild chain, see LaunchClient.client.
+-- luau's REMOTES_WAIT_TIMEOUT_SECONDS) without leaving a genuinely broken
+-- client's rider stuck for long.
+local RIDER_READY_TIMEOUT_SECONDS = 15
+
 local function setupCharacter(player: Player, character: Model)
 	local humanoid = character:WaitForChild("Humanoid") :: Humanoid
 	humanoid.AutoRotate = false
+
+	-- Captured once, right away, before this character's joints have ever
+	-- been touched by applyFlightPose -- see the bug-fix comment on
+	-- characterNeutralPose above.
+	characterNeutralPose[character] = captureNeutralPose(character)
 
 	humanoid.Died:Connect(function()
 		if player == activePlayer then
@@ -627,6 +965,7 @@ local function setupCharacter(player: Player, character: Model)
 		activePlayer = player
 		activeCharacter = character
 		state = "riding"
+		riderReady = false
 		-- The server no longer repositions the rider every Heartbeat (that's the
 		-- bug-2 fix -- the CLIENT now drives this visually, every RenderStepped,
 		-- from the same shared swing math). Anchoring the root is what keeps the
@@ -639,11 +978,64 @@ local function setupCharacter(player: Player, character: Model)
 			rootPart.Anchored = true
 		end
 		-- Show THIS rider's own tier the moment they claim the seat -- see
-		-- applySwingVisualForTier above.
-		applySwingVisualForTier(PlayerProfile.getSwingTier(player))
+		-- applySwingVisualForTier above. Mostly redundant with the per-lane
+		-- lifecycle's own initial build (buildPlayerSwing already built this
+		-- exact player's own pivot/folder at this exact tier the moment they
+		-- were assigned a lane, well before a character can load and claim
+		-- this slot) -- kept as a defensive refresh, and skipped gracefully
+		-- (not an error) on the rare chance this player's own lane pivot
+		-- somehow isn't built yet: the per-lane lifecycle will still finish
+		-- building it correctly moments later regardless.
+		local claimPivot = playerSwingPivots[player]
+		local claimFolder = playerSwingFolders[player]
+		if claimPivot and claimFolder then
+			applySwingVisualForTier(PlayerProfile.getSwingTier(player), claimPivot, claimFolder)
+		end
 		ridingAssignedRemote:FireClient(player)
+
+		-- BUG FIX (see the written report): the anchor above assumes THIS
+		-- player's LaunchClient will come up and start driving the seat/
+		-- character every RenderStepped. If it never does -- a hung or
+		-- failed client-side WaitForChild, a disconnect mid-load, anything
+		-- -- the root stays anchored FOREVER with nothing server-side ever
+		-- moving or freeing it: a player stuck in place, unable to move,
+		-- with no way out. This bounded watchdog is the recovery: if THIS
+		-- exact rider/character (captured below, not re-read from the
+		-- module-level variables at fire time) hasn't acknowledged
+		-- readiness within RIDER_READY_TIMEOUT_SECONDS, fail OPEN --
+		-- unanchor so the player at least regains ordinary movement,
+		-- rather than staying frozen indefinitely. Self-invalidating by
+		-- construction: if this rider legitimately released, left, or got
+		-- cleared before the timeout fires, activePlayer/activeCharacter
+		-- will have moved on (or riderReady will already be true) and this
+		-- no-ops. Deliberately NOT a plain timer that fires regardless of
+		-- activity -- a real player who just hasn't released yet within 15
+		-- seconds is fine and must not be yanked off the swing; the ack is
+		-- about the CLIENT being alive, not about how fast the player
+		-- plays.
+		local watchedPlayer, watchedCharacter = player, character
+		task.delay(RIDER_READY_TIMEOUT_SECONDS, function()
+			if watchedPlayer ~= activePlayer or watchedCharacter ~= activeCharacter or riderReady then
+				return
+			end
+			local watchedHumanoid = watchedCharacter:FindFirstChildOfClass("Humanoid")
+			local watchedRoot = watchedHumanoid and watchedHumanoid.RootPart
+			if watchedRoot and watchedRoot.Anchored then
+				warn(string.format(
+					"[LaunchServer] %s's LaunchClient never acknowledged readiness within %d seconds -- unanchoring so they aren't stuck.",
+					watchedPlayer.Name, RIDER_READY_TIMEOUT_SECONDS
+				))
+				watchedRoot.Anchored = false
+			end
+		end)
 	end
 end
+
+riderReadyRemote.OnServerEvent:Connect(function(player: Player)
+	if player == activePlayer then
+		riderReady = true
+	end
+end)
 
 Players.PlayerAdded:Connect(function(player)
 	player.CharacterAdded:Connect(function(character)
@@ -681,6 +1073,21 @@ local function onRelease(player: Player)
 		clearActiveRider()
 		return
 	end
+	-- This player's own lane pivot/folder -- see the six-per-lane setup
+	-- above. Bails WITHOUT clearing the rider (unlike the guards above):
+	-- a missing pivot here means "this player's own lane geometry hasn't
+	-- finished building yet" (buildPlayerSwing runs asynchronously off
+	-- PlayerAdded, see onLaneAssignmentPlayerAdded), not that anything is
+	-- actually wrong with this rider -- an exceedingly rare, self-correcting
+	-- race (a character would need to load, claim this slot, AND the player
+	-- press Release, all before a synchronous in-memory table lookup and one
+	-- SwingBuilder.build call finish), not worth yanking them off the swing
+	-- for. Their next Release attempt succeeds once it catches up.
+	local pivot = playerSwingPivots[player]
+	local structureFolder = playerSwingFolders[player]
+	if not pivot or not structureFolder then
+		return
+	end
 
 	-- THE ONLY THING RELEASE POWER IS EVER DERIVED FROM: the server's own
 	-- swingPhase(), read at the instant the server itself receives this event.
@@ -711,7 +1118,7 @@ local function onRelease(player: Player)
 	-- made while already sitting on the swing (setupCharacter only stamps
 	-- this once, at the moment the seat is claimed) showing up by the very
 	-- next launch, not just the next time someone re-claims the seat.
-	applySwingVisualForTier(riderTier)
+	applySwingVisualForTier(riderTier, pivot, structureFolder)
 	local distance = LaunchConfig.DISTANCE_PER_MULTIPLIER * multiplier * tierScale
 	local archHeight = distance * LaunchConfig.ARC_HEIGHT_FRACTION
 	-- Flight duration now scales WITH distance instead of staying fixed --
@@ -725,8 +1132,13 @@ local function onRelease(player: Player)
 		* (distance / baseDistance) ^ LaunchConfig.FLIGHT_DURATION_EXPONENT
 
 	-- Launch from wherever the seat actually is right now (the swing never
-	-- stops, so this is a moving origin).
-	local startPosition = swingSeatPosition(swingTheta(phase)) + Vector3.new(0, 2, 0)
+	-- stops, so this is a moving origin). LaunchConfig.RIDER_SEAT_HEIGHT_
+	-- OFFSET, not a second hardcoded 2 -- see the written report: this used
+	-- to disagree with LaunchClient's own riding-height offset (2 here,
+	-- 1.0 there), producing a visible vertical pop at the instant of
+	-- release as the character snapped between the two. Same constant now,
+	-- read fresh here, so the two can never drift apart again.
+	local startPosition = swingSeatPosition(swingTheta(phase), pivot) + Vector3.new(0, LaunchConfig.RIDER_SEAT_HEIGHT_OFFSET, 0)
 	character:PivotTo(CFrame.lookAt(startPosition, startPosition + Vector3.new(0, 0, -1)))
 
 	-- Launch burst + flight trail: same per-tier visual record

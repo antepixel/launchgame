@@ -37,12 +37,26 @@ end
 local playerGui = player:WaitForChild("PlayerGui")
 
 -- Only exists because DevPanelServer's own Gate 1 (RunService:IsStudio())
--- passed server-side too -- WaitForChild is safe/expected to resolve
--- quickly here, since client and server IsStudio() can never disagree
--- (Play Solo/Team Test run both inside the same Studio process; a
--- published game is neither).
-local devRemotesFolder = ReplicatedStorage:WaitForChild("DevRemotes")
-local devActionRemote = devRemotesFolder:WaitForChild("DevAction") :: RemoteEvent
+-- passed server-side too -- expected to resolve quickly here, since client
+-- and server IsStudio() can never disagree (Play Solo/Team Test run both
+-- inside the same Studio process; a published game is neither). Bounded
+-- anyway (see the written report -- the same one-level-deep gap that left
+-- LaunchClient hung applied here too: the folder existing doesn't mean
+-- DevAction inside it does): a dev script silently hanging forever, with
+-- no panel and only a console warning to notice, is exactly the failure
+-- mode being fixed everywhere else this pass.
+local DEV_REMOTES_WAIT_TIMEOUT_SECONDS = 10
+local devRemotesFolder = ReplicatedStorage:WaitForChild("DevRemotes", DEV_REMOTES_WAIT_TIMEOUT_SECONDS)
+if not devRemotesFolder then
+	warn("[DevPanelClient] ReplicatedStorage.DevRemotes never appeared -- DevPanelServer likely failed to start. Dev panel unavailable this session.")
+	return
+end
+local devActionRemoteMaybe = devRemotesFolder:WaitForChild("DevAction", DEV_REMOTES_WAIT_TIMEOUT_SECONDS)
+if not devActionRemoteMaybe then
+	warn("[DevPanelClient] ReplicatedStorage.DevRemotes.DevAction never appeared -- DevPanelServer likely failed to start. Dev panel unavailable this session.")
+	return
+end
+local devActionRemote = devActionRemoteMaybe :: RemoteEvent
 
 local function fireAction(actionName: string, payload: any)
 	devActionRemote:FireServer(actionName, payload)

@@ -26,11 +26,17 @@ local playerGui = player:WaitForChild("PlayerGui")
 -- starts) but still needed a ceiling for the rarer "server-side never built
 -- it at all" case.
 local BASE_FOLDER_WAIT_TIMEOUT_SECONDS = 10
-local baseFolder = Workspace:WaitForChild(string.format("Base_%d", player.UserId), BASE_FOLDER_WAIT_TIMEOUT_SECONDS)
-if not baseFolder then
+local SHOP_REMOTES_WAIT_TIMEOUT_SECONDS = 10
+
+-- Shared failure UI -- same "small red disabled button" pattern regardless
+-- of WHICH dependency below is the one that went missing (the base folder,
+-- the ShopRemotes folder, or a remote inside it -- see the written report:
+-- a folder being bounded doesn't mean the children INSIDE it are, and that
+-- gap was exactly what left LaunchClient hung one level deeper).
+local function failShopHud(reason: string)
 	warn(string.format(
-		"[ShopClient] Base_%d never appeared after %d seconds -- this player's base likely failed to initialise server-side. Swing shop will not render this session; the rest of the client is unaffected.",
-		player.UserId, BASE_FOLDER_WAIT_TIMEOUT_SECONDS
+		"[ShopClient] %s never appeared after %d seconds -- server-side setup likely failed. Swing shop will not render this session; the rest of the client is unaffected.",
+		reason, SHOP_REMOTES_WAIT_TIMEOUT_SECONDS
 	))
 	local errorGui = Instance.new("ScreenGui")
 	errorGui.Name = "ShopHud"
@@ -55,12 +61,27 @@ if not baseFolder then
 	local errorButtonCorner = Instance.new("UICorner")
 	errorButtonCorner.CornerRadius = UDim.new(0, 8)
 	errorButtonCorner.Parent = errorButton
+end
+
+local baseFolder = Workspace:WaitForChild(string.format("Base_%d", player.UserId), BASE_FOLDER_WAIT_TIMEOUT_SECONDS)
+if not baseFolder then
+	failShopHud(string.format("Base_%d", player.UserId))
 	return
 end
 
-local shopRemotesFolder = ReplicatedStorage:WaitForChild("ShopRemotes")
-local buyTierRemote = shopRemotesFolder:WaitForChild("BuyTier") :: RemoteEvent
-local buyTierResultRemote = shopRemotesFolder:WaitForChild("BuyTierResult") :: RemoteEvent
+local shopRemotesFolder = ReplicatedStorage:WaitForChild("ShopRemotes", SHOP_REMOTES_WAIT_TIMEOUT_SECONDS)
+if not shopRemotesFolder then
+	failShopHud("ReplicatedStorage.ShopRemotes")
+	return
+end
+local buyTierRemoteMaybe = shopRemotesFolder:WaitForChild("BuyTier", SHOP_REMOTES_WAIT_TIMEOUT_SECONDS)
+local buyTierResultRemoteMaybe = shopRemotesFolder:WaitForChild("BuyTierResult", SHOP_REMOTES_WAIT_TIMEOUT_SECONDS)
+if not buyTierRemoteMaybe or not buyTierResultRemoteMaybe then
+	failShopHud("one or more remotes inside ReplicatedStorage.ShopRemotes")
+	return
+end
+local buyTierRemote = buyTierRemoteMaybe :: RemoteEvent
+local buyTierResultRemote = buyTierResultRemoteMaybe :: RemoteEvent
 
 local TIER_COUNT = #LaunchConfig.SWING_TIER_DISTANCE_SCALE
 
@@ -274,9 +295,20 @@ closeButton.MouseButton1Click:Connect(function()
 	panel.Visible = false
 end)
 
+-- INVESTIGATED (see the written report): the swing structure itself is
+-- deliberately NOT rebuilt the instant a purchase like this succeeds while
+-- the buyer is already riding -- see LaunchServer.server.luau's onRelease,
+-- which only refreshes the visual at setupCharacter (claiming the seat) and
+-- at release, never mid-ride. That's correct, not a bug: rope length and
+-- pivot height both scale with tier, so rebuilding out from under a rider
+-- mid-swing would teleport the seat and could corrupt an in-progress
+-- release's timing. The purchase itself (money spent, tier recorded) is
+-- still immediate and authoritative regardless -- only the swing's LOOK
+-- catches up later -- so the confirmation says so, instead of implying the
+-- new swing is already under the player when it visibly isn't yet.
 buyTierResultRemote.OnClientEvent:Connect(function(success: boolean, reason: string?)
 	if success then
-		statusLabel.Text = "Purchased!"
+		statusLabel.Text = "Purchased! New swing shows next time you sit down or release."
 		statusLabel.TextColor3 = Color3.new(0.3, 1, 0.4)
 	else
 		statusLabel.Text = reason or "Purchase failed"

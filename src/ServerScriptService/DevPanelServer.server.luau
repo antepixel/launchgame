@@ -99,10 +99,13 @@ local function onDevAction(player: Player, actionName: string, payload: any)
 		PlayerProfile.devSetSwingTier(player, payload)
 		logAction(player, string.format("set swing tier to: %d", payload))
 	elseif actionName == "RebuildSwing" then
-		-- Rebuilds whatever the CURRENT rider's tier already is (or tier 1 if
-		-- no one is riding) -- does not read `payload`, does not touch tier or
-		-- any other profile state, purely a fresh SwingBuilder.build() call.
-		devRebuildSwingEvent:Fire()
+		-- Rebuilds whatever the CURRENT rider's tier already is, or -- if no
+		-- one is riding -- the REQUESTING player's own tier (see
+		-- LaunchServer.server.luau's handler; `player` is passed through so
+		-- it never has to guess/default to tier 1 for whoever pressed the
+		-- button). Does not read `payload`, does not touch tier or any other
+		-- profile state, purely a fresh SwingBuilder.build() call.
+		devRebuildSwingEvent:Fire(player)
 		logAction(player, "rebuilt current rider's swing at their current tier")
 	elseif actionName == "SetSlimeLevel" and typeof(payload) == "table" and typeof(payload.slot) == "number" and typeof(payload.level) == "number" then
 		PlayerProfile.devSetSlimeLevel(player, payload.slot, payload.level)

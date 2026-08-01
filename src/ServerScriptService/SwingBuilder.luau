@@ -365,75 +365,24 @@ function SwingBuilder.build(tier: number, pivotPart: BasePart, parentFolder: Ins
 	chainSeatAttachmentRight.Position = Vector3.new(seatHalfWidth, seatThickness / 2, 0)
 	chainSeatAttachmentRight.Parent = seatCore
 
-	if visual.seatStyle == "Plank" then
-		local knotSize = math.max(0.4, 0.5 * footprintScale)
-		newPart(
-			Enum.PartType.Ball,
-			Vector3.new(knotSize, knotSize, knotSize),
-			CFrame.new(referenceSeatPosition + Vector3.new(-seatWidth / 2 + knotSize * 0.5, seatThickness, -seatDepth / 2 + knotSize * 0.5)),
-			visual.chainMaterial,
-			visual.chainColor,
-			"SeatKnot1",
-			seatModel
-		)
-		newPart(
-			Enum.PartType.Ball,
-			Vector3.new(knotSize, knotSize, knotSize),
-			CFrame.new(referenceSeatPosition + Vector3.new(seatWidth / 2 - knotSize * 0.5, seatThickness, -seatDepth / 2 + knotSize * 0.5)),
-			visual.chainMaterial,
-			visual.chainColor,
-			"SeatKnot2",
-			seatModel
-		)
-	elseif visual.seatStyle == "Bucket" or visual.seatStyle == "Contoured" then
-		local backHeight = seatThickness * (if visual.seatStyle == "Contoured" then 3.5 else 3)
-		newPart(
-			Enum.PartType.Block,
-			Vector3.new(seatWidth, backHeight, seatThickness),
-			CFrame.new(referenceSeatPosition + Vector3.new(0, backHeight / 2, -seatDepth / 2)),
-			visual.seatMaterial,
-			visual.seatColor,
-			"SeatBack",
-			seatModel
-		)
-		newPart(
-			Enum.PartType.Block,
-			Vector3.new(seatThickness, backHeight * 0.6, seatDepth),
-			CFrame.new(referenceSeatPosition + Vector3.new(-seatWidth / 2, backHeight * 0.3, 0)),
-			visual.trimMaterial,
-			visual.trimColor,
-			"SeatRail1",
-			seatModel
-		)
-		newPart(
-			Enum.PartType.Block,
-			Vector3.new(seatThickness, backHeight * 0.6, seatDepth),
-			CFrame.new(referenceSeatPosition + Vector3.new(seatWidth / 2, backHeight * 0.3, 0)),
-			visual.trimMaterial,
-			visual.trimColor,
-			"SeatRail2",
-			seatModel
-		)
-	else -- "Floating"
-		newPart(
-			Enum.PartType.Block,
-			Vector3.new(seatThickness * 0.7, seatThickness * 0.3, seatDepth * 0.85),
-			CFrame.new(referenceSeatPosition + Vector3.new(-seatWidth / 2 * 0.6, -seatThickness * 0.6, 0)),
-			visual.trimMaterial,
-			visual.trimColor,
-			"SeatUnderlight1",
-			seatModel
-		)
-		newPart(
-			Enum.PartType.Block,
-			Vector3.new(seatThickness * 0.7, seatThickness * 0.3, seatDepth * 0.85),
-			CFrame.new(referenceSeatPosition + Vector3.new(seatWidth / 2 * 0.6, -seatThickness * 0.6, 0)),
-			visual.trimMaterial,
-			visual.trimColor,
-			"SeatUnderlight2",
-			seatModel
-		)
-	end
+	-- BUG FIX (see the written report): the seat used to branch four ways on
+	-- a per-tier `seatStyle` (Plank/Bucket/Contoured/Floating), building
+	-- backs/rails/underlights on top of SeatCore for the higher bands -- the
+	-- same per-band SHAPE variation already removed from the frame
+	-- silhouette (see the A-frame rebuild), and for the same reason: a
+	-- swing seat that grows a chair back and side rails at high tiers reads
+	-- as a chair, not a swing. ONE shape now, every tier: SeatCore itself,
+	-- a flat plank, sized by footprintScale like the rest of the frame.
+	-- Materials and colours (visual.seatMaterial/seatColor, set on SeatCore
+	-- above) still vary per tier -- only the SHAPE stopped varying.
+	--
+	-- The two SeatKnot balls that used to sit here (one per side, at
+	-- +-seatHalfWidth) are deleted outright, not repositioned -- that offset
+	-- is the seat's own edge, exactly where chainSeatAttachmentLeft/Right
+	-- and the chain's own last link already terminate (see buildChainSide
+	-- below), so a knot ball there was always just a second part rendering
+	-- on top of a junction the chain and the seat corner already mark on
+	-- their own.
 
 	seatModel.Parent = parentFolder
 
@@ -443,12 +392,23 @@ function SwingBuilder.build(tier: number, pivotPart: BasePart, parentFolder: Ins
 	-- directly above/below each other, parallel, seatHalfWidth off centre,
 	-- instead of both tethers sharing one dead-centre anchor AND one
 	-- dead-centre seat point (which is what made this a single line, not
-	-- two, before this pass -- see the written report). =====
+	-- two, before this pass -- see the written report).
+	--
+	-- BUG FIX (see the written report): this used to sit at
+	-- postTopY - beamThickness, a full beamThickness below the beam's own
+	-- CENTRE -- but the beam (a Block/Cylinder of thickness `beamThickness`
+	-- centred AT postTopY) only extends postTopY -+ beamThickness/2, so its
+	-- UNDERSIDE is at postTopY - beamThickness/2, not postTopY -
+	-- beamThickness. The anchor was landing a further beamThickness/2 below
+	-- the underside it was supposed to sit flush against -- a visible gap
+	-- between the beam and the top of the chains, worse at high tiers where
+	-- beamThickness (footprint-scaled) is larger. Flush now, at every tier,
+	-- by construction. =====
 	local function buildChainAnchor(name: string, xOffset: number): BasePart
 		local anchor = newPart(
 			Enum.PartType.Block,
 			Vector3.new(0.2, 0.2, 0.2),
-			CFrame.new(centerX + xOffset, postTopY - beamThickness, centerZ),
+			CFrame.new(centerX + xOffset, postTopY - beamThickness / 2, centerZ),
 			Enum.Material.Plastic,
 			Color3.new(0, 0, 0),
 			name,

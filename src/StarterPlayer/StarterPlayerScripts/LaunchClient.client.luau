@@ -42,17 +42,114 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local camera = Workspace.CurrentCamera :: Camera
 
-local remotesFolder = ReplicatedStorage:WaitForChild("Remotes")
-local releaseRemote = remotesFolder:WaitForChild("Release") :: RemoteEvent
-local flightStartedRemote = remotesFolder:WaitForChild("FlightStarted") :: RemoteEvent
-local resetReadyRemote = remotesFolder:WaitForChild("ResetReady") :: RemoteEvent
-local boxStartedRemote = remotesFolder:WaitForChild("BoxStarted") :: RemoteEvent
-local boxPressRemote = remotesFolder:WaitForChild("BoxPress") :: RemoteEvent
-local boxResultRemote = remotesFolder:WaitForChild("BoxResult") :: RemoteEvent
-local slimeRevealedRemote = remotesFolder:WaitForChild("SlimeRevealed") :: RemoteEvent
-local ridingAssignedRemote = remotesFolder:WaitForChild("RidingAssigned") :: RemoteEvent
+-- BUG FIX (see the written report): bounding the Remotes FOLDER wait alone
+-- wasn't enough -- LaunchServer now builds that folder fully off-tree and
+-- only parents it once every remote already exists inside it (see
+-- LaunchServer.server.luau), which closes the specific race that let a
+-- client see a half-built folder in the first place. This bounded wait (and
+-- every other one below) is the belt-and-braces backstop on TOP of that
+-- structural fix, not a substitute for it: every single WaitForChild in
+-- this script is now bounded, and ANY of them failing shows the same
+-- visible error instead of leaving this script hung partway through with
+-- nothing past that point -- including all HUD construction -- ever
+-- running (which is exactly what "no release bar rendering" was).
+local REMOTES_WAIT_TIMEOUT_SECONDS = 10
+local SWING_STRUCTURE_WAIT_TIMEOUT_SECONDS = 10
 
-local swingPivot = Workspace:WaitForChild("SwingPivot") :: BasePart
+local function failLaunchHud(missingDescription: string)
+	warn(string.format(
+		"[LaunchClient] %s never appeared after %d seconds -- LaunchServer likely errored during startup. Launch HUD will not render this session; the rest of the client is unaffected.",
+		missingDescription, REMOTES_WAIT_TIMEOUT_SECONDS
+	))
+	local errorGui = Instance.new("ScreenGui")
+	errorGui.Name = "LaunchHud"
+	errorGui.ResetOnSpawn = false
+	errorGui.IgnoreGuiInset = true
+	errorGui.Parent = playerGui
+
+	local errorLabel = Instance.new("TextLabel")
+	errorLabel.Name = "LaunchUnavailable"
+	errorLabel.AnchorPoint = Vector2.new(0.5, 0)
+	errorLabel.Position = UDim2.new(0.5, 0, 0.05, 0)
+	errorLabel.Size = UDim2.new(0, 480, 0, 40)
+	errorLabel.BackgroundTransparency = 1
+	errorLabel.Font = Enum.Font.GothamBold
+	errorLabel.TextScaled = true
+	errorLabel.TextColor3 = Color3.new(1, 0.35, 0.3)
+	errorLabel.TextStrokeTransparency = 0.3
+	errorLabel.Text = "Launch HUD unavailable -- server failed to start up"
+	errorLabel.Parent = errorGui
+end
+
+local remotesFolder = ReplicatedStorage:WaitForChild("Remotes", REMOTES_WAIT_TIMEOUT_SECONDS)
+if not remotesFolder then
+	failLaunchHud("ReplicatedStorage.Remotes")
+	return
+end
+
+-- Every remote bounded individually now, not just the folder -- see the
+-- comment above. Once the folder itself is confirmed present, these should
+-- all resolve essentially instantly (LaunchServer only ever reveals the
+-- folder after every remote already exists inside it), so this is purely
+-- defensive; the timeout is only ever meant to fire if something is
+-- genuinely broken.
+local releaseRemoteMaybe = remotesFolder:WaitForChild("Release", REMOTES_WAIT_TIMEOUT_SECONDS)
+local flightStartedRemoteMaybe = remotesFolder:WaitForChild("FlightStarted", REMOTES_WAIT_TIMEOUT_SECONDS)
+local resetReadyRemoteMaybe = remotesFolder:WaitForChild("ResetReady", REMOTES_WAIT_TIMEOUT_SECONDS)
+local boxStartedRemoteMaybe = remotesFolder:WaitForChild("BoxStarted", REMOTES_WAIT_TIMEOUT_SECONDS)
+local boxPressRemoteMaybe = remotesFolder:WaitForChild("BoxPress", REMOTES_WAIT_TIMEOUT_SECONDS)
+local boxResultRemoteMaybe = remotesFolder:WaitForChild("BoxResult", REMOTES_WAIT_TIMEOUT_SECONDS)
+local slimeRevealedRemoteMaybe = remotesFolder:WaitForChild("SlimeRevealed", REMOTES_WAIT_TIMEOUT_SECONDS)
+local ridingAssignedRemoteMaybe = remotesFolder:WaitForChild("RidingAssigned", REMOTES_WAIT_TIMEOUT_SECONDS)
+-- Client -> server ack -- see LaunchServer.server.luau's setupCharacter
+-- watchdog: fired once this script has made it all the way through every
+-- gate below and is about to start driving the rider's seat/character every
+-- frame, so the server can tell "client is alive" apart from "client never
+-- came up," which otherwise look identical from server state alone.
+local riderReadyRemoteMaybe = remotesFolder:WaitForChild("RiderReady", REMOTES_WAIT_TIMEOUT_SECONDS)
+
+if not (
+	releaseRemoteMaybe
+	and flightStartedRemoteMaybe
+	and resetReadyRemoteMaybe
+	and boxStartedRemoteMaybe
+	and boxPressRemoteMaybe
+	and boxResultRemoteMaybe
+	and slimeRevealedRemoteMaybe
+	and ridingAssignedRemoteMaybe
+	and riderReadyRemoteMaybe
+) then
+	failLaunchHud("one or more remotes inside ReplicatedStorage.Remotes")
+	return
+end
+
+local releaseRemote = releaseRemoteMaybe :: RemoteEvent
+local flightStartedRemote = flightStartedRemoteMaybe :: RemoteEvent
+local resetReadyRemote = resetReadyRemoteMaybe :: RemoteEvent
+local boxStartedRemote = boxStartedRemoteMaybe :: RemoteEvent
+local boxPressRemote = boxPressRemoteMaybe :: RemoteEvent
+local boxResultRemote = boxResultRemoteMaybe :: RemoteEvent
+local slimeRevealedRemote = slimeRevealedRemoteMaybe :: RemoteEvent
+local ridingAssignedRemote = ridingAssignedRemoteMaybe :: RemoteEvent
+local riderReadyRemote = riderReadyRemoteMaybe :: RemoteEvent
+
+-- BUG FIX (see the written report -- six-lane pass 1): this used to be a
+-- bare "SwingPivot"/"SwingStructure" WaitForChild -- the single shared
+-- names every previous pass used. There are up to six now, one per player
+-- (SwingPivot_<UserId>/SwingStructure_<UserId>, the same Base_<UserId>
+-- naming convention BaseClient.client.luau already uses), so this client
+-- computes ITS OWN pair from player.UserId -- no server round-trip, no
+-- ordering dependency on when any other client's own swing gets built.
+local ownSwingPivotName = string.format("SwingPivot_%d", player.UserId)
+local ownSwingStructureName = string.format("SwingStructure_%d", player.UserId)
+local swingPivotMaybe = Workspace:WaitForChild(ownSwingPivotName, SWING_STRUCTURE_WAIT_TIMEOUT_SECONDS)
+local swingStructureFolderMaybe = Workspace:WaitForChild(ownSwingStructureName, SWING_STRUCTURE_WAIT_TIMEOUT_SECONDS)
+if not swingPivotMaybe or not swingStructureFolderMaybe then
+	failLaunchHud(string.format("Workspace.%s or Workspace.%s", ownSwingPivotName, ownSwingStructureName))
+	return
+end
+local swingPivot = swingPivotMaybe :: BasePart
+local swingStructureFolder = swingStructureFolderMaybe
 
 -- The swing STRUCTURE (posts/beam/seat/chain) is built by SwingBuilder.luau
 -- and completely REBUILT (destroyed and recreated) every time the rider's
@@ -64,11 +161,18 @@ local swingPivot = Workspace:WaitForChild("SwingPivot") :: BasePart
 -- re-acquires them on demand, cheaply checked every frame, rather than
 -- requiring this script to somehow learn "the structure just rebuilt" as a
 -- separate event.
-local swingStructureFolder = Workspace:WaitForChild("SwingStructure")
-local swingSeatModel = swingStructureFolder:WaitForChild("SwingSeat") :: Model
-local swingChainAnchorLeft = swingStructureFolder:WaitForChild("SwingChainAnchorLeft") :: BasePart
-local swingChainAnchorRight = swingStructureFolder:WaitForChild("SwingChainAnchorRight") :: BasePart
-local swingChainLinksFolder = swingStructureFolder:WaitForChild("SwingChainLinks") :: Folder
+local swingSeatModelMaybe = swingStructureFolder:WaitForChild("SwingSeat", SWING_STRUCTURE_WAIT_TIMEOUT_SECONDS)
+local swingChainAnchorLeftMaybe = swingStructureFolder:WaitForChild("SwingChainAnchorLeft", SWING_STRUCTURE_WAIT_TIMEOUT_SECONDS)
+local swingChainAnchorRightMaybe = swingStructureFolder:WaitForChild("SwingChainAnchorRight", SWING_STRUCTURE_WAIT_TIMEOUT_SECONDS)
+local swingChainLinksFolderMaybe = swingStructureFolder:WaitForChild("SwingChainLinks", SWING_STRUCTURE_WAIT_TIMEOUT_SECONDS)
+if not (swingSeatModelMaybe and swingChainAnchorLeftMaybe and swingChainAnchorRightMaybe and swingChainLinksFolderMaybe) then
+	failLaunchHud("one or more parts inside Workspace.SwingStructure")
+	return
+end
+local swingSeatModel = swingSeatModelMaybe :: Model
+local swingChainAnchorLeft = swingChainAnchorLeftMaybe :: BasePart
+local swingChainAnchorRight = swingChainAnchorRightMaybe :: BasePart
+local swingChainLinksFolder = swingChainLinksFolderMaybe :: Folder
 
 local function ensureSwingReferences()
 	if not swingSeatModel.Parent then
@@ -112,9 +216,16 @@ local function swingSeatPosition(theta: number): Vector3
 	return pivotPosition + Vector3.new(0, -length * math.cos(theta), -length * math.sin(theta))
 end
 
+-- BUG FIX (see the written report): this used to be a SEPARATE local
+-- constant from LaunchServer's own flight-start offset -- two
+-- independently-tuned copies of the same "how high above the seat does a
+-- rider's root sit" number, which is exactly how they drifted apart and
+-- produced a visible vertical pop at the instant of release. Both now read
+-- LaunchConfig.RIDER_SEAT_HEIGHT_OFFSET -- see that constant's own comment.
+
 local function riderCFrame(seatPosition: Vector3): CFrame
-	local standPosition = seatPosition + Vector3.new(0, 2, 0)
-	return CFrame.lookAt(standPosition, standPosition + Vector3.new(0, 0, -1))
+	local seatedPosition = seatPosition + Vector3.new(0, LaunchConfig.RIDER_SEAT_HEIGHT_OFFSET, 0)
+	return CFrame.lookAt(seatedPosition, seatedPosition + Vector3.new(0, 0, -1))
 end
 
 -- Repositions every discrete chain-link part (Rope/Chain/Rod tiers -- see
@@ -994,6 +1105,12 @@ end)
 
 ridingAssignedRemote.OnClientEvent:Connect(function()
 	isRider = true
+	-- Ack readiness -- see LaunchServer.server.luau's setupCharacter
+	-- watchdog. Reaching this line at all already proves every WaitForChild
+	-- gate above succeeded and this script is listening/about to drive the
+	-- character every RenderStepped, which is exactly what the server is
+	-- asking about.
+	riderReadyRemote:FireServer()
 end)
 
 -- BUG FIX (real cause of the flight stutter, see the written report): a plain
@@ -1031,10 +1148,11 @@ RunService:BindToRenderStep(RENDER_STEP_NAME, Enum.RenderPriority.Camera.Value -
 	-- cheap, pure math, no reason to gate it to just the rider's own client.
 	local theta = swingTheta(phase)
 	local seatPosition = swingSeatPosition(theta)
-	-- :PivotTo, not .CFrame -- the seat is now a multi-part Model (see
-	-- SwingBuilder.luau), so every part in it (base, back, rails, whatever
-	-- this tier's seatStyle built) has to move together as one rigid unit,
-	-- same mechanism the character itself already uses.
+	-- :PivotTo, not .CFrame -- the seat is a Model (see SwingBuilder.luau,
+	-- PrimaryPart = SeatCore) even though every tier now builds the exact
+	-- same single flat-plank SeatCore, so a future seat addition can still
+	-- move rigidly as one unit without this call site changing, same
+	-- mechanism the character itself already uses.
 	swingSeatModel:PivotTo(CFrame.new(seatPosition) * CFrame.Angles(theta, 0, 0))
 	repositionChainLinks()
 

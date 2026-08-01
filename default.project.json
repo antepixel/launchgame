@@ -33,27 +33,6 @@
           "Material": "Grass",
           "Color": [0.29, 0.56, 0.2]
         }
-      },
-      "SwingPivot": {
-        "$className": "Part",
-        "$properties": {
-          "Anchored": true,
-          "CanCollide": false,
-          "Transparency": 1,
-          "Position": [0, 13, 30],
-          "Size": [2, 0.2, 2]
-        }
-      },
-      "PlaceholderSpawn": {
-        "$className": "SpawnLocation",
-        "$properties": {
-          "Anchored": true,
-          "CanCollide": true,
-          "Neutral": true,
-          "Duration": 0,
-          "Position": [0, 1, 55],
-          "Size": [8, 1, 8]
-        }
       }
     }
   }

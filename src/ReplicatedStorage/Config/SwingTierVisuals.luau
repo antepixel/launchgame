@@ -24,7 +24,6 @@ local SwingTierVisuals = {}
 
 export type BraceStyle = "ARung" | "CrossGusset" | "DiagonalGusset" | "Strut"
 export type ChainStyle = "Rope" | "Chain" | "Rod" | "Energy"
-export type SeatStyle = "Plank" | "Bucket" | "Contoured" | "Floating"
 export type GroundPad = "Dirt" | "Concrete" | "Metal" | "Glow"
 
 export type TierVisual = {
@@ -47,9 +46,6 @@ export type TierVisual = {
 	hazardStripes: boolean,
 	glowAccent: boolean,
 	glowColor: Color3,
-
-	-- ===== Seat =====
-	seatStyle: SeatStyle,
 
 	-- ===== Chain/rope/rod/energy tether =====
 	chainStyle: ChainStyle,
@@ -144,7 +140,6 @@ SwingTierVisuals.TIERS = {
 		hazardStripes = false,
 		glowAccent = false,
 		glowColor = Color3.fromRGB(255, 255, 255),
-		seatStyle = "Plank",
 		chainStyle = "Rope",
 		chainLinkCount = 5,
 		frameMaterial = Enum.Material.Wood,
@@ -184,7 +179,6 @@ SwingTierVisuals.TIERS = {
 		hazardStripes = false,
 		glowAccent = false,
 		glowColor = Color3.fromRGB(255, 255, 255),
-		seatStyle = "Plank",
 		chainStyle = "Rope",
 		chainLinkCount = 5,
 		frameMaterial = Enum.Material.Wood,
@@ -226,7 +220,6 @@ SwingTierVisuals.TIERS = {
 		hazardStripes = false,
 		glowAccent = false,
 		glowColor = Color3.fromRGB(255, 255, 255),
-		seatStyle = "Plank",
 		chainStyle = "Rope",
 		chainLinkCount = 6,
 		frameMaterial = Enum.Material.WoodPlanks,
@@ -267,7 +260,6 @@ SwingTierVisuals.TIERS = {
 		hazardStripes = true,
 		glowAccent = false,
 		glowColor = Color3.fromRGB(255, 255, 255),
-		seatStyle = "Bucket",
 		chainStyle = "Chain",
 		chainLinkCount = 7,
 		frameMaterial = Enum.Material.Metal,
@@ -307,7 +299,6 @@ SwingTierVisuals.TIERS = {
 		hazardStripes = true,
 		glowAccent = false,
 		glowColor = Color3.fromRGB(255, 255, 255),
-		seatStyle = "Bucket",
 		chainStyle = "Chain",
 		chainLinkCount = 7,
 		frameMaterial = Enum.Material.Metal,
@@ -349,7 +340,6 @@ SwingTierVisuals.TIERS = {
 		hazardStripes = true,
 		glowAccent = false,
 		glowColor = Color3.fromRGB(255, 255, 255),
-		seatStyle = "Bucket",
 		chainStyle = "Chain",
 		chainLinkCount = 8,
 		frameMaterial = Enum.Material.DiamondPlate,
@@ -390,7 +380,6 @@ SwingTierVisuals.TIERS = {
 		hazardStripes = false,
 		glowAccent = true,
 		glowColor = Color3.fromRGB(60, 160, 255),
-		seatStyle = "Contoured",
 		chainStyle = "Rod",
 		chainLinkCount = 3,
 		frameMaterial = Enum.Material.Foil,
@@ -430,7 +419,6 @@ SwingTierVisuals.TIERS = {
 		hazardStripes = false,
 		glowAccent = true,
 		glowColor = Color3.fromRGB(255, 195, 60),
-		seatStyle = "Contoured",
 		chainStyle = "Rod",
 		chainLinkCount = 3,
 		frameMaterial = Enum.Material.Foil,
@@ -471,7 +459,6 @@ SwingTierVisuals.TIERS = {
 		hazardStripes = false,
 		glowAccent = true,
 		glowColor = Color3.fromRGB(255, 255, 255),
-		seatStyle = "Contoured",
 		chainStyle = "Rod",
 		chainLinkCount = 2,
 		frameMaterial = Enum.Material.Foil,
@@ -512,7 +499,6 @@ SwingTierVisuals.TIERS = {
 		hazardStripes = false,
 		glowAccent = true,
 		glowColor = Color3.fromRGB(50, 230, 255),
-		seatStyle = "Floating",
 		chainStyle = "Energy",
 		chainLinkCount = 0,
 		frameMaterial = Enum.Material.Foil,
@@ -553,7 +539,6 @@ SwingTierVisuals.TIERS = {
 		hazardStripes = false,
 		glowAccent = true,
 		glowColor = Color3.fromRGB(255, 25, 190),
-		seatStyle = "Floating",
 		chainStyle = "Energy",
 		chainLinkCount = 0,
 		frameMaterial = Enum.Material.Foil,

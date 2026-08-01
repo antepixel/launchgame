@@ -20,6 +20,7 @@ local HttpService = game:GetService("HttpService")
 local BaseConfig = require(ReplicatedStorage.Config.BaseConfig)
 local BaseGeometry = require(ReplicatedStorage.Config.BaseGeometry)
 local InventoryConfig = require(ReplicatedStorage.Config.InventoryConfig)
+local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local PersistenceConfig = require(ReplicatedStorage.Config.PersistenceConfig)
 local ShopConfig = require(ReplicatedStorage.Config.ShopConfig)
@@ -74,17 +75,40 @@ type Profile = {
 
 local profiles: { [Player]: Profile } = {}
 
+-- Players.MaxPlayers is read-only at runtime -- it cannot be assigned from
+-- a script (assigning it here throws and takes the whole server down with
+-- it, since every module below requires this one). It must be set by hand
+-- in the PUBLISHED place's Game Settings instead, to LaneConfig.LANE_COUNT
+-- (6). That setting is NOT version-controlled: it lives only in the
+-- published place, will not update if LANE_COUNT ever changes, and there is
+-- nothing in this repo enforcing that the two stay in sync.
+
 -- ===== Base index allocation: a stable, freed-on-leave slot per connected
--- player, read by BaseGeometry to decide WHERE that player's base sits.
--- Freed (not left incrementing forever) so a server that sees a lot of
--- join/leave churn over a long lifetime doesn't drift bases further and
--- further out for no reason. =====
+-- player, read by BaseGeometry to decide WHERE that player's base sits, and
+-- (see LaunchServer.server.luau) reused directly as that player's swing
+-- lane index -- no second parallel index. Freed (not left incrementing
+-- forever) so a server that sees a lot of join/leave churn over a long
+-- lifetime doesn't drift bases further and further out for no reason.
+--
+-- BOUNDED to [0, LaneConfig.LANE_COUNT - 1] now (see the written report):
+-- there are only LANE_COUNT physical lanes for a base/swing to occupy, so
+-- allocating past that would hand out an index nothing can place. Players.
+-- MaxPlayers above is the PRIMARY enforcement (a 7th player should never
+-- reach PlayerAdded on this server at all) -- this bound is the
+-- defense-in-depth backstop for whatever gets a 7th player in anyway
+-- (a Reserved Server, a teleport that bypasses normal matchmaking, a race
+-- at the boundary). Fails LOUD, not silently: returns nil rather than
+-- handing out an out-of-range 6, so onPlayerAdded below can reject that
+-- join outright instead of building a base/lane nothing can display. =====
 local nextBaseIndex = 0
 local freeBaseIndices: { number } = {}
 
-local function allocateBaseIndex(): number
+local function allocateBaseIndex(): number?
 	if #freeBaseIndices > 0 then
 		return table.remove(freeBaseIndices) :: number
+	end
+	if nextBaseIndex >= LaneConfig.LANE_COUNT then
+		return nil
 	end
 	local index = nextBaseIndex
 	nextBaseIndex += 1
@@ -418,6 +442,25 @@ end
 -- it resolves. =====
 local function onPlayerAdded(player: Player)
 	local baseIndex = allocateBaseIndex()
+	if not baseIndex then
+		-- BUG FIX (see the written report): allocateBaseIndex used to be
+		-- unbounded, so a 7th player just silently got index 6 and a
+		-- base/lane nothing could place. Players.MaxPlayers above should
+		-- mean this path is never
+		-- actually hit in a normally-matchmade server -- reaching it means
+		-- something outside normal matchmaking (a Reserved Server, a
+		-- teleport) got a 7th player in anyway. Reject loudly rather than
+		-- build a profile for a player with nowhere to stand: Kick is the
+		-- only way to "reject a join" once PlayerAdded has already fired --
+		-- the player is already in Players by this point, there is no
+		-- earlier hook to refuse the connection from inside this script.
+		warn(string.format(
+			"[PlayerProfile] No free lane for %s (UserId %d) -- all %d lanes are occupied. Kicking.",
+			player.Name, player.UserId, LaneConfig.LANE_COUNT
+		))
+		player:Kick(string.format("This server is full (max %d players).", LaneConfig.LANE_COUNT))
+		return
+	end
 	local baseFolder = buildBaseFolder(player, baseIndex)
 
 	local profile: Profile = {
@@ -763,6 +806,24 @@ function PlayerProfile.getSwingTier(player: Player): number
 		return 1
 	end
 	return profile.swingTier
+end
+
+-- This player's own lane index (see allocateBaseIndex above) -- the SAME
+-- index BaseGeometry places their base with, reused directly as their swing
+-- lane by LaunchServer.server.luau, never a second parallel index. Returns
+-- nil, not a fallback like getSwingTier's 1 above, when no profile exists
+-- yet: unlike a tier (where "1" is always a safe, meaningful default), there
+-- is no safe default lane index to hand back -- a caller building or
+-- looking up per-lane geometry from a wrong guessed index would place it on
+-- top of, or destroy, some OTHER player's actual lane. Callers (see
+-- LaunchServer.server.luau) are expected to wait/retry rather than treat
+-- nil as "lane 0."
+function PlayerProfile.getBaseIndex(player: Player): number?
+	local profile = profiles[player]
+	if not profile then
+		return nil
+	end
+	return profile.baseIndex
 end
 
 -- Buys EXACTLY the next tier after this player's current one -- there is no

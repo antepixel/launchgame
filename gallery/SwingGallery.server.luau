@@ -247,28 +247,37 @@ for tier = 1, TIER_COUNT do
 	local staggerExtra = if tier % 2 == 0 then LABEL_STAGGER_STEP_STUDS else 0
 	local labelY = measurement.topY + LABEL_BASE_GAP_STUDS + staggerExtra
 
+	-- RETUNED (see the written report): sizing the adornee to
+	-- measurement.width and the billboard to a FRACTION (0.6) of Scale
+	-- undershot badly -- Scale's relationship to its adornee's real Size
+	-- isn't the simple "1.0 = adornee's full extent, linear below that"
+	-- this assumed, so 0.6 came out too small to read at any distance.
+	-- Sidesteps that uncertainty entirely now: labelAnchor's own Size IS
+	-- the exact real-world stud dimensions the label should render at
+	-- (computed directly from measurement.width, not a mystery constant
+	-- multiplied through a possibly-nonlinear Scale mapping), and the
+	-- billboard's Scale is exactly (1, 1) -- "render at exactly my
+	-- adornee's real size," the one Scale value that cannot be
+	-- ambiguous regardless of the exact conversion Roblox otherwise
+	-- applies. Still shrinks/grows correctly with camera distance (real
+	-- Vector3 studs, normal perspective), same reason Scale was chosen
+	-- over Offset in the first place.
+	local LABEL_WIDTH_FRACTION_OF_SWING = 0.8
+	local labelWidthStuds = measurement.width * LABEL_WIDTH_FRACTION_OF_SWING
+	local labelHeightStuds = labelWidthStuds * (90 / 220)
+
 	local labelAnchor = Instance.new("Part")
 	labelAnchor.Name = "LabelAnchor"
 	labelAnchor.Anchored = true
 	labelAnchor.CanCollide = false
 	labelAnchor.Transparency = 1
-	-- Sized off THIS tier's own measured width -- the Scale reference
-	-- BillboardGui.Size below reads from. Y/Z don't matter for that
-	-- reference (BillboardGui always faces the camera), left equal to X
-	-- only so the part itself isn't a degenerate sliver.
-	labelAnchor.Size = Vector3.new(measurement.width, measurement.width, measurement.width)
+	labelAnchor.Size = Vector3.new(labelWidthStuds, labelHeightStuds, 1)
 	labelAnchor.Position = Vector3.new(pivotX, labelY, PIVOT_Z)
 	labelAnchor.Parent = galleryFolder
 
-	-- Fractions of labelAnchor's width (i.e. of measurement.width studs),
-	-- not pixels -- 0.6 wide keeps the label narrower than the swing it's
-	-- labelling; the height fraction preserves the original 220:90 aspect
-	-- ratio.
-	local LABEL_WIDTH_FRACTION = 0.6
-	local LABEL_HEIGHT_FRACTION = LABEL_WIDTH_FRACTION * (90 / 220)
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "MeasurementLabel"
-	billboard.Size = UDim2.fromScale(LABEL_WIDTH_FRACTION, LABEL_HEIGHT_FRACTION)
+	billboard.Size = UDim2.fromScale(1, 1)
 	billboard.AlwaysOnTop = true
 	billboard.Parent = labelAnchor
 

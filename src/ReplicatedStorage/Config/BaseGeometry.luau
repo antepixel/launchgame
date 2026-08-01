@@ -2,50 +2,47 @@
 -- Single source of truth for where a GIVEN player's base sits in world space
 -- -- same role RunwayGeometry plays for the runway, extended to be
 -- per-player: baseIndex (a stable, freed-on-leave slot -- see
--- PlayerProfile's allocateBaseIndex) picks WHICH block of the world a
--- player's own 10 slots belong to, laid out so no two players' bases ever
--- overlap. PlayerProfile (which builds each base's visuals AND places slime
--- parts into it) is the only reader of this module.
+-- PlayerProfile's allocateBaseIndex) is now also that player's LANE index
+-- (see the written report -- six-lane pass 1: one parallel index, not two),
+-- so a base's position is derived directly from that lane's own world X,
+-- never from an offset fanned out from any specific swing instance.
+-- PlayerProfile (which builds each base's visuals AND places slime parts
+-- into it) is the only reader of this module.
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local BaseConfig = require(ReplicatedStorage.Config.BaseConfig)
+local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
 
-local swingPivot = Workspace:WaitForChild("SwingPivot") :: BasePart
 local baseplate = Workspace:WaitForChild("Baseplate") :: BasePart
 
 local BaseGeometry = {}
 
--- Ground level -- the baseplate's own TOP surface, not swingPivot's height
--- (swingPivot sits well above the ground, at seat-post height; a base's
--- pads belong on the ground, not floating at seat height). Read from the
--- part, not hardcoded, same reasoning as RunwayGeometry deriving
+-- Ground level -- the baseplate's own TOP surface, not any swing pivot's
+-- height (a pivot sits well above the ground, at seat-post height; a
+-- base's pads belong on the ground, not floating at seat height). Read
+-- from the part, not hardcoded, same reasoning as RunwayGeometry deriving
 -- RUNWAY_START_Z from Baseplate instead of a raw number.
 local groundY = baseplate.Position.Y + baseplate.Size.Y / 2
 
 -- ===== Per-player block placement =====
 -- Each player's base is a small BASE_GRID_COLUMNS-wide grid (see
--- slotPosition below), placed at one of a sequence of block origins that
--- fan OUTWARD from the swing, alternating left/right, so consecutive
--- players land on opposite sides rather than piling onto one:
--- baseIndex 0 -> first column, LEFT of the swing; 1 -> first column, RIGHT;
--- 2 -> second column, LEFT; 3 -> second column, RIGHT; and so on. Within a
--- side, blocks fill BASE_COLUMNS_PER_ROW columns (moving further from the
--- swing in X) before wrapping to a new row (further from the swing in Z).
+-- slotPosition below), placed directly behind that SAME player's own lane:
+-- X = that lane's own center (LaneConfig.laneCenterX(baseIndex) -- the
+-- identical X their swing pivot sits at), Z = a fixed offset behind that
+-- lane's own swing (LaneConfig.SWING_PIVOT_Z + BASE_ROW_START_STUDS).
 --
--- CAPACITY NOTE (see the written report): this keeps every base within the
--- existing Baseplate's bounds for a modest number of concurrent players; it
--- does not grow the platform itself, so a very large number of simultaneous
--- players will eventually place rows past the platform's edge. Not a
--- concern for this pass's playtesting scale.
+-- BUG FIX (see the written report): this used to fan bases OUTWARD from a
+-- single shared swing, alternating left/right and wrapping into new rows as
+-- more players joined -- a scheme that only made sense when there was one
+-- central swing to fan out from. There are up to LANE_COUNT independent
+-- swings now, one per lane, so each base sits directly behind its OWN
+-- lane's swing instead -- no side/column/row arithmetic left at all, and no
+-- risk of two bases ever landing in the same place, since two players can
+-- never share a lane index.
 local function blockOrigin(baseIndex: number): Vector3
-	local side = if baseIndex % 2 == 0 then -1 else 1
-	local sideSlot = baseIndex // 2
-	local column = sideSlot % BaseConfig.BASE_COLUMNS_PER_ROW
-	local row = sideSlot // BaseConfig.BASE_COLUMNS_PER_ROW
-
-	local x = swingPivot.Position.X + side * (BaseConfig.BASE_SIDE_START_STUDS + column * BaseConfig.BASE_COLUMN_SPACING_STUDS)
-	local z = swingPivot.Position.Z + BaseConfig.BASE_ROW_START_STUDS + row * BaseConfig.BASE_ROW_SPACING_STUDS
+	local x = LaneConfig.laneCenterX(baseIndex)
+	local z = LaneConfig.SWING_PIVOT_Z + BaseConfig.BASE_ROW_START_STUDS
 	return Vector3.new(x, groundY, z)
 end
 

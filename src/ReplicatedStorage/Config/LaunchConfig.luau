@@ -26,6 +26,7 @@ export type LaunchConfig = {
 	SWING_ARC_HALF_ANGLE_DEGREES: number,
 	SWING_ROPE_LENGTH: number,
 	SWING_BASE_PIVOT_HEIGHT_ABOVE_GROUND: number,
+	RIDER_SEAT_HEIGHT_OFFSET: number,
 	SWEET_SPOT_PHASE: number,
 	SWEET_SPOT_WIDTH: number,
 	RUNWAY_BAND_LENGTH_STUDS: number,
@@ -205,6 +206,18 @@ local LaunchConfig: LaunchConfig = {
 	-- swing the dev-only gallery builds (SwingGallery.server.luau), none of
 	-- which share a single canonical pivot any more.
 	SWING_BASE_PIVOT_HEIGHT_ABOVE_GROUND = 13,
+	-- Studs ABOVE the seat's own Y a standing rider's root/pelvis sits --
+	-- read by BOTH LaunchServer (onRelease's startPosition, the flight's
+	-- actual launch height) and LaunchClient (riderCFrame, the visual
+	-- riding position every RenderStepped) from this ONE constant, never
+	-- two independently-tuned copies -- see the written report for the bug
+	-- this fixes: the two used to disagree, producing a visible vertical pop
+	-- at the instant of release as the character snapped from the client's
+	-- riding height to the server's flight-start height. Y-only, so this
+	-- cannot affect DISTANCE_PER_MULTIPLIER, band reach, or anything else
+	-- horizontal -- see the written report for how that was verified, not
+	-- assumed.
+	RIDER_SEAT_HEIGHT_OFFSET = 2.0,
 	-- Where in the cycle (0-1, fraction of SWING_PERIOD_SECONDS) counts as the
 	-- sweet spot. 0.25 = the forward extreme of the arc, where the swing
 	-- momentarily pauses before reversing -- chosen deliberately over the center
