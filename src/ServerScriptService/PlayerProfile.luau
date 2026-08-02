@@ -7,10 +7,10 @@
 -- see PlayerStore.luau and the written report for the full persistence
 -- story (what's saved, when, and exactly what a load failure does).
 --
--- The swing's single shared rider slot (see LaunchServer's activePlayer) is
--- UNCHANGED and untouched by any of this -- whoever is currently riding is
--- still the only one who can launch, independent of how many players have
--- their own base sitting here.
+-- The swing/launch loop (see LaunchServer.server.luau) is untouched by any
+-- of this -- every player rides/launches/opens boxes on their own lane,
+-- independently, and this module never reads or writes any of that state,
+-- regardless of how many players have their own base sitting here.
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")

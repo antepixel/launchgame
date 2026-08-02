@@ -150,15 +150,13 @@ remotesFolder.Parent = ReplicatedStorage
 -- unoccupied lane has no tier to display, so it renders nothing at all,
 -- same as an unjoined player has no base folder either.
 --
--- THIS PASS DELIBERATELY DOES NOT touch state/activePlayer/activeCharacter/
--- riderReady/activeFlight/activeBox below -- there is still only ONE shared
--- rider slot, and only ONE player can press Release and have it do
--- anything, exactly as before. What changed is only WHICH physical pivot/
--- folder that single slot's own visual rebuilds (setupCharacter/onRelease/
--- clearActiveRider/the dev rebuild action) now point at: whichever pivot/
--- folder belongs to activePlayer specifically, looked up in
--- playerSwingPivots/playerSwingFolders below, instead of a single
--- module-level swingPivot/swingStructureFolder that no longer exists. =====
+-- PASS 1 (six-lane geometry) deliberately did NOT touch state/activePlayer/
+-- activeCharacter/riderReady/activeFlight/activeBox -- there was still only
+-- ONE shared rider slot back then, even though six independent swings
+-- already existed to look at. PASS 2 (this pass) is what converts those six
+-- into per-player tables (states/activeCharacters/riderReadyFlags/
+-- activeFlights/activeBoxes below) so every connected player can actually
+-- ride/launch/open a box independently -- see the written report. =====
 local baseplate = Workspace:WaitForChild("Baseplate") :: BasePart
 -- Ground level -- same reasoning BaseGeometry/SwingGeometry/SwingBuilder
 -- already use elsewhere in this project; this file needs its own copy only
@@ -173,10 +171,10 @@ end
 -- Every currently-connected player's own pivot/folder -- populated by
 -- buildPlayerSwing below the instant that player's lane index is known,
 -- cleared by destroyPlayerSwing the instant they leave. Deliberately keyed
--- by Player, not by lane index: activePlayer/activeCharacter below are
--- already Player-keyed, so every lookup this file needs to do ("which pivot
--- does the current rider's slot belong to") is a single table read, no
--- second index translation.
+-- by Player, not by lane index: activeCharacters/states/activeFlights/
+-- activeBoxes below are all Player-keyed too, so every lookup this file
+-- needs to do ("which pivot does this player's own rider state belong to")
+-- is a single table read, no second index translation.
 local playerSwingPivots: { [Player]: BasePart } = {}
 local playerSwingFolders: { [Player]: Folder } = {}
 
@@ -236,6 +234,13 @@ local function buildPlayerSwing(player: Player, baseIndex: number)
 	-- gets overwritten immediately" reasoning SwingGallery.server.luau's own
 	-- per-tier pivots use.
 	pivot.Position = Vector3.new(LaneConfig.laneCenterX(baseIndex), groundY, LaneConfig.SWING_PIVOT_Z)
+	-- Set BEFORE Parent (same "populate then reveal" reasoning the Remotes
+	-- folder above uses): LaunchClient reads this attribute straight off
+	-- its own pivot to compute its own swingPhase offset (six-lane pass 2),
+	-- and must never be able to observe the pivot without it already set --
+	-- see swingPhase below and the written report on how server/client phase
+	-- offset parity is guaranteed.
+	pivot:SetAttribute("LaneIndex", baseIndex)
 	pivot.Parent = Workspace
 
 	local structureFolder = Instance.new("Folder")
@@ -371,11 +376,20 @@ for _, player in Players:GetPlayers() do
 end
 Players.PlayerRemoving:Connect(destroyPlayerSwing)
 
--- ===== Swing math (unchanged from the previous pass) =====
-
-local function swingPhase(): number
+-- ===== Swing math =====
+-- Per-lane phase offset (six-lane pass 2): each lane's swing is offset by
+-- laneIndex * (SWING_PERIOD_SECONDS / LANE_COUNT) seconds of server time --
+-- lane 0 unshifted, lane 1 a sixth of a cycle ahead, and so on -- so the six
+-- swings no longer move in lockstep. SWING_PERIOD_SECONDS, the sweet-spot
+-- window, and SWING_ARC_HALF_ANGLE_DEGREES (read downstream by swingTheta)
+-- are untouched by this -- only WHERE in the cycle a given lane starts
+-- changes, never the shape or width of the cycle itself. LaunchClient's own
+-- copy of this function is byte-for-byte identical, fed the SAME laneIndex
+-- (see the written report for how that's guaranteed).
+local function swingPhase(laneIndex: number): number
 	local t = Workspace:GetServerTimeNow()
-	return (t % LaunchConfig.SWING_PERIOD_SECONDS) / LaunchConfig.SWING_PERIOD_SECONDS
+	local offset = laneIndex * (LaunchConfig.SWING_PERIOD_SECONDS / LaneConfig.LANE_COUNT)
+	return ((t + offset) % LaunchConfig.SWING_PERIOD_SECONDS) / LaunchConfig.SWING_PERIOD_SECONDS
 end
 
 local function swingTheta(phase: number): number
@@ -385,10 +399,10 @@ end
 
 -- Takes an explicit pivot now (used to close over the one module-level
 -- swingPivot, which no longer exists -- see the six-per-lane setup above).
--- Every call site passes the CURRENT rider's own pivot (playerSwingPivots
--- [activePlayer]) -- swingTheta's amplitude and swingPhase's timing still
--- read no position at all, so which pivot gets passed in only ever affects
--- WHERE the arc sits, never its shape or timing.
+-- Its one server call site (onRelease) passes the RELEASING player's own
+-- pivot (playerSwingPivots[player]) -- swingTheta's amplitude and
+-- swingPhase's timing still read no position at all, so which pivot gets
+-- passed in only ever affects WHERE the arc sits, never its shape or timing.
 local function swingSeatPosition(theta: number, pivot: BasePart): Vector3
 	local pivotPosition = pivot.Position
 	-- Effective rope length for WHATEVER tier is currently built -- derived
@@ -771,21 +785,27 @@ end
 
 type LoopState = "riding" | "inflight" | "box" | "cooldown"
 
--- One shared rider slot for this prototype (same limitation every previous pass
--- had): only one player can be on/using the swing at a time.
-local state: LoopState = "riding"
-local activePlayer: Player? = nil
-local activeCharacter: Model? = nil
--- True once the current rider's own LaunchClient has fired RiderReady --
--- see setupCharacter's watchdog and riderReadyRemote above. Reset to false
--- every time a NEW rider claims the seat; a stale true from a PREVIOUS
--- rider can never leak into a new rider's own watchdog check because that
--- check also compares `character == activeCharacter` (a fresh Model every
--- claim).
-local riderReady = false
+-- Every connected player owns their own lane for the whole session (six-lane
+-- pass 2) -- no more shared rider slot, so each of these is now a table
+-- keyed by Player instead of a single module-level value. A player's own
+-- entry is theirs alone from the moment setupCharacter claims it to the
+-- moment they leave (destroyPlayerSwing/PlayerRemoving below free it);
+-- nothing here ever reads or writes another player's entry.
+local states: { [Player]: LoopState } = {}
+local activeCharacters: { [Player]: Model } = {}
+-- True once THIS player's own LaunchClient has fired RiderReady -- see
+-- setupCharacter's watchdog and riderReadyRemote below. Reset to false every
+-- time THIS player's character (re)claims its seat (a respawn, same as a
+-- fresh join); a stale true from a PREVIOUS character can never leak into a
+-- new watchdog check for the same player because that check also compares
+-- `activeCharacters[watchedPlayer] == watchedCharacter` (a fresh Model every
+-- claim), and can never leak across PLAYERS because this table is keyed by
+-- Player to begin with.
+local riderReadyFlags: { [Player]: boolean } = {}
 
--- The active flight's fixed, precomputed description -- set once at release,
--- read every Heartbeat until duration elapses. Nothing here ever changes mid-flight.
+-- One flight's fixed, precomputed description -- set once at that player's
+-- release, read every Heartbeat until its own duration elapses. Nothing
+-- here ever changes mid-flight.
 type Flight = {
 	rootPart: BasePart,
 	humanoid: Humanoid,
@@ -798,20 +818,24 @@ type Flight = {
 	luck: number,
 	trailRig: TrailRig?,
 }
-local activeFlight: Flight? = nil
+-- Every player currently mid-flight, independently -- see the Heartbeat
+-- handler below, which now loops over every entry here instead of checking
+-- one shared flight.
+local activeFlights: { [Player]: Flight } = {}
 
--- The active mystery box -- set once per landing that earned luck > 0, read
--- and mutated (luck doubling) by every press until it opens. `pending` is
--- true from the moment a press is ACCEPTED until its delayed result fires --
--- see onBoxPress. `luck` starts at the landing's earned value and only ever
--- doubles; nothing here caps it.
+-- One player's active mystery box -- set once per landing that earned luck >
+-- 0, read and mutated (luck doubling) by every press until it opens.
+-- `pending` is true from the moment a press is ACCEPTED until its delayed
+-- result fires -- see onBoxPress. `luck` starts at the landing's earned
+-- value and only ever doubles; nothing here caps it. No `player` field --
+-- the table key already IS the owning player, so there is only ever one
+-- place that fact is recorded.
 type Box = {
-	player: Player,
 	character: Model,
 	luck: number,
 	pending: boolean,
 }
-local activeBox: Box? = nil
+local activeBoxes: { [Player]: Box } = {}
 
 -- ===== DEV PANEL SUPPORT: rebuild the current rider's swing structure at
 -- their CURRENT tier, touching no profile/tier state at all -- lets
@@ -839,41 +863,47 @@ if RunService:IsStudio() then
 	-- the way back to 1 if this is invoked with no requesting player at all
 	-- (defensive only; DevPanelServer always passes one).
 	devRebuildSwingEvent.Event:Connect(function(requestingPlayer: Player?)
-		-- Rebuilds whichever PLAYER's own lane this should affect -- the
-		-- current rider if there is one, else the requesting player -- since
-		-- there is no more single shared pivot/folder to fall back to (see
-		-- the six-per-lane setup above). No-ops if that player doesn't have
-		-- a lane pivot yet (e.g. still mid-join); nothing sensible to
-		-- rebuild in that case.
-		local targetPlayer = activePlayer or requestingPlayer
-		if not targetPlayer then
+		-- Rebuilds the REQUESTING player's own lane -- see the six-per-lane
+		-- setup above. "Whichever player is currently riding" doesn't mean
+		-- anything any more (six-lane pass 2: every connected player can be
+		-- riding/flying/boxing at once, independently, so there is no more
+		-- single "the current rider" to prefer over the requester).
+		-- No-ops if that player doesn't have a lane pivot yet (e.g. still
+		-- mid-join); nothing sensible to rebuild in that case.
+		if not requestingPlayer then
 			return
 		end
-		local pivot = playerSwingPivots[targetPlayer]
-		local folder = playerSwingFolders[targetPlayer]
+		local pivot = playerSwingPivots[requestingPlayer]
+		local folder = playerSwingFolders[requestingPlayer]
 		if not pivot or not folder then
 			return
 		end
-		applySwingVisualForTier(PlayerProfile.getSwingTier(targetPlayer), pivot, folder)
+		applySwingVisualForTier(PlayerProfile.getSwingTier(requestingPlayer), pivot, folder)
 	end)
 end
 
--- Frees the rider slot (on disconnect, death, or a missing character) without
--- otherwise touching the swing itself -- the seat keeps swinging empty either
--- way. Clearing activeBox here too (on TOP of resetting state away from
--- "box") is what guarantees a player leaving or dying mid-sequence can never
--- leave a stuck box: any in-flight delayed roll (see onBoxPress) checks
--- `activeBox ~= box or state ~= "box"` the instant its delay elapses and
--- simply bails if either has changed out from under it.
-local function clearActiveRider()
+-- Frees ONE player's own rider state (on disconnect, death, or a missing
+-- character) without otherwise touching that player's swing itself -- the
+-- seat keeps swinging empty either way, and no OTHER player's state is ever
+-- touched (six-lane pass 2: this used to reset the one shared rider slot;
+-- now every table write below is scoped to `player` alone). Clearing
+-- activeBoxes[player] here too (on TOP of resetting states[player] away
+-- from "box") is what guarantees a player leaving or dying mid-sequence can
+-- never leave a stuck box: any in-flight delayed roll for THIS player (see
+-- onBoxPress) checks `activeBoxes[player] ~= box or states[player] ~=
+-- "box"` the instant its delay elapses and simply bails if either has
+-- changed out from under it -- another player's own box is a different
+-- table entry entirely and is never affected.
+local function clearActiveRider(player: Player)
 	-- BUG FIX: an interrupted flight (e.g. the rider dies mid-air, see
 	-- setupCharacter's humanoid.Died below -- PlayerRemoving doesn't need
 	-- this, since a leaving player's whole character, trail included, is
 	-- destroyed by Roblox automatically) used to leave its Trail/Attachments
 	-- orphaned on the character forever, since this just discarded
 	-- activeFlight without checking it for one first.
-	if activeFlight then
-		destroyFlightTrail(activeFlight.trailRig)
+	local flight = activeFlights[player]
+	if flight then
+		destroyFlightTrail(flight.trailRig)
 		-- BUG FIX (see the written report -- compounding flight pose): this
 		-- also used to discard activeFlight.poseJoints unrestored, leaving a
 		-- rider who died or disconnected mid-flight with bent hip/shoulder
@@ -882,14 +912,13 @@ local function clearActiveRider()
 		-- longer compound), but restoring here still matters for a rider who
 		-- dies mid-flight and is revived/keeps the same character without a
 		-- full respawn -- and it's free.
-		restoreFlightPose(activeFlight.poseJoints)
+		restoreFlightPose(flight.poseJoints)
 	end
-	activePlayer = nil
-	activeCharacter = nil
-	activeFlight = nil
-	activeBox = nil
-	riderReady = false
-	state = "riding"
+	activeCharacters[player] = nil
+	activeFlights[player] = nil
+	activeBoxes[player] = nil
+	riderReadyFlags[player] = nil
+	states[player] = "riding"
 	-- BUG FIX (see the written report -- six-lane pass 1): this used to
 	-- reset the ONE shared swing to a baseline tier-1 look here, since
 	-- "nobody riding" meant the single swing had no owner's tier to show.
@@ -903,7 +932,11 @@ end
 
 -- Shared by both the 0-luck landing path (no box) and the box's own "opened"
 -- path -- identical reset behaviour either way, just reached from two places
--- now instead of one inline block.
+-- now instead of one inline block. Six-lane pass 2: this closure writes
+-- states[landedPlayer], never a shared module-level variable -- two
+-- different players' own reset timers can fire at any two overlapping
+-- instants and never stomp each other, since each one only ever touches its
+-- own captured landedPlayer's own table entry.
 local function scheduleReset(landedPlayer: Player, landedCharacter: Model)
 	task.delay(LaunchConfig.RESET_DELAY, function()
 		if landedPlayer.Character == landedCharacter and landedCharacter.Parent then
@@ -922,7 +955,7 @@ local function scheduleReset(landedPlayer: Player, landedCharacter: Model)
 				humanoid.AutoRotate = false
 			end
 		end
-		state = "riding"
+		states[landedPlayer] = "riding"
 		if landedPlayer.Parent then
 			resetReadyRemote:FireClient(landedPlayer)
 		end
@@ -956,85 +989,92 @@ local function setupCharacter(player: Player, character: Model)
 	characterNeutralPose[character] = captureNeutralPose(character)
 
 	humanoid.Died:Connect(function()
-		if player == activePlayer then
-			clearActiveRider()
+		-- Guards against a stale Died firing after this exact character has
+		-- already been superseded by a respawn (see setupCharacter's own
+		-- re-entry on the next CharacterAdded) -- shouldn't be reachable in
+		-- practice (a character's Humanoid is destroyed alongside it), kept
+		-- as the same "don't trust identity you didn't just check" caution
+		-- the watchdog below uses.
+		if activeCharacters[player] == character then
+			clearActiveRider(player)
 		end
 	end)
 
-	if activePlayer == nil then
-		activePlayer = player
-		activeCharacter = character
-		state = "riding"
-		riderReady = false
-		-- The server no longer repositions the rider every Heartbeat (that's the
-		-- bug-2 fix -- the CLIENT now drives this visually, every RenderStepped,
-		-- from the same shared swing math). Anchoring the root is what keeps the
-		-- character from just falling now that nothing server-side is holding it
-		-- in place frame to frame; the client is free to set an anchored part's
-		-- CFrame locally without anything fighting it, since the server simply
-		-- never writes to it while riding.
-		local rootPart = humanoid.RootPart
-		if rootPart then
-			rootPart.Anchored = true
-		end
-		-- Show THIS rider's own tier the moment they claim the seat -- see
-		-- applySwingVisualForTier above. Mostly redundant with the per-lane
-		-- lifecycle's own initial build (buildPlayerSwing already built this
-		-- exact player's own pivot/folder at this exact tier the moment they
-		-- were assigned a lane, well before a character can load and claim
-		-- this slot) -- kept as a defensive refresh, and skipped gracefully
-		-- (not an error) on the rare chance this player's own lane pivot
-		-- somehow isn't built yet: the per-lane lifecycle will still finish
-		-- building it correctly moments later regardless.
-		local claimPivot = playerSwingPivots[player]
-		local claimFolder = playerSwingFolders[player]
-		if claimPivot and claimFolder then
-			applySwingVisualForTier(PlayerProfile.getSwingTier(player), claimPivot, claimFolder)
-		end
-		ridingAssignedRemote:FireClient(player)
-
-		-- BUG FIX (see the written report): the anchor above assumes THIS
-		-- player's LaunchClient will come up and start driving the seat/
-		-- character every RenderStepped. If it never does -- a hung or
-		-- failed client-side WaitForChild, a disconnect mid-load, anything
-		-- -- the root stays anchored FOREVER with nothing server-side ever
-		-- moving or freeing it: a player stuck in place, unable to move,
-		-- with no way out. This bounded watchdog is the recovery: if THIS
-		-- exact rider/character (captured below, not re-read from the
-		-- module-level variables at fire time) hasn't acknowledged
-		-- readiness within RIDER_READY_TIMEOUT_SECONDS, fail OPEN --
-		-- unanchor so the player at least regains ordinary movement,
-		-- rather than staying frozen indefinitely. Self-invalidating by
-		-- construction: if this rider legitimately released, left, or got
-		-- cleared before the timeout fires, activePlayer/activeCharacter
-		-- will have moved on (or riderReady will already be true) and this
-		-- no-ops. Deliberately NOT a plain timer that fires regardless of
-		-- activity -- a real player who just hasn't released yet within 15
-		-- seconds is fine and must not be yanked off the swing; the ack is
-		-- about the CLIENT being alive, not about how fast the player
-		-- plays.
-		local watchedPlayer, watchedCharacter = player, character
-		task.delay(RIDER_READY_TIMEOUT_SECONDS, function()
-			if watchedPlayer ~= activePlayer or watchedCharacter ~= activeCharacter or riderReady then
-				return
-			end
-			local watchedHumanoid = watchedCharacter:FindFirstChildOfClass("Humanoid")
-			local watchedRoot = watchedHumanoid and watchedHumanoid.RootPart
-			if watchedRoot and watchedRoot.Anchored then
-				warn(string.format(
-					"[LaunchServer] %s's LaunchClient never acknowledged readiness within %d seconds -- unanchoring so they aren't stuck.",
-					watchedPlayer.Name, RIDER_READY_TIMEOUT_SECONDS
-				))
-				watchedRoot.Anchored = false
-			end
-		end)
+	-- Six-lane pass 2: every player owns their own lane unconditionally for
+	-- the whole session -- there is no more shared slot to claim, so this is
+	-- no longer gated behind "is anyone else already riding." Runs every
+	-- time, for every player, on every CharacterAdded (including a respawn).
+	activeCharacters[player] = character
+	states[player] = "riding"
+	riderReadyFlags[player] = false
+	-- The server no longer repositions the rider every Heartbeat (that's the
+	-- bug-2 fix -- the CLIENT now drives this visually, every RenderStepped,
+	-- from the same shared swing math). Anchoring the root is what keeps the
+	-- character from just falling now that nothing server-side is holding it
+	-- in place frame to frame; the client is free to set an anchored part's
+	-- CFrame locally without anything fighting it, since the server simply
+	-- never writes to it while riding.
+	local rootPart = humanoid.RootPart
+	if rootPart then
+		rootPart.Anchored = true
 	end
+	-- Show THIS rider's own tier the moment they claim the seat -- see
+	-- applySwingVisualForTier above. Mostly redundant with the per-lane
+	-- lifecycle's own initial build (buildPlayerSwing already built this
+	-- exact player's own pivot/folder at this exact tier the moment they
+	-- were assigned a lane, well before a character can load and claim
+	-- this slot) -- kept as a defensive refresh, and skipped gracefully
+	-- (not an error) on the rare chance this player's own lane pivot
+	-- somehow isn't built yet: the per-lane lifecycle will still finish
+	-- building it correctly moments later regardless.
+	local claimPivot = playerSwingPivots[player]
+	local claimFolder = playerSwingFolders[player]
+	if claimPivot and claimFolder then
+		applySwingVisualForTier(PlayerProfile.getSwingTier(player), claimPivot, claimFolder)
+	end
+	ridingAssignedRemote:FireClient(player)
+
+	-- BUG FIX (see the written report): the anchor above assumes THIS
+	-- player's LaunchClient will come up and start driving the seat/
+	-- character every RenderStepped. If it never does -- a hung or
+	-- failed client-side WaitForChild, a disconnect mid-load, anything
+	-- -- the root stays anchored FOREVER with nothing server-side ever
+	-- moving or freeing it: a player stuck in place, unable to move,
+	-- with no way out. This bounded watchdog is the recovery: if THIS
+	-- exact rider/character (captured below, not re-read from the
+	-- per-player tables at fire time) hasn't acknowledged readiness
+	-- within RIDER_READY_TIMEOUT_SECONDS, fail OPEN -- unanchor so the
+	-- player at least regains ordinary movement, rather than staying
+	-- frozen indefinitely. Self-invalidating by construction: if this
+	-- rider legitimately released, left, or got cleared before the
+	-- timeout fires, activeCharacters[watchedPlayer] will have moved on
+	-- (or riderReadyFlags[watchedPlayer] will already be true) and this
+	-- no-ops -- and since every table here is keyed by Player, this
+	-- watchdog can only ever act on watchedPlayer's OWN entry, never
+	-- another concurrently-watched player's. Deliberately NOT a plain
+	-- timer that fires regardless of activity -- a real player who just
+	-- hasn't released yet within 15 seconds is fine and must not be
+	-- yanked off the swing; the ack is about the CLIENT being alive, not
+	-- about how fast the player plays.
+	local watchedPlayer, watchedCharacter = player, character
+	task.delay(RIDER_READY_TIMEOUT_SECONDS, function()
+		if activeCharacters[watchedPlayer] ~= watchedCharacter or riderReadyFlags[watchedPlayer] then
+			return
+		end
+		local watchedHumanoid = watchedCharacter:FindFirstChildOfClass("Humanoid")
+		local watchedRoot = watchedHumanoid and watchedHumanoid.RootPart
+		if watchedRoot and watchedRoot.Anchored then
+			warn(string.format(
+				"[LaunchServer] %s's LaunchClient never acknowledged readiness within %d seconds -- unanchoring so they aren't stuck.",
+				watchedPlayer.Name, RIDER_READY_TIMEOUT_SECONDS
+			))
+			watchedRoot.Anchored = false
+		end
+	end)
 end
 
 riderReadyRemote.OnServerEvent:Connect(function(player: Player)
-	if player == activePlayer then
-		riderReady = true
-	end
+	riderReadyFlags[player] = true
 end)
 
 Players.PlayerAdded:Connect(function(player)
@@ -1055,44 +1095,53 @@ for _, player in Players:GetPlayers() do
 end
 
 local function onRelease(player: Player)
-	if state ~= "riding" or player ~= activePlayer then
+	if states[player] ~= "riding" then
 		return
 	end
-	local character = activeCharacter
+	local character = activeCharacters[player]
 	if not character then
-		clearActiveRider()
+		clearActiveRider(player)
 		return
 	end
 	local humanoid = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
 	if not humanoid or humanoid.Health <= 0 then
-		clearActiveRider()
+		clearActiveRider(player)
 		return
 	end
 	local rootPart = humanoid.RootPart
 	if not rootPart then
-		clearActiveRider()
+		clearActiveRider(player)
 		return
 	end
-	-- This player's own lane pivot/folder -- see the six-per-lane setup
-	-- above. Bails WITHOUT clearing the rider (unlike the guards above):
-	-- a missing pivot here means "this player's own lane geometry hasn't
-	-- finished building yet" (buildPlayerSwing runs asynchronously off
-	-- PlayerAdded, see onLaneAssignmentPlayerAdded), not that anything is
-	-- actually wrong with this rider -- an exceedingly rare, self-correcting
-	-- race (a character would need to load, claim this slot, AND the player
-	-- press Release, all before a synchronous in-memory table lookup and one
-	-- SwingBuilder.build call finish), not worth yanking them off the swing
-	-- for. Their next Release attempt succeeds once it catches up.
+	-- This player's own lane pivot/folder/lane index -- see the six-per-lane
+	-- setup above. Bails WITHOUT clearing the rider (unlike the guards
+	-- above): a missing pivot/lane index here means "this player's own lane
+	-- geometry hasn't finished building yet" (buildPlayerSwing runs
+	-- asynchronously off PlayerAdded, see onLaneAssignmentPlayerAdded), not
+	-- that anything is actually wrong with this rider -- an exceedingly rare,
+	-- self-correcting race (a character would need to load, claim this slot,
+	-- AND the player press Release, all before a synchronous in-memory table
+	-- lookup and one SwingBuilder.build call finish), not worth yanking them
+	-- off the swing for. Their next Release attempt succeeds once it catches
+	-- up.
 	local pivot = playerSwingPivots[player]
 	local structureFolder = playerSwingFolders[player]
-	if not pivot or not structureFolder then
+	local laneIndex = PlayerProfile.getBaseIndex(player)
+	if not pivot or not structureFolder or laneIndex == nil then
 		return
 	end
 
 	-- THE ONLY THING RELEASE POWER IS EVER DERIVED FROM: the server's own
-	-- swingPhase(), read at the instant the server itself receives this event.
-	-- The client sent nothing but a bare signal -- no phase, no distance -- so
-	-- there is no number here for a modified client to lie about.
+	-- swingPhase(), read at the instant the server itself receives this
+	-- event, offset by THIS player's own laneIndex (six-lane pass 2 -- see
+	-- swingPhase above). laneIndex here is PlayerProfile's own
+	-- profile.baseIndex, the SAME integer buildPlayerSwing stamped onto this
+	-- player's pivot as its LaneIndex attribute -- LaunchClient reads that
+	-- exact attribute to compute the identical offset for its own
+	-- bar-render/prediction, so the two can never disagree (see the written
+	-- report). The client sent nothing but a bare signal -- no phase, no
+	-- distance -- so there is no number here for a modified client to lie
+	-- about.
 	--
 	-- WHAT THIS FIXES FOR FREE: distance is now a pure function of the
 	-- multiplier, computed HERE, before the flight animation even starts. The
@@ -1103,7 +1152,7 @@ local function onRelease(player: Player)
 	-- distance the instant it computes the multiplier. The client's copy of the
 	-- flight (camera, live counter) is downstream, cosmetic, and can't feed
 	-- anything back into this number.
-	local phase = swingPhase()
+	local phase = swingPhase(laneIndex)
 	local multiplier = launchMultiplier(phase)
 	-- Swing tier scaling: a plain multiplier on top of the usual timing-based
 	-- distance, read once here from THIS PLAYER's OWN tier (see
@@ -1191,8 +1240,8 @@ local function onRelease(player: Player)
 	-- the server's regardless of how long the message itself took to arrive.
 	local startTime = Workspace:GetServerTimeNow()
 
-	state = "inflight"
-	activeFlight = {
+	states[player] = "inflight"
+	activeFlights[player] = {
 		rootPart = rootPart,
 		humanoid = humanoid,
 		startPosition = startPosition,
@@ -1211,9 +1260,14 @@ end
 releaseRemote.OnServerEvent:Connect(onRelease)
 
 Players.PlayerRemoving:Connect(function(player)
-	if player == activePlayer then
-		clearActiveRider()
-	end
+	clearActiveRider(player)
+	-- Unlike a mid-session clear (death, a missing character), this player
+	-- is never coming back for THIS Player instance -- drop states[player]
+	-- entirely rather than leaving it at "riding" forever, so this table
+	-- doesn't quietly accumulate one dead entry per departed player for the
+	-- life of the server (same "freed, not left growing" reasoning
+	-- PlayerProfile.luau's own freeBaseIndices uses).
+	states[player] = nil
 	-- PlayerProfile owns its own PlayerRemoving connection (save + base
 	-- teardown, see PlayerProfile.luau) -- nothing to do here anymore.
 end)
@@ -1238,65 +1292,79 @@ end)
 -- a single discrete update has no "rate" to stutter at. Scoring (the swing's
 -- phase read fresh from Workspace:GetServerTimeNow() the instant Release
 -- arrives, in onRelease above) is completely unaffected by any of this.
+--
+-- SIX-LANE PASS 2: this used to check ONE shared activeFlight/activeCharacter
+-- pair and process at most one landing per frame -- with a shared rider slot
+-- that was never a problem, since only one player could ever be mid-flight
+-- at all. It is now the structural blocker to concurrent flights: it loops
+-- over every entry in activeFlights every Heartbeat, so any number of
+-- players landing on the same frame (or different frames) are each handled
+-- in their own loop iteration, reading and writing only that iteration's own
+-- `player` key in every per-player table -- one player's landing can never
+-- see or touch another's.
 RunService.Heartbeat:Connect(function()
-	if state ~= "inflight" or not activeFlight or not activeCharacter then
-		return
-	end
-	local flight = activeFlight
-	-- flight.duration, NOT the config constant directly -- see onRelease,
-	-- where duration was computed once per flight from that flight's own
-	-- (possibly tier-scaled) distance and stored here, exactly like distance
-	-- and archHeight already were.
-	local u = (Workspace:GetServerTimeNow() - flight.startTime) / flight.duration
+	local now = Workspace:GetServerTimeNow()
+	for player, flight in activeFlights do
+		if states[player] ~= "inflight" then
+			continue
+		end
+		-- flight.duration, NOT the config constant directly -- see onRelease,
+		-- where duration was computed once per flight from that flight's own
+		-- (possibly tier-scaled) distance and stored here, exactly like
+		-- distance and archHeight already were.
+		local u = (now - flight.startTime) / flight.duration
+		if u < 1 then
+			continue
+		end
 
-	if u < 1 then
-		return
-	end
+		-- Flight complete for THIS player: place exactly at the landing point
+		-- (u = 1, deterministic, no drift), LEVEL (not the tipped-forward
+		-- landing pitch -- that's for mid-flight only; standing normally
+		-- starts from level), unanchor, restore the limb pose and normal
+		-- control. Removed from activeFlights immediately (before any of the
+		-- below can yield) so a second Heartbeat can never reprocess the same
+		-- landing.
+		activeFlights[player] = nil
+		local character = activeCharacters[player]
+		if not character then
+			-- Defensive only: activeFlights[player] is never set without
+			-- activeCharacters[player] also set (see onRelease) -- this
+			-- can't actually happen, but keeps the type checker honest
+			-- instead of asserting it away.
+			states[player] = "riding"
+			continue
+		end
 
-	-- Flight complete: place exactly at the landing point (u = 1, deterministic,
-	-- no drift), LEVEL (not the tipped-forward landing pitch -- that's for mid-
-	-- flight only; standing normally starts from level), unanchor, restore the
-	-- limb pose and normal control.
-	local landingPosition = trajectoryPosition(flight.startPosition, flight.distance, flight.archHeight, 1)
-	activeCharacter:PivotTo(CFrame.lookAt(landingPosition, landingPosition + Vector3.new(0, 0, -1)))
-	restoreFlightPose(flight.poseJoints)
-	destroyFlightTrail(flight.trailRig)
-	flight.rootPart.Anchored = false
-	flight.humanoid.AutoRotate = true
+		local landingPosition = trajectoryPosition(flight.startPosition, flight.distance, flight.archHeight, 1)
+		character:PivotTo(CFrame.lookAt(landingPosition, landingPosition + Vector3.new(0, 0, -1)))
+		restoreFlightPose(flight.poseJoints)
+		destroyFlightTrail(flight.trailRig)
+		flight.rootPart.Anchored = false
+		flight.humanoid.AutoRotate = true
 
-	local landedPlayer = activePlayer
-	local landedCharacter = activeCharacter
-	local earnedLuck = flight.luck
-	activeFlight = nil
+		local earnedLuck = flight.luck
 
-	if not landedPlayer then
-		-- Defensive only: activeFlight is never set without activePlayer (see
-		-- onRelease) -- this can't actually happen, but keeps the type
-		-- checker honest about Player? instead of asserting it away.
-		state = "riding"
-		return
-	end
-
-	if earnedLuck > 0 then
-		-- Mystery box: the box's STARTING luck is the exact value already
-		-- computed at release and already shown in the landing readout (see
-		-- onRelease/bandLuckForLandingZ) -- carried forward, not rerolled or
-		-- re-derived. Every press from here is scored in onBoxPress below.
-		state = "box"
-		activeBox = {
-			player = landedPlayer,
-			character = landedCharacter,
-			luck = earnedLuck,
-			pending = false,
-		}
-		boxStartedRemote:FireClient(landedPlayer, earnedLuck)
-	else
-		-- 0 luck: nothing was earned to gamble with, so no box appears at all
-		-- -- straight to the existing reset flow, unchanged from before this
-		-- pass. See the written report for why a box here (doubling zero
-		-- forever) would just be a dead interaction.
-		state = "cooldown"
-		scheduleReset(landedPlayer, landedCharacter)
+		if earnedLuck > 0 then
+			-- Mystery box: the box's STARTING luck is the exact value already
+			-- computed at release and already shown in the landing readout
+			-- (see onRelease/bandLuckForLandingZ) -- carried forward, not
+			-- rerolled or re-derived. Every press from here is scored in
+			-- onBoxPress below.
+			states[player] = "box"
+			activeBoxes[player] = {
+				character = character,
+				luck = earnedLuck,
+				pending = false,
+			}
+			boxStartedRemote:FireClient(player, earnedLuck)
+		else
+			-- 0 luck: nothing was earned to gamble with, so no box appears at
+			-- all -- straight to the existing reset flow, unchanged from
+			-- before this pass. See the written report for why a box here
+			-- (doubling zero forever) would just be a dead interaction.
+			states[player] = "cooldown"
+			scheduleReset(player, character)
+		end
 	end
 end)
 
@@ -1308,26 +1376,31 @@ end)
 -- here stops the luck from doubling indefinitely -- a long chain is meant to
 -- be rare and memorable, not something the game protects the player from.
 local function onBoxPress(player: Player)
-	if state ~= "box" or not activeBox or player ~= activeBox.player then
+	local box = activeBoxes[player]
+	if states[player] ~= "box" or not box then
 		return
 	end
 	-- RATE LIMIT + THE BEAT, same mechanism: a press is only even ACCEPTED
-	-- (activeBox.pending flips true) once, and ignored on every repeat until
-	-- its own delayed result has fired. A script mashing BoxPress as fast as
-	-- it can therefore gets exactly one roll every BOX_ROLL_DELAY_SECONDS --
-	-- the server never evaluates faster than that, no matter how many Presses
-	-- arrive in between.
-	if activeBox.pending then
+	-- (box.pending flips true) once, and ignored on every repeat until its
+	-- own delayed result has fired. A script mashing BoxPress as fast as it
+	-- can therefore gets exactly one roll every BOX_ROLL_DELAY_SECONDS --
+	-- the server never evaluates faster than that, no matter how many
+	-- Presses arrive in between. Reading activeBoxes[player] (six-lane pass
+	-- 2) rather than a single shared activeBox is what makes this safe to
+	-- run for several different players' boxes at once: each call only ever
+	-- reads/writes the CALLING player's own entry.
+	if box.pending then
 		return
 	end
-	activeBox.pending = true
-	local box = activeBox
+	box.pending = true
 
 	task.delay(LaunchConfig.BOX_ROLL_DELAY_SECONDS, function()
-		-- The box (player left/died, see clearActiveRider) or the whole rider
-		-- slot may have been torn down while this was pending. Bail without
-		-- touching anything if this delayed roll is no longer the current one.
-		if activeBox ~= box or state ~= "box" then
+		-- THIS player's box (they left/died, see clearActiveRider) or their
+		-- rider state may have been torn down while this was pending. Bail
+		-- without touching anything if this delayed roll is no longer the
+		-- current one for `player` -- another player's own activeBoxes entry
+		-- is a completely different table slot and was never at risk here.
+		if activeBoxes[player] ~= box or states[player] ~= "box" then
 			return
 		end
 
@@ -1339,11 +1412,10 @@ local function onBoxPress(player: Player)
 		local doubled = math.random() < LaunchConfig.BOX_DOUBLE_CHANCE
 		if not doubled then
 			local finalLuck = box.luck
-			local landedPlayer = box.player
 			local landedCharacter = box.character
-			activeBox = nil
-			state = "cooldown"
-			boxResultRemote:FireClient(landedPlayer, true, finalLuck)
+			activeBoxes[player] = nil
+			states[player] = "cooldown"
+			boxResultRemote:FireClient(player, true, finalLuck)
 
 			-- THE SLIME: rolled immediately, server-side, from this box's own
 			-- final luck -- see SlimeRoll.rollSlime. Nothing about WHICH
@@ -1354,7 +1426,7 @@ local function onBoxPress(player: Player)
 			-- in a ServerScriptService module a client cannot even require,
 			-- let alone call.
 			local slime = SlimeRoll.rollSlime(finalLuck)
-			local isNew = PlayerProfile.recordSeen(landedPlayer, slime.globalIndex)
+			local isNew = PlayerProfile.recordSeen(player, slime.globalIndex)
 
 			-- THE SECOND BEAT: the box's own "OPENED!" is already the first
 			-- (see BOX_ROLL_DELAY_SECONDS) -- this is a SEPARATE delay before
@@ -1364,21 +1436,21 @@ local function onBoxPress(player: Player)
 			-- LATEST thing the player needs to read (the slime), not the
 			-- box's own open moment.
 			task.delay(SlimeConfig.REVEAL_BOX_TO_SLIME_DELAY_SECONDS, function()
-				if landedPlayer.Parent then
-					slimeRevealedRemote:FireClient(landedPlayer, slime.globalIndex, isNew)
+				if player.Parent then
+					slimeRevealedRemote:FireClient(player, slime.globalIndex, isNew)
 				end
 				-- THE BASE: handed off at the exact moment of the reveal, not
 				-- before -- see PlayerProfile.receiveSlime. Auto-placed if a
 				-- slot is free, otherwise added to that player's inventory
 				-- (never discarded -- see PlayerProfile.luau and the written
 				-- report); nothing here needs the return value.
-				PlayerProfile.receiveSlime(landedPlayer, slime)
-				scheduleReset(landedPlayer, landedCharacter)
+				PlayerProfile.receiveSlime(player, slime)
+				scheduleReset(player, landedCharacter)
 			end)
 		else
 			box.luck *= 2
 			box.pending = false
-			boxResultRemote:FireClient(box.player, false, box.luck)
+			boxResultRemote:FireClient(player, false, box.luck)
 		end
 	end)
 end

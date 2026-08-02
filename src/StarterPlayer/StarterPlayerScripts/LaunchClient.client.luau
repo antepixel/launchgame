@@ -37,6 +37,7 @@ local SlimeConfig = require(ReplicatedStorage.Config.SlimeConfig)
 local SlimeData = require(ReplicatedStorage.Config.SlimeData)
 local SwingGeometry = require(ReplicatedStorage.Config.SwingGeometry)
 local RunwayGeometry = require(ReplicatedStorage.Config.RunwayGeometry)
+local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -151,6 +152,23 @@ end
 local swingPivot = swingPivotMaybe :: BasePart
 local swingStructureFolder = swingStructureFolderMaybe
 
+-- This player's own lane index (six-lane pass 2) -- read straight off THIS
+-- client's own swing pivot, which LaunchServer's buildPlayerSwing stamps
+-- with a LaneIndex attribute BEFORE ever parenting the pivot to Workspace
+-- (same "populate then reveal" guarantee the Remotes folder above relies
+-- on), so it is guaranteed already present the instant the WaitForChild
+-- above resolved -- no separate remote, no separate wait. This is what
+-- guarantees the swingPhase offset computed below can never disagree with
+-- the server's own: both this client and LaunchServer's onRelease derive
+-- their offset from this exact same integer (PlayerProfile's own
+-- profile.baseIndex), never two independently-sent copies of it.
+local ownLaneIndexAttribute = swingPivot:GetAttribute("LaneIndex")
+if typeof(ownLaneIndexAttribute) ~= "number" then
+	failLaunchHud(string.format("Workspace.%s.LaneIndex attribute", ownSwingPivotName))
+	return
+end
+local ownLaneIndex = ownLaneIndexAttribute :: number
+
 -- The swing STRUCTURE (posts/beam/seat/chain) is built by SwingBuilder.luau
 -- and completely REBUILT (destroyed and recreated) every time the rider's
 -- tier changes -- see the written report. That means SwingSeat/
@@ -190,12 +208,16 @@ local function ensureSwingReferences()
 end
 
 -- Mirrors LaunchServer's swingPhase()/swingTheta() exactly -- same shared
--- constants, same clock. Kept in this one script rather than a shared module
--- since it's a handful of small pure functions and this project keeps ONE
--- tuning module, not a library of shared math helpers.
-local function swingPhase(): number
+-- constants, same clock, same per-lane offset formula (six-lane pass 2).
+-- Kept in this one script rather than a shared module since it's a handful
+-- of small pure functions and this project keeps ONE tuning module, not a
+-- library of shared math helpers. Every call site below passes ownLaneIndex
+-- -- see its own comment above for how that's guaranteed to match the
+-- server's copy.
+local function swingPhase(laneIndex: number): number
 	local t = Workspace:GetServerTimeNow()
-	return (t % LaunchConfig.SWING_PERIOD_SECONDS) / LaunchConfig.SWING_PERIOD_SECONDS
+	local offset = laneIndex * (LaunchConfig.SWING_PERIOD_SECONDS / LaneConfig.LANE_COUNT)
+	return ((t + offset) % LaunchConfig.SWING_PERIOD_SECONDS) / LaunchConfig.SWING_PERIOD_SECONDS
 end
 
 local function swingTheta(phase: number): number
@@ -461,14 +483,6 @@ local flightLuck = 0
 -- this, so a modified client skipping this latch gains nothing.
 local boxActive = false
 local boxWaitingForResult = false
-
--- True once this client has been told (via RidingAssigned) that it's the one
--- shared rider -- gates whether THIS client positions its own character on the
--- swing seat. Without this, every connected client would try to sit its own
--- character on the same seat, not just the one the server actually considers
--- "riding." Set once, true for the rest of the session (this prototype's rider
--- slot is never reassigned to someone else once claimed).
-local isRider = false
 
 -- ===== UI =====
 local screenGui = Instance.new("ScreenGui")
@@ -892,7 +906,7 @@ local function doRelease()
 	-- really decides the outcome). Close enough under normal latency to be a
 	-- trustworthy "what did that feel like" readout without waiting on a round
 	-- trip.
-	local releasePhase = swingPhase()
+	local releasePhase = swingPhase(ownLaneIndex)
 	local releaseMultiplier = launchMultiplier(releasePhase)
 	local bandIndex = outcomeBandIndex(releaseMultiplier)
 	local band = LaunchConfig.OUTCOME_BANDS[bandIndex]
@@ -1104,12 +1118,14 @@ slimeRevealedRemote.OnClientEvent:Connect(function(globalIndex: number, isNew: b
 end)
 
 ridingAssignedRemote.OnClientEvent:Connect(function()
-	isRider = true
 	-- Ack readiness -- see LaunchServer.server.luau's setupCharacter
 	-- watchdog. Reaching this line at all already proves every WaitForChild
 	-- gate above succeeded and this script is listening/about to drive the
 	-- character every RenderStepped, which is exactly what the server is
-	-- asking about.
+	-- asking about. Every player owns their own lane unconditionally now
+	-- (six-lane pass 2), so there is no longer an `isRider` flag to set here
+	-- -- the RidingAssigned/RiderReady pair itself is kept, unchanged, as the
+	-- fail-open watchdog handshake it always was.
 	riderReadyRemote:FireServer()
 end)
 
@@ -1140,7 +1156,7 @@ RunService:BindToRenderStep(RENDER_STEP_NAME, Enum.RenderPriority.Camera.Value -
 	-- rebuilds the structure -- see ensureSwingReferences's own comment.
 	ensureSwingReferences()
 
-	local phase = swingPhase()
+	local phase = swingPhase(ownLaneIndex)
 
 	-- The swing itself always swings, for every viewer, whether or not anyone
 	-- is riding it right now -- matches "it just swings, forever" regardless of
@@ -1159,13 +1175,15 @@ RunService:BindToRenderStep(RENDER_STEP_NAME, Enum.RenderPriority.Camera.Value -
 	-- BUG FIX (see written report): this used to be the SERVER repositioning the
 	-- rider every Heartbeat and replicating the result -- arriving at whatever
 	-- rate Roblox batches property replication (well under 60Hz), which read as
-	-- stutter. Now the assigned rider's own client (isRider, set once by
-	-- RidingAssigned) positions its OWN character locally, every RenderStepped,
-	-- from the exact same swing math -- full render-rate smoothness, no network
-	-- dependency. Gated on canRelease (not just isRider) so this doesn't run
-	-- during the brief post-landing cooldown window, when the character should
-	-- still be standing at the landing spot, not already back on the swing.
-	if isRider and canRelease and not flightActive then
+	-- stutter. Now this client positions its OWN character locally, every
+	-- RenderStepped, from the exact same swing math -- full render-rate
+	-- smoothness, no network dependency. Every player owns their own lane
+	-- unconditionally (six-lane pass 2), so there is no more `isRider` gate --
+	-- this always runs for this client's own character. Still gated on
+	-- canRelease so this doesn't run during the brief post-landing cooldown
+	-- window, when the character should still be standing at the landing spot,
+	-- not already back on the swing.
+	if canRelease and not flightActive then
 		local character = player.Character
 		if character then
 			character:PivotTo(riderCFrame(seatPosition))
