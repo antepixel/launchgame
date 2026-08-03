@@ -28,10 +28,10 @@
         "$className": "Part",
         "$properties": {
           "Anchored": true,
-          "Position": [0, -2, 27.8679],
-          "Size": [240, 4, 64.2642],
+          "Position": [0, -2, 120.74],
+          "Size": [480, 4, 250],
           "Material": "Grass",
-          "Color": [0.29, 0.56, 0.2]
+          "Color": [0.4078431373, 0.7764705882, 0.3058823529]
         }
       }
     }

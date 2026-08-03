@@ -135,7 +135,7 @@ local function buildBaseFolder(player: Player, baseIndex: number): Folder
 		pad.Name = string.format("Slot%02d", i)
 		pad.Anchored = true
 		pad.CanCollide = true
-		pad.Material = Enum.Material.SmoothPlastic
+		pad.Material = BaseConfig.BASE_SLOT_PAD_MATERIAL
 		pad.Size = BaseConfig.BASE_SLOT_PAD_SIZE
 		pad.Color = BaseConfig.BASE_SLOT_PAD_COLOR
 		pad.Position = position

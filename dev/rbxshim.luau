@@ -537,8 +537,13 @@ end
 registerModule(ConfigFolder, "LaunchConfig", "src/ReplicatedStorage/Config/LaunchConfig.luau")
 registerModule(ConfigFolder, "SwingTierVisuals", "src/ReplicatedStorage/Config/SwingTierVisuals.luau")
 registerModule(ConfigFolder, "SwingGeometry", "src/ReplicatedStorage/Config/SwingGeometry.luau")
+registerModule(ConfigFolder, "LaneConfig", "src/ReplicatedStorage/Config/LaneConfig.luau")
+registerModule(ConfigFolder, "RunwayGeometry", "src/ReplicatedStorage/Config/RunwayGeometry.luau")
 registerModule(ConfigFolder, "BaseConfig", "src/ReplicatedStorage/Config/BaseConfig.luau")
 registerModule(ConfigFolder, "BaseGeometry", "src/ReplicatedStorage/Config/BaseGeometry.luau")
+registerModule(ConfigFolder, "GroundConfig", "src/ReplicatedStorage/Config/GroundConfig.luau")
+registerModule(ConfigFolder, "PathConfig", "src/ReplicatedStorage/Config/PathConfig.luau")
+registerModule(ConfigFolder, "StallConfig", "src/ReplicatedStorage/Config/StallConfig.luau")
 registerModule(ServerScriptService, "SwingBuilder", "src/ServerScriptService/SwingBuilder.luau")
 
 return {

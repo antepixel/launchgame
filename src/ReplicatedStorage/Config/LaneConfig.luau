@@ -53,4 +53,23 @@ function LaneConfig.laneCenterX(laneIndex: number): number
 	return LaneConfig.ROAD_CENTER_X + offsetFromCenter
 end
 
+-- Studs between adjacent BASE lane centers -- deliberately a SEPARATE,
+-- wider pitch than the swing lanes above (see BASE_LANE_PITCH_STUDS): a
+-- swing must sit on the (fixed-width) road, so swing lanes are permanently
+-- capped at RUNWAY_WIDTH_STUDS / LANE_COUNT; a player's base has no such
+-- constraint, so it's free to sit on a wider pitch and give each plot more
+-- room to breathe. Bases are placed off the map blockout, not fanned out
+-- from the road width.
+LaneConfig.BASE_LANE_PITCH_STUDS = 80
+
+-- Lane i's BASE world X -- same evenly-spaced-around-ROAD_CENTER_X shape as
+-- laneCenterX above, just on BASE_LANE_PITCH_STUDS instead of the road's
+-- own pitch. At LANE_COUNT = 6 and BASE_LANE_PITCH_STUDS = 80 this gives
+-- centers -200, -120, -40, 40, 120, 200 -- derived from lane count and the
+-- base pitch, not six hand-picked literals, same reasoning as laneCenterX.
+function LaneConfig.baseLaneCenterX(laneIndex: number): number
+	local offsetFromCenter = (laneIndex - (LaneConfig.LANE_COUNT - 1) / 2) * LaneConfig.BASE_LANE_PITCH_STUDS
+	return LaneConfig.ROAD_CENTER_X + offsetFromCenter
+end
+
 return LaneConfig

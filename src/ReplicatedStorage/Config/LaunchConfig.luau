@@ -225,11 +225,11 @@ local LaunchConfig: LaunchConfig = {
 	-- point onRelease launches from -- before LaunchServer's proximity check
 	-- auto-mounts them. Deliberately modest: at tier 1 the seat's own rest
 	-- position already sits only SWING_PIVOT_Z - SWING_ROPE_LENGTH studs from
-	-- the pivot, and BaseGeometry.luau places each base's own front row only
-	-- BASE_ROW_START_STUDS (10) behind that same pivot -- too large a radius
-	-- here would make the seat's own idle position (or a player just
-	-- standing at their base) reach into mount range on its own. Kept small
-	-- enough to read as "you walked up to it," not "you were nearby."
+	-- the pivot -- too large a radius here would make the seat's own idle
+	-- position reach into mount range on its own. Kept small enough to read
+	-- as "you walked up to it," not "you were nearby." Each lane's base sits
+	-- much farther back than this (see BaseConfig.BASE_PLOT_CENTER_Z), so it
+	-- was never the binding constraint on this number.
 	SWING_MOUNT_RADIUS_STUDS = 5,
 	-- Where in the cycle (0-1, fraction of SWING_PERIOD_SECONDS) counts as the
 	-- sweet spot. 0.25 = the forward extreme of the arc, where the swing

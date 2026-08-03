@@ -1,13 +1,24 @@
 --!strict
--- Single source of truth for where a GIVEN player's base sits in world space
--- -- same role RunwayGeometry plays for the runway, extended to be
--- per-player: baseIndex (a stable, freed-on-leave slot -- see
--- PlayerProfile's allocateBaseIndex) is now also that player's LANE index
--- (see the written report -- six-lane pass 1: one parallel index, not two),
--- so a base's position is derived directly from that lane's own world X,
--- never from an offset fanned out from any specific swing instance.
--- PlayerProfile (which builds each base's visuals AND places slime parts
--- into it) is the only reader of this module.
+-- Single source of truth for where a GIVEN player's base -- and the plot of
+-- ground it sits on -- lives in world space, same role RunwayGeometry plays
+-- for the runway. baseIndex (a stable, freed-on-leave slot -- see
+-- PlayerProfile's allocateBaseIndex) is that player's LANE index; a base's
+-- position is derived from that lane's own BASE world X (LaneConfig.
+-- baseLaneCenterX -- a wider, independent pitch from the swing lanes, see
+-- the written report on the map blockout), never from an offset fanned out
+-- from any specific swing instance.
+--
+-- TWO KINDS OF CALLER now (map blockout pass): PlayerProfile (which builds
+-- each base's TEN SLOT PADS and places slime parts into it, per-player, on
+-- join -- reads slotPosition/slotPositions, unchanged shape from before)
+-- and MapBuilder.server.luau (which builds the STATIC plot dressing -- mat,
+-- central path, side/back edges -- for all LANE_COUNT lanes at server
+-- start, whether or not that lane's player has joined yet -- reads
+-- matPosition/centralPathPosition/sideEdgePositions/backEdgePosition, new
+-- this pass). Both kinds share the same baseX (LaneConfig.baseLaneCenterX)
+-- for a given lane -- there is still only one source of truth for a lane's
+-- own X, just two different Z schemes layered on top of it (the slot grid,
+-- and the plot that grid sits inside).
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -25,43 +36,22 @@ local BaseGeometry = {}
 -- RUNWAY_START_Z from Baseplate instead of a raw number.
 local groundY = baseplate.Position.Y + baseplate.Size.Y / 2
 
--- ===== Per-player block placement =====
--- Each player's base is a small BASE_GRID_COLUMNS-wide grid (see
--- slotPosition below), placed directly behind that SAME player's own lane:
--- X = that lane's own center (LaneConfig.laneCenterX(baseIndex) -- the
--- identical X their swing pivot sits at), Z = a fixed offset behind that
--- lane's own swing (LaneConfig.SWING_PIVOT_Z + BASE_ROW_START_STUDS).
---
--- BUG FIX (see the written report): this used to fan bases OUTWARD from a
--- single shared swing, alternating left/right and wrapping into new rows as
--- more players joined -- a scheme that only made sense when there was one
--- central swing to fan out from. There are up to LANE_COUNT independent
--- swings now, one per lane, so each base sits directly behind its OWN
--- lane's swing instead -- no side/column/row arithmetic left at all, and no
--- risk of two bases ever landing in the same place, since two players can
--- never share a lane index.
-local function blockOrigin(baseIndex: number): Vector3
-	local x = LaneConfig.laneCenterX(baseIndex)
-	local z = LaneConfig.SWING_PIVOT_Z + BaseConfig.BASE_ROW_START_STUDS
-	return Vector3.new(x, groundY, z)
-end
-
--- The world position of slot i (1-indexed) within the given player's base --
--- same inner grid math the old single shared base used, just centered on
--- THIS player's own block origin instead of one fixed point.
+-- ===== Slot grid: TEN pads, a real 2-column x 5-row grid (see BaseConfig.
+-- BASE_GRID_COLUMNS) -- X = baseX +-11 (half of BASE_SLOT_COLUMN_SPACING_
+-- STUDS), Z = BASE_SLOT_Z_START + row*BASE_SLOT_ROW_SPACING_STUDS (71, 85,
+-- 99, 113, 127). The world position of slot i (1-indexed) within the given
+-- player's base. =====
 function BaseGeometry.slotPosition(baseIndex: number, slotNumber: number): Vector3
-	local origin = blockOrigin(baseIndex)
+	local baseX = LaneConfig.baseLaneCenterX(baseIndex)
 	local columns = BaseConfig.BASE_GRID_COLUMNS
-	local spacing = BaseConfig.BASE_SLOT_SPACING_STUDS
-	local rows = math.ceil(BaseConfig.SLOT_COUNT / columns)
-	local halfWidth = (columns - 1) * spacing / 2
-	local halfDepth = (rows - 1) * spacing / 2
+	local columnSpacing = BaseConfig.BASE_SLOT_COLUMN_SPACING_STUDS
+	local halfWidth = (columns - 1) * columnSpacing / 2
 
 	local col = (slotNumber - 1) % columns
 	local row = (slotNumber - 1) // columns
-	local x = origin.X - halfWidth + col * spacing
-	local z = origin.Z - halfDepth + row * spacing
-	return Vector3.new(x, origin.Y, z)
+	local x = baseX - halfWidth + col * columnSpacing
+	local z = BaseConfig.BASE_SLOT_Z_START + row * BaseConfig.BASE_SLOT_ROW_SPACING_STUDS
+	return Vector3.new(x, groundY, z)
 end
 
 -- All SLOT_COUNT positions for one player's base, in slot order -- a
@@ -73,6 +63,37 @@ function BaseGeometry.slotPositions(baseIndex: number): { Vector3 }
 		positions[i] = BaseGeometry.slotPosition(baseIndex, i)
 	end
 	return positions
+end
+
+-- ===== Plot dressing: the mat, its central path, and the raised edges
+-- framing it -- all centred on BaseConfig.BASE_PLOT_CENTER_Z (104), except
+-- the back edge, which sits at its own BASE_BACK_EDGE_Z (146). Every Y is
+-- groundY (read from the Baseplate above, never hardcoded) plus that
+-- element's own offset -- see BaseConfig for why the central path's offset
+-- isn't simply size.Y/2 like the others. =====
+function BaseGeometry.matPosition(baseIndex: number): Vector3
+	local baseX = LaneConfig.baseLaneCenterX(baseIndex)
+	return Vector3.new(baseX, groundY + BaseConfig.BASE_MAT_Y_OFFSET, BaseConfig.BASE_PLOT_CENTER_Z)
+end
+
+function BaseGeometry.centralPathPosition(baseIndex: number): Vector3
+	local baseX = LaneConfig.baseLaneCenterX(baseIndex)
+	return Vector3.new(baseX, groundY + BaseConfig.BASE_PATH_Y_OFFSET, BaseConfig.BASE_PLOT_CENTER_Z)
+end
+
+-- Two side edges, one on each side of the plot -- returned as (left, right)
+-- so the caller never has to re-derive the +-offset itself.
+function BaseGeometry.sideEdgePositions(baseIndex: number): (Vector3, Vector3)
+	local baseX = LaneConfig.baseLaneCenterX(baseIndex)
+	local y = groundY + BaseConfig.BASE_SIDE_EDGE_Y_OFFSET
+	local left = Vector3.new(baseX - BaseConfig.BASE_SIDE_EDGE_X_OFFSET, y, BaseConfig.BASE_PLOT_CENTER_Z)
+	local right = Vector3.new(baseX + BaseConfig.BASE_SIDE_EDGE_X_OFFSET, y, BaseConfig.BASE_PLOT_CENTER_Z)
+	return left, right
+end
+
+function BaseGeometry.backEdgePosition(baseIndex: number): Vector3
+	local baseX = LaneConfig.baseLaneCenterX(baseIndex)
+	return Vector3.new(baseX, groundY + BaseConfig.BASE_BACK_EDGE_Y_OFFSET, BaseConfig.BASE_BACK_EDGE_Z)
 end
 
 return BaseGeometry
