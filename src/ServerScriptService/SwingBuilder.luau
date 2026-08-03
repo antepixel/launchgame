@@ -12,8 +12,11 @@
 -- FOUR-way varying brace style) had almost no depth at all (tier 1
 -- measured 3.8 studs deep against 14.4 tall) and four different
 -- unreproducible shapes to reason about; neither paid for its complexity.
--- There is no brace code path any more -- the A-frame's own two-legs-
--- per-side geometry IS the bracing.
+-- The A-frame's own two-legs-per-side geometry is still the PRIMARY
+-- bracing; the four-band visual scheme (see SwingTierVisuals.luau) layers
+-- explicit X-bracing (buildBraces) and beam collars (buildBeamCollars) on
+-- top of it at higher tiers, purely as surface detail -- neither changes
+-- the silhouette itself.
 --
 -- NO MODULE-LEVEL SINGLETON STATE: this module used to own one hardcoded
 -- Workspace.SwingPivot and one hardcoded "SwingStructure" folder, which
@@ -35,7 +38,7 @@
 -- still growing the arc's own RADIUS with the frame; LaunchConfig.
 -- SWING_ROPE_LENGTH itself, the base value that gets scaled, never
 -- changes). Every part this file creates is either purely decorative
--- (posts, beam, bracing, caps, pads, chain) or a REFERENCE POSE for the
+-- (posts, beam, bracing, collars, trim, pads, chain) or a REFERENCE POSE for the
 -- seat/chain (built at the swing's theta=0 rest position, corrected to the
 -- true live position on the very next client RenderStepped -- see
 -- LaunchClient.client.luau). Nothing here can feed back into the seat's
@@ -110,7 +113,8 @@ local function newPart(
 	material: Enum.Material,
 	color: Color3,
 	name: string,
-	parent: Instance
+	parent: Instance,
+	reflectance: number?
 ): Part
 	local part = Instance.new("Part")
 	part.Name = name
@@ -121,6 +125,7 @@ local function newPart(
 	part.CFrame = cf
 	part.Material = material
 	part.Color = color
+	part.Reflectance = reflectance or 0
 	part.Parent = parent
 	return part
 end
@@ -135,31 +140,31 @@ local function newRod(
 	material: Enum.Material,
 	color: Color3,
 	name: string,
-	parent: Instance
+	parent: Instance,
+	reflectance: number?
 ): Part
 	if shape == Enum.PartType.Cylinder then
 		local cf, length = cframeAlongX(pointA, pointB)
-		return newPart(shape, Vector3.new(length, thickness, thickness), cf, material, color, name, parent)
+		return newPart(shape, Vector3.new(length, thickness, thickness), cf, material, color, name, parent, reflectance)
 	end
 	local cf, length = cframeAlongY(pointA, pointB)
-	return newPart(shape, Vector3.new(thickness, length, thickness), cf, material, color, name, parent)
+	return newPart(shape, Vector3.new(thickness, length, thickness), cf, material, color, name, parent, reflectance)
 end
 
+-- Ground pad colour is always frameColor lerped 40% toward black -- exact
+-- per the approved four-band scheme, computed here rather than stored per
+-- tier so there is one formula, not eleven hand-copied results of it.
 local function groundPadMaterialColor(visual: SwingTierVisuals.TierVisual): (Enum.Material, Color3)
-	if visual.groundPad == "Dirt" then
-		return Enum.Material.Ground, Color3.fromRGB(90, 65, 40)
-	elseif visual.groundPad == "Concrete" then
-		return Enum.Material.Concrete, Color3.fromRGB(120, 120, 122)
-	elseif visual.groundPad == "Metal" then
-		return Enum.Material.DiamondPlate, Color3.fromRGB(150, 150, 158)
-	end
-	-- "Glow" pads keep the tier's own glowColor (per-tier colour preserved)
-	-- but on a SOLID material -- Neon here made the ground pad itself part
-	-- of "everything glowing solid", the same over-application this pass
-	-- fixes for the frame; the glow accent trim (GlowTrimBeam/GlowTrimLeg,
-	-- still hardcoded Neon just below) is where the glow is supposed to
-	-- live.
-	return Enum.Material.DiamondPlate, visual.glowColor
+	local color = visual.frameColor:Lerp(Color3.new(0, 0, 0), 0.4)
+	return visual.groundPadMaterial, color
+end
+
+-- Chain/seat colour is always frameColor lerped 22% toward (210,210,215),
+-- and their reflectance is always this tier's frame reflectance x 0.5 --
+-- same reasoning as groundPadMaterialColor above.
+local function chainSeatMaterialColor(visual: SwingTierVisuals.TierVisual): (Enum.Material, Color3, number)
+	local color = visual.frameColor:Lerp(Color3.fromRGB(210, 210, 215), 0.22)
+	return visual.chainSeatMaterial, color, visual.reflectance * 0.5
 end
 
 -- pivotPart: moved (Y only) to this tier's target height, X/Z left exactly
@@ -240,7 +245,7 @@ function SwingBuilder.build(tier: number, pivotPart: BasePart, parentFolder: Ins
 	local padThickness = math.max(0.6, postThickness * 0.3)
 	local function buildGroundPad(footPoint: Vector3, name: string)
 		local center = footPoint + Vector3.new(0, padThickness / 2, 0)
-		if visual.groundPad == "Metal" or visual.groundPad == "Glow" then
+		if visual.groundPadMaterial == Enum.Material.Slate then
 			local cf = cframeFacingAlongX(center, Vector3.new(0, 1, 0))
 			newPart(Enum.PartType.Cylinder, Vector3.new(padThickness, padDiameter, padDiameter), cf, padMaterial, padColor, name, parentFolder)
 		else
@@ -254,68 +259,144 @@ function SwingBuilder.build(tier: number, pivotPart: BasePart, parentFolder: Ins
 
 	-- ===== Legs: four total, each running from its own foot up to the
 	-- shared apex on its side. This IS the A-frame's bracing -- there is no
-	-- separate brace code path any more (see the written report). =====
-	newRod(foot1Front, apex1, postThickness, visual.postShape, visual.frameMaterial, visual.frameColor, "Leg1Front", parentFolder)
-	newRod(foot1Back, apex1, postThickness, visual.postShape, visual.frameMaterial, visual.frameColor, "Leg1Back", parentFolder)
-	newRod(foot2Front, apex2, postThickness, visual.postShape, visual.frameMaterial, visual.frameColor, "Leg2Front", parentFolder)
-	newRod(foot2Back, apex2, postThickness, visual.postShape, visual.frameMaterial, visual.frameColor, "Leg2Back", parentFolder)
-
-	-- ===== Caps: NO bare box ends anywhere -- every apex and beam end gets
-	-- a part sized larger than its cross-section. =====
-	local capSize = postThickness * 1.5
-	local function buildCap(point: Vector3, outward: Vector3, name: string)
-		if visual.capShape == Enum.PartType.Ball then
-			newPart(Enum.PartType.Ball, Vector3.new(capSize, capSize, capSize), CFrame.new(point), visual.frameMaterial, visual.frameColor, name, parentFolder)
-		elseif visual.capShape == Enum.PartType.Cylinder then
-			local cf = cframeFacingAlongX(point, outward)
-			newPart(Enum.PartType.Cylinder, Vector3.new(capSize * 0.5, capSize, capSize), cf, visual.frameMaterial, visual.frameColor, name, parentFolder)
-		else
-			newPart(Enum.PartType.Block, Vector3.new(capSize, capSize * 0.6, capSize), CFrame.new(point), visual.frameMaterial, visual.frameColor, name, parentFolder)
-		end
-	end
-	buildCap(apex1, Vector3.new(0, 1, 0), "Apex1Cap")
-	buildCap(apex2, Vector3.new(0, 1, 0), "Apex2Cap")
+	-- separate brace STYLE code path any more (see the written report);
+	-- X-bracing (below) adds visible cross struts on top of this, it never
+	-- replaces it. =====
+	newRod(foot1Front, apex1, postThickness, visual.postShape, visual.frameMaterial, visual.frameColor, "Leg1Front", parentFolder, visual.reflectance)
+	newRod(foot1Back, apex1, postThickness, visual.postShape, visual.frameMaterial, visual.frameColor, "Leg1Back", parentFolder, visual.reflectance)
+	newRod(foot2Front, apex2, postThickness, visual.postShape, visual.frameMaterial, visual.frameColor, "Leg2Front", parentFolder, visual.reflectance)
+	newRod(foot2Back, apex2, postThickness, visual.postShape, visual.frameMaterial, visual.frameColor, "Leg2Back", parentFolder, visual.reflectance)
 
 	-- ===== Beam -- overhangs each apex slightly, per real playground/
-	-- industrial frame proportion =====
+	-- industrial frame proportion. NO end caps and NO apex caps any more --
+	-- deliberately removed (see the written report): they read badly at
+	-- every tier, and were a separate code path from the rest of the frame
+	-- for no structural reason. =====
 	local beamStart = Vector3.new(apex1.X - beamOverhang, postTopY, centerZ)
 	local beamEnd = Vector3.new(apex2.X + beamOverhang, postTopY, centerZ)
-	newRod(beamStart, beamEnd, beamThickness, visual.beamShape, visual.frameMaterial, visual.frameColor, "Beam", parentFolder)
-	buildCap(beamStart, Vector3.new(1, 0, 0), "BeamCap1")
-	buildCap(beamEnd, Vector3.new(1, 0, 0), "BeamCap2")
+	newRod(beamStart, beamEnd, beamThickness, visual.beamShape, visual.frameMaterial, visual.frameColor, "Beam", parentFolder, visual.reflectance)
 
-	-- ===== Trim: hazard stripes (industrial), glow accent strips
-	-- (engineered/spectacular), or simple corner brackets (playground) --
-	-- never the same material as the frame, per "surface variety." Applied
-	-- to all FOUR legs now (used to be two posts) for even coverage. =====
-	if visual.hazardStripes then
-		local stripeCount = 6
-		for i = 0, stripeCount - 1 do
-			local segStart = beamStart:Lerp(beamEnd, i / stripeCount)
-			local segEnd = beamStart:Lerp(beamEnd, (i + 1) / stripeCount)
-			local stripeColor = if i % 2 == 0 then Color3.new(0.05, 0.05, 0.05) else visual.trimColor
-			newRod(segStart, segEnd, beamThickness * 1.2, Enum.PartType.Cylinder, visual.trimMaterial, stripeColor, "HazardStripe" .. i, parentFolder)
+	-- ===== X-bracing: two crossed struts per level, between the two legs
+	-- of ONE A-frame side. visual.braceCount levels per side, evenly
+	-- dividing that side's leg span from foot (t=0) to apex (t=1); each
+	-- level connects the front leg at the level's low end to the back leg
+	-- at its high end, and vice versa, so the pair crosses in an X.
+	--
+	-- CRITICAL: footFront/footBack/apex below are the ACTUAL foot and apex
+	-- points already computed above (foot1Front, apex1, etc.), never a
+	-- leg PART's own CFrame position -- a leg part is CENTRED on the
+	-- midpoint of its run, so ITS OWN Z offset from the swing centre is
+	-- only HALF the real foot spread. Lerping between the real foot and
+	-- apex points (as this does) sidesteps that trap entirely: the Z
+	-- component naturally interpolates from the true foot offset down to
+	-- zero at the apex, with no leg-part geometry involved at all. =====
+	local BRACE_THICKNESS_FACTOR = 0.02
+	local function buildBraces(footFront: Vector3, footBack: Vector3, apex: Vector3, sideName: string)
+		local count = visual.braceCount
+		if count <= 0 then
+			return
 		end
-	elseif visual.glowAccent then
-		local underOffset = Vector3.new(0, -beamThickness * 0.75, 0)
-		newRod(beamStart + underOffset, beamEnd + underOffset, beamThickness * 0.22, Enum.PartType.Cylinder, Enum.Material.Neon, visual.glowColor, "GlowTrimBeam", parentFolder)
-		local function glowTrimLeg(footPoint: Vector3, apex: Vector3, name: string)
-			newRod(pointAlongPost(footPoint, apex, 0.15), apex - Vector3.new(0, postThickness, 0), postThickness * 0.18, Enum.PartType.Cylinder, Enum.Material.Neon, visual.glowColor, name, parentFolder)
+		local braceThickness = postHeight * BRACE_THICKNESS_FACTOR
+		for i = 1, count do
+			local loT = (i - 1) / count
+			local hiT = i / count
+			local frontLo = footFront:Lerp(apex, loT)
+			local frontHi = footFront:Lerp(apex, hiT)
+			local backLo = footBack:Lerp(apex, loT)
+			local backHi = footBack:Lerp(apex, hiT)
+			newRod(frontLo, backHi, braceThickness, Enum.PartType.Cylinder, visual.frameMaterial, visual.accentColor, sideName .. "BraceA" .. i, parentFolder, visual.reflectance)
+			newRod(backLo, frontHi, braceThickness, Enum.PartType.Cylinder, visual.frameMaterial, visual.accentColor, sideName .. "BraceB" .. i, parentFolder, visual.reflectance)
 		end
-		glowTrimLeg(foot1Front, apex1, "GlowTrimLeg1Front")
-		glowTrimLeg(foot1Back, apex1, "GlowTrimLeg1Back")
-		glowTrimLeg(foot2Front, apex2, "GlowTrimLeg2Front")
-		glowTrimLeg(foot2Back, apex2, "GlowTrimLeg2Back")
-	else
-		local bracketSize = postThickness * 1.3
-		local function buildBracket(footPoint: Vector3, apex: Vector3, name: string)
-			newPart(Enum.PartType.Block, Vector3.new(bracketSize, bracketSize * 0.5, bracketSize), CFrame.new(pointAlongPost(footPoint, apex, 0.45)), visual.trimMaterial, visual.trimColor, name, parentFolder)
-		end
-		buildBracket(foot1Front, apex1, "Bracket1Front")
-		buildBracket(foot1Back, apex1, "Bracket1Back")
-		buildBracket(foot2Front, apex2, "Bracket2Front")
-		buildBracket(foot2Back, apex2, "Bracket2Back")
 	end
+	buildBraces(foot1Front, foot1Back, apex1, "Side1")
+	buildBraces(foot2Front, foot2Back, apex2, "Side2")
+
+	-- ===== Beam collars: cylinders encircling the beam, centred on it.
+	--
+	-- CRITICAL: a Cylinder's length axis is X and the beam already runs
+	-- along world X (beamStart/beamEnd only differ in X), so a collar
+	-- needs NO rotation at all -- CFrame.new(position) is already correct.
+	-- Rotating it 90 degrees would lay it flat across the beam as a tab
+	-- instead of encircling it. =====
+	local COLLAR_LENGTH_FACTOR = 0.022
+	local COLLAR_DIAMETER_FACTOR = 0.11
+	local COLLAR_SPACING_FACTOR = 0.16
+	local COLLAR_REFLECTANCE_BOOST = 0.08
+	local function buildBeamCollars()
+		local count = visual.collarCount
+		if count <= 0 then
+			return
+		end
+		local apexY = postHeight
+		local spacing = apexY * COLLAR_SPACING_FACTOR
+		local size = Vector3.new(apexY * COLLAR_LENGTH_FACTOR, apexY * COLLAR_DIAMETER_FACTOR, apexY * COLLAR_DIAMETER_FACTOR)
+		-- accentColor, not frameColor: in frameColor a collar is the same
+		-- colour as the beam it encircles and reads as invisible. Reflectance
+		-- is boosted above the tier's own frame reflectance for the same
+		-- reason -- a bolted metal collar should read as distinct from the
+		-- beam surface it's clamped onto, not blend into it.
+		for i = 0, count - 1 do
+			local offset = (i - (count - 1) / 2) * spacing
+			local center = Vector3.new(centerX + offset, postTopY, centerZ)
+			newPart(Enum.PartType.Cylinder, size, CFrame.new(center), visual.frameMaterial, visual.accentColor, "BeamCollar" .. (i + 1), parentFolder, visual.reflectance + COLLAR_REFLECTANCE_BOOST)
+		end
+	end
+	buildBeamCollars()
+
+	-- ===== Glow trim: ONE accentColor rod along the beam underside plus
+	-- one along each of the four legs. Thickness SCALES with the frame
+	-- (postThickness), not a flat constant -- beam trim postThickness*0.35,
+	-- leg trim postThickness*0.28, so trim reads thin at tier 1 and thick
+	-- at tier 11 same as everything else, instead of the same 0.36 studs
+	-- at every scale. Tiers 1-5 (glowAccent = false): frameMaterial,
+	-- opaque, frame reflectance -- "trim uses the frame material in
+	-- accentColor," no neon at all. Tiers 6-11 (glowAccent = true): Neon,
+	-- this tier's own glowTransparency, no reflectance (Neon ignores it).
+	-- No horizontal tie bar between the two A-frames -- deliberately not
+	-- built; it would run straight through the seat's swept arc at every
+	-- height that would look structural. =====
+	local BEAM_TRIM_THICKNESS_FACTOR = 0.35
+	local LEG_TRIM_THICKNESS_FACTOR = 0.28
+	local beamTrimThickness = postThickness * BEAM_TRIM_THICKNESS_FACTOR
+	local legTrimThickness = postThickness * LEG_TRIM_THICKNESS_FACTOR
+	local trimMaterial = if visual.glowAccent then Enum.Material.Neon else visual.frameMaterial
+	local trimReflectance = if visual.glowAccent then 0 else visual.reflectance
+	local function applyTrimTransparency(part: Part)
+		if visual.glowAccent then
+			part.Transparency = visual.glowTransparency
+		end
+	end
+
+	-- Industrial band (DiamondPlate frame, tiers 4-6) gets hazard banding
+	-- on the BEAM instead of the plain trim rod -- alternating accentColor/
+	-- near-black segments, sized slightly larger than the beam so they
+	-- read as a painted wrap. The single most recognisable industrial
+	-- signal, for the cost of 9 parts. Leg trim below is unaffected by
+	-- this -- only the beam's own trim swaps out.
+	local isIndustrialBand = visual.frameMaterial == Enum.Material.DiamondPlate
+	if isIndustrialBand then
+		local HAZARD_SEGMENT_COUNT = 9
+		local HAZARD_SEGMENT_THICKNESS = beamThickness * 1.2
+		local hazardDarkColor = Color3.fromRGB(28, 29, 33)
+		for i = 0, HAZARD_SEGMENT_COUNT - 1 do
+			local segStart = beamStart:Lerp(beamEnd, i / HAZARD_SEGMENT_COUNT)
+			local segEnd = beamStart:Lerp(beamEnd, (i + 1) / HAZARD_SEGMENT_COUNT)
+			local segColor = if i % 2 == 0 then visual.accentColor else hazardDarkColor
+			newRod(segStart, segEnd, HAZARD_SEGMENT_THICKNESS, Enum.PartType.Cylinder, visual.frameMaterial, segColor, "HazardBand" .. i, parentFolder, visual.reflectance)
+		end
+	else
+		local underOffset = Vector3.new(0, -beamThickness * 0.75, 0)
+		applyTrimTransparency(newRod(beamStart + underOffset, beamEnd + underOffset, beamTrimThickness, Enum.PartType.Cylinder, trimMaterial, visual.accentColor, "TrimBeam", parentFolder, trimReflectance))
+	end
+
+	local function buildLegTrim(footPoint: Vector3, apex: Vector3, name: string)
+		local part = newRod(pointAlongPost(footPoint, apex, 0.15), apex - Vector3.new(0, postThickness, 0), legTrimThickness, Enum.PartType.Cylinder, trimMaterial, visual.accentColor, name, parentFolder, trimReflectance)
+		applyTrimTransparency(part)
+	end
+	buildLegTrim(foot1Front, apex1, "TrimLeg1Front")
+	buildLegTrim(foot1Back, apex1, "TrimLeg1Back")
+	buildLegTrim(foot2Front, apex2, "TrimLeg2Front")
+	buildLegTrim(foot2Back, apex2, "TrimLeg2Back")
 
 	-- ===== Seat: a REFERENCE pose at the swing's theta=0 rest position --
 	-- corrected to the true live position on the very next client
@@ -333,6 +414,10 @@ function SwingBuilder.build(tier: number, pivotPart: BasePart, parentFolder: Ins
 	local effectiveRopeLength = SwingGeometry.ropeLengthForScale(heightScale)
 	local referenceSeatPosition = pivotPart.Position + Vector3.new(0, -effectiveRopeLength, 0)
 
+	-- Chain/seat material+colour+reflectance: one formula, shared by the
+	-- seat here and every chain link below (see chainSeatMaterialColor).
+	local chainSeatMaterial, chainSeatColor, chainSeatReflectance = chainSeatMaterialColor(visual)
+
 	local seatModel = Instance.new("Model")
 	seatModel.Name = "SwingSeat"
 
@@ -340,10 +425,11 @@ function SwingBuilder.build(tier: number, pivotPart: BasePart, parentFolder: Ins
 		Enum.PartType.Block,
 		Vector3.new(seatWidth, seatThickness, seatDepth),
 		CFrame.new(referenceSeatPosition),
-		visual.seatMaterial,
-		visual.seatColor,
+		chainSeatMaterial,
+		chainSeatColor,
 		"SeatCore",
-		seatModel
+		seatModel,
+		chainSeatReflectance
 	)
 	seatModel.PrimaryPart = seatCore
 
@@ -373,7 +459,7 @@ function SwingBuilder.build(tier: number, pivotPart: BasePart, parentFolder: Ins
 	-- swing seat that grows a chair back and side rails at high tiers reads
 	-- as a chair, not a swing. ONE shape now, every tier: SeatCore itself,
 	-- a flat plank, sized by footprintScale like the rest of the frame.
-	-- Materials and colours (visual.seatMaterial/seatColor, set on SeatCore
+	-- Material and colour (chainSeatMaterial/chainSeatColor, set on SeatCore
 	-- above) still vary per tier -- only the SHAPE stopped varying.
 	--
 	-- The two SeatKnot balls that used to sit here (one per side, at
@@ -443,7 +529,7 @@ function SwingBuilder.build(tier: number, pivotPart: BasePart, parentFolder: Ins
 			beam.Name = "EnergyTether" .. sideName
 			beam.Attachment0 = anchorAttachment
 			beam.Attachment1 = seatAttachment
-			beam.Color = ColorSequence.new(visual.chainColor)
+			beam.Color = ColorSequence.new(chainSeatColor)
 			beam.LightEmission = 1
 			beam.Width0 = postThickness * 0.4
 			beam.Width1 = postThickness * 0.22
@@ -463,9 +549,9 @@ function SwingBuilder.build(tier: number, pivotPart: BasePart, parentFolder: Ins
 					if twisted then
 						cf = cf * CFrame.Angles(0, math.rad(90), 0)
 					end
-					link = newPart(Enum.PartType.Block, Vector3.new(chainThickness, length, chainThickness * 0.5), cf, visual.chainMaterial, visual.chainColor, sideName .. "ChainLink" .. i, chainLinksFolder)
+					link = newPart(Enum.PartType.Block, Vector3.new(chainThickness, length, chainThickness * 0.5), cf, chainSeatMaterial, chainSeatColor, sideName .. "ChainLink" .. i, chainLinksFolder, chainSeatReflectance)
 				else
-					link = newRod(segStart, segEnd, chainThickness, Enum.PartType.Cylinder, visual.chainMaterial, visual.chainColor, sideName .. "ChainLink" .. i, chainLinksFolder)
+					link = newRod(segStart, segEnd, chainThickness, Enum.PartType.Cylinder, chainSeatMaterial, chainSeatColor, sideName .. "ChainLink" .. i, chainLinksFolder, chainSeatReflectance)
 				end
 				link:SetAttribute("ChainIndex", i)
 				link:SetAttribute("Side", sideName)

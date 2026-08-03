@@ -27,6 +27,7 @@ export type LaunchConfig = {
 	SWING_ROPE_LENGTH: number,
 	SWING_BASE_PIVOT_HEIGHT_ABOVE_GROUND: number,
 	RIDER_SEAT_HEIGHT_OFFSET: number,
+	SWING_MOUNT_RADIUS_STUDS: number,
 	SWEET_SPOT_PHASE: number,
 	SWEET_SPOT_WIDTH: number,
 	RUNWAY_BAND_LENGTH_STUDS: number,
@@ -218,6 +219,18 @@ local LaunchConfig: LaunchConfig = {
 	-- horizontal -- see the written report for how that was verified, not
 	-- assumed.
 	RIDER_SEAT_HEIGHT_OFFSET = 2.0,
+	-- Studs: how close a GROUNDED player's HumanoidRootPart must come to
+	-- their OWN swing seat's CURRENT (moving) position -- swingSeatPosition
+	-- (swingTheta(swingPhase(laneIndex)), pivot), the exact same closed-form
+	-- point onRelease launches from -- before LaunchServer's proximity check
+	-- auto-mounts them. Deliberately modest: at tier 1 the seat's own rest
+	-- position already sits only SWING_PIVOT_Z - SWING_ROPE_LENGTH studs from
+	-- the pivot, and BaseGeometry.luau places each base's own front row only
+	-- BASE_ROW_START_STUDS (10) behind that same pivot -- too large a radius
+	-- here would make the seat's own idle position (or a player just
+	-- standing at their base) reach into mount range on its own. Kept small
+	-- enough to read as "you walked up to it," not "you were nearby."
+	SWING_MOUNT_RADIUS_STUDS = 5,
 	-- Where in the cycle (0-1, fraction of SWING_PERIOD_SECONDS) counts as the
 	-- sweet spot. 0.25 = the forward extreme of the arc, where the swing
 	-- momentarily pauses before reversing -- chosen deliberately over the center

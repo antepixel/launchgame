@@ -884,8 +884,34 @@ end
 
 -- ===== State =====
 local canRelease = true
+-- AUTOMATIC PROXIMITY MOUNTING (see the written report): true only between
+-- this client's own RidingAssigned (server-side proximity mount) and the
+-- moment its own flight starts -- the local replacement for the old
+-- anchor-implied "am I riding" gate the RenderStepped loop used to infer
+-- from canRelease/flightActive alone. While false, this character is NEVER
+-- PivotTo'd by this script -- normal Humanoid movement drives it, exactly
+-- like a grounded, not-yet-mounted (or already-dismounted) player. Reset to
+-- false on every fresh CharacterAdded (see below) so a respawn -- e.g. after
+-- dying mid-ride, which the server also resets to "grounded" for, see
+-- LaunchServer.server.luau's clearActiveRider -- never leaves a stale true
+-- behind that would otherwise PivotTo a brand-new character onto a seat the
+-- server no longer thinks it owns.
+local mounted = false
+
+player.CharacterAdded:Connect(function()
+	mounted = false
+end)
 
 local function doRelease()
+	-- Refuse while not actually seated -- pressing Release/Space while just
+	-- walking around (never mounted, or already dismounted after a flight)
+	-- must be a complete no-op: the server's own onRelease already rejects
+	-- a release from a non-"riding" state, but withOUT this local guard the
+	-- HUD would still flip canRelease false and freeze on "0.0 studs" as if
+	-- a flight had started, then never recover -- ResetReady/FlightStarted,
+	-- the only two things that ever flip canRelease back, would never
+	-- arrive, since the server never entered a flight for this press.
+	--
 	-- BUG FIX (see written report): also refuse while a PREVIOUS flight's local
 	-- animation is still counting up. canRelease alone isn't enough to prevent
 	-- this -- ResetReady and this client's own flight-completion are governed by
@@ -895,7 +921,7 @@ local function doRelease()
 	-- naturally cleared. Firing a second Release in that window would overwrite
 	-- the still-displaying flight's distance/duration/start data with the new
 	-- one's, abandoning the first flight's true final number mid-count.
-	if not canRelease or flightActive then
+	if not mounted or not canRelease or flightActive then
 		return
 	end
 
@@ -998,6 +1024,14 @@ end)
 -- the server to reset, occasionally letting a second release overwrite the
 -- first flight's still-incomplete display (see doRelease's guard above too).
 flightStartedRemote.OnClientEvent:Connect(function(distance: number, archHeight: number, duration: number, startPosition: Vector3, startTime: number, luck: number)
+	-- No longer "riding" the instant a flight starts -- see the `mounted`
+	-- declaration above. The RenderStepped loop below is about to take over
+	-- positioning this character from trajectoryCFrame instead, and once the
+	-- flight ends the server puts this player back in "grounded" (via
+	-- box/cooldown, see LaunchServer.server.luau), not straight back onto
+	-- the seat -- so nothing should try to PivotTo them onto the seat again
+	-- until a fresh RidingAssigned actually arrives.
+	mounted = false
 	flightDistance = distance
 	flightArcHeight = archHeight
 	flightDuration = duration
@@ -1118,14 +1152,17 @@ slimeRevealedRemote.OnClientEvent:Connect(function(globalIndex: number, isNew: b
 end)
 
 ridingAssignedRemote.OnClientEvent:Connect(function()
-	-- Ack readiness -- see LaunchServer.server.luau's setupCharacter
-	-- watchdog. Reaching this line at all already proves every WaitForChild
-	-- gate above succeeded and this script is listening/about to drive the
-	-- character every RenderStepped, which is exactly what the server is
-	-- asking about. Every player owns their own lane unconditionally now
-	-- (six-lane pass 2), so there is no longer an `isRider` flag to set here
-	-- -- the RidingAssigned/RiderReady pair itself is kept, unchanged, as the
-	-- fail-open watchdog handshake it always was.
+	-- The server just auto-mounted THIS client's character onto its own
+	-- swing seat (see LaunchServer.server.luau's mountPlayer -- automatic
+	-- proximity mounting, no button/prompt/keypress involved). This is the
+	-- one and only place `mounted` is set true -- see its declaration above
+	-- for every place it goes false again.
+	mounted = true
+
+	-- Ack readiness -- see LaunchServer.server.luau's mountPlayer watchdog.
+	-- Reaching this line at all already proves every WaitForChild gate above
+	-- succeeded and this script is listening/about to drive the character
+	-- every RenderStepped, which is exactly what the server is asking about.
 	riderReadyRemote:FireServer()
 end)
 
@@ -1177,13 +1214,20 @@ RunService:BindToRenderStep(RENDER_STEP_NAME, Enum.RenderPriority.Camera.Value -
 	-- rate Roblox batches property replication (well under 60Hz), which read as
 	-- stutter. Now this client positions its OWN character locally, every
 	-- RenderStepped, from the exact same swing math -- full render-rate
-	-- smoothness, no network dependency. Every player owns their own lane
-	-- unconditionally (six-lane pass 2), so there is no more `isRider` gate --
-	-- this always runs for this client's own character. Still gated on
-	-- canRelease so this doesn't run during the brief post-landing cooldown
-	-- window, when the character should still be standing at the landing spot,
-	-- not already back on the swing.
-	if canRelease and not flightActive then
+	-- smoothness, no network dependency.
+	--
+	-- AUTOMATIC PROXIMITY MOUNTING (see the written report): gated on
+	-- `mounted` now, not `canRelease` -- canRelease alone used to double as
+	-- "am I riding" because riding WAS the default/rest state, but that's no
+	-- longer true (the default/rest state is grounded, driven by the normal
+	-- Humanoid controller, never PivotTo). `mounted` is the explicit local
+	-- flag for exactly this: true only from this client's own RidingAssigned
+	-- until its own flight starts (see `mounted`'s declaration above) --
+	-- while false, this character is NEVER PivotTo'd here, so a grounded
+	-- player (including the whole post-landing box/cooldown window, and
+	-- every moment before ever mounting for the first time) is driven
+	-- entirely by ordinary walking.
+	if mounted and not flightActive then
 		local character = player.Character
 		if character then
 			character:PivotTo(riderCFrame(seatPosition))
@@ -1234,7 +1278,10 @@ RunService:BindToRenderStep(RENDER_STEP_NAME, Enum.RenderPriority.Camera.Value -
 		return
 	end
 
-	if not canRelease then
+	-- Bar/multiplier HUD is riding-only now, same as the character-positioning
+	-- gate above -- a grounded player walking to their base/the shop has
+	-- nothing to release, so there's nothing useful for this readout to show.
+	if not mounted or not canRelease then
 		return
 	end
 	renderBarForPhase(phase)

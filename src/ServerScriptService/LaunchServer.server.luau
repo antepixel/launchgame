@@ -783,7 +783,15 @@ local function fireLaunchBurst(rootPart: BasePart, visual: SwingTierVisuals.Tier
 	end)
 end
 
-type LoopState = "riding" | "inflight" | "box" | "cooldown"
+-- "grounded" (NEW -- automatic proximity mounting): the default state, both
+-- at spawn and after every reset. A grounded character is walked around by
+-- the normal Humanoid controller like any other Roblox character -- nothing
+-- server- or client-side ever PivotTo's it. The ONLY way OUT of "grounded"
+-- is the proximity-mount check below (walking within
+-- LaunchConfig.SWING_MOUNT_RADIUS_STUDS of THIS player's OWN swing seat),
+-- which moves them straight to "riding" -- there is no button, prompt, or
+-- keypress involved. See the written report for the full state machine.
+type LoopState = "grounded" | "riding" | "inflight" | "box" | "cooldown"
 
 -- Every connected player owns their own lane for the whole session (six-lane
 -- pass 2) -- no more shared rider slot, so each of these is now a table
@@ -918,7 +926,11 @@ local function clearActiveRider(player: Player)
 	activeFlights[player] = nil
 	activeBoxes[player] = nil
 	riderReadyFlags[player] = nil
-	states[player] = "riding"
+	-- "grounded", not "riding": this player has no character right now (or is
+	-- about to get a fresh one, see setupCharacter) -- there is nothing to
+	-- anchor them to, and a fresh/respawned character always starts grounded
+	-- regardless of what they were doing before (see the written report).
+	states[player] = "grounded"
 	-- BUG FIX (see the written report -- six-lane pass 1): this used to
 	-- reset the ONE shared swing to a baseline tier-1 look here, since
 	-- "nobody riding" meant the single swing had no owner's tier to show.
@@ -937,25 +949,23 @@ end
 -- different players' own reset timers can fire at any two overlapping
 -- instants and never stomp each other, since each one only ever touches its
 -- own captured landedPlayer's own table entry.
-local function scheduleReset(landedPlayer: Player, landedCharacter: Model)
+-- BUG FIX (see the written report -- automatic proximity mounting): this
+-- used to unconditionally re-anchor the landed character and turn its
+-- AutoRotate back off here, snapping them back onto the swing wherever they
+-- happened to be standing after the post-landing window -- that made sense
+-- when "riding" was the default/rest state everyone returned to. Now the
+-- rest state is "grounded": the character is ALREADY unanchored with
+-- AutoRotate on (see the Heartbeat landing handler below, which sets both
+-- the instant the flight itself ends, well before this fires) and free to
+-- walk wherever the player wants -- toward their base, the shop, back to
+-- their own swing, whatever. This function's only remaining job is the
+-- state flip and the client-facing "you can release again" signal; it must
+-- not touch the character's position/anchoring/AutoRotate at all, or a
+-- player who wandered off during the box/cooldown window would be yanked
+-- back and frozen mid-walk the instant this timer fires.
+local function scheduleReset(landedPlayer: Player, _landedCharacter: Model)
 	task.delay(LaunchConfig.RESET_DELAY, function()
-		if landedPlayer.Character == landedCharacter and landedCharacter.Parent then
-			local humanoid = landedCharacter:FindFirstChildOfClass("Humanoid")
-			local rootPart = humanoid and humanoid.RootPart
-			if rootPart then
-				rootPart.AssemblyLinearVelocity = Vector3.zero
-				rootPart.AssemblyAngularVelocity = Vector3.zero
-				-- Re-anchor: back to "riding," where the CLIENT takes over
-				-- positioning again (see setupCharacter's comment) -- nothing
-				-- server-side will reposition this part again until the next
-				-- release, so it must not be free to fall in the meantime.
-				rootPart.Anchored = true
-			end
-			if humanoid then
-				humanoid.AutoRotate = false
-			end
-		end
-		states[landedPlayer] = "riding"
+		states[landedPlayer] = "grounded"
 		if landedPlayer.Parent then
 			resetReadyRemote:FireClient(landedPlayer)
 		end
@@ -966,22 +976,29 @@ end
 -- disabling, the Freefall state-fight, and the fall-damage guard from the
 -- physics-flight pass are ALL GONE (see the written report) -- flight is now
 -- fully scripted with the root part anchored, so there is no physics event left
--- for any of those to fight. AutoRotate stays off continuously from spawn: the
--- rider's character is kinematically repositioned CLIENT-SIDE now, both while
--- riding and while flying (see the written report for the flight half of that),
--- and AutoRotate fighting that is still exactly the kind of jitter the
--- camera-whip fix several passes ago was written to avoid.
--- Bounded grace period for a freshly-anchored rider's OWN LaunchClient to
--- fire RiderReady (see setupCharacter's watchdog below) -- generous enough
--- to comfortably cover normal loading variance (including LaunchClient's
--- own up-to-10-second bounded WaitForChild chain, see LaunchClient.client.
+-- for any of those to fight.
+--
+-- AUTOMATIC PROXIMITY MOUNTING (see the written report): a character no
+-- longer starts anchored, and AutoRotate is no longer forced off here --
+-- every character spawns "grounded" and is walked around by the ordinary
+-- Humanoid controller, exactly like any other Roblox character. mountPlayer
+-- below is the ONLY place that ever anchors the root / turns AutoRotate off
+-- (kinematic PivotTo control while riding or flying fights AutoRotate --
+-- same jitter reasoning the client's own comments give); the Heartbeat
+-- landing handler is what turns both back the other way the instant a
+-- flight ends.
+--
+-- Bounded grace period for a freshly-mounted rider's OWN LaunchClient to
+-- fire RiderReady (see mountPlayer's watchdog below) -- generous enough to
+-- comfortably cover normal loading variance (including LaunchClient's own
+-- up-to-10-second bounded WaitForChild chain, see LaunchClient.client.
 -- luau's REMOTES_WAIT_TIMEOUT_SECONDS) without leaving a genuinely broken
--- client's rider stuck for long.
+-- client's rider stuck for long. A module-level constant (not local to
+-- mountPlayer) since mountPlayer's own warn() below reads it too.
 local RIDER_READY_TIMEOUT_SECONDS = 15
 
 local function setupCharacter(player: Player, character: Model)
 	local humanoid = character:WaitForChild("Humanoid") :: Humanoid
-	humanoid.AutoRotate = false
 
 	-- Captured once, right away, before this character's joints have ever
 	-- been touched by applyFlightPose -- see the bug-fix comment on
@@ -1004,58 +1021,83 @@ local function setupCharacter(player: Player, character: Model)
 	-- the whole session -- there is no more shared slot to claim, so this is
 	-- no longer gated behind "is anyone else already riding." Runs every
 	-- time, for every player, on every CharacterAdded (including a respawn).
+	--
+	-- AUTOMATIC PROXIMITY MOUNTING: every character starts "grounded," full
+	-- stop -- no anchor, no RidingAssigned, no watchdog started here. Nothing
+	-- in this file touches this character again until either it walks within
+	-- LaunchConfig.SWING_MOUNT_RADIUS_STUDS of its OWN swing seat (see the
+	-- proximity check in the Heartbeat loop below, which is what actually
+	-- calls mountPlayer) or it dies/leaves.
 	activeCharacters[player] = character
+	states[player] = "grounded"
+	riderReadyFlags[player] = false
+
+	-- Refresh THIS player's own swing visuals to their currently-owned tier
+	-- the moment their character exists -- see applySwingVisualForTier
+	-- above. Mostly redundant with the per-lane lifecycle's own initial
+	-- build (buildPlayerSwing already built this exact player's own pivot/
+	-- folder at this exact tier the moment they were assigned a lane, well
+	-- before a character can load) -- kept as a defensive refresh, and
+	-- skipped gracefully (not an error) on the rare chance this player's
+	-- own lane pivot somehow isn't built yet: the per-lane lifecycle will
+	-- still finish building it correctly moments later regardless.
+	local ownPivot = playerSwingPivots[player]
+	local ownFolder = playerSwingFolders[player]
+	if ownPivot and ownFolder then
+		applySwingVisualForTier(PlayerProfile.getSwingTier(player), ownPivot, ownFolder)
+	end
+end
+
+-- Seats a GROUNDED player onto THEIR OWN swing -- see the written report.
+-- This is the entire mount interaction: no button, no ProximityPrompt, no
+-- keypress. Called ONLY from the proximity check in the Heartbeat loop
+-- below, and only ever with pivot/phase already resolved for THIS exact
+-- player from THIS player's own playerSwingPivots entry -- see that call
+-- site for why a player can never be mounted onto anyone else's swing (there
+-- is no code path here, or anywhere upstream of here, that reads a
+-- DIFFERENT player's pivot for this player's mount).
+local function mountPlayer(player: Player, character: Model, humanoid: Humanoid, rootPart: BasePart, pivot: BasePart, phase: number)
 	states[player] = "riding"
 	riderReadyFlags[player] = false
-	-- The server no longer repositions the rider every Heartbeat (that's the
-	-- bug-2 fix -- the CLIENT now drives this visually, every RenderStepped,
-	-- from the same shared swing math). Anchoring the root is what keeps the
-	-- character from just falling now that nothing server-side is holding it
-	-- in place frame to frame; the client is free to set an anchored part's
-	-- CFrame locally without anything fighting it, since the server simply
-	-- never writes to it while riding.
-	local rootPart = humanoid.RootPart
-	if rootPart then
-		rootPart.Anchored = true
-	end
-	-- Show THIS rider's own tier the moment they claim the seat -- see
-	-- applySwingVisualForTier above. Mostly redundant with the per-lane
-	-- lifecycle's own initial build (buildPlayerSwing already built this
-	-- exact player's own pivot/folder at this exact tier the moment they
-	-- were assigned a lane, well before a character can load and claim
-	-- this slot) -- kept as a defensive refresh, and skipped gracefully
-	-- (not an error) on the rare chance this player's own lane pivot
-	-- somehow isn't built yet: the per-lane lifecycle will still finish
-	-- building it correctly moments later regardless.
-	local claimPivot = playerSwingPivots[player]
-	local claimFolder = playerSwingFolders[player]
-	if claimPivot and claimFolder then
-		applySwingVisualForTier(PlayerProfile.getSwingTier(player), claimPivot, claimFolder)
-	end
+
+	-- Same reasoning the old always-anchored-at-spawn version used: the
+	-- CLIENT drives this part's CFrame every RenderStepped once riding (see
+	-- LaunchClient.client.luau), so nothing server-side may write to it
+	-- again until the next release/landing -- anchoring is what keeps it
+	-- from just falling in the meantime, and turning AutoRotate off is what
+	-- keeps the humanoid's own controller from fighting that kinematic
+	-- control (same jitter reasoning as always).
+	humanoid.AutoRotate = false
+	rootPart.Anchored = true
+
+	-- Snap straight onto the seat's CURRENT position -- the exact same
+	-- swingSeatPosition(swingTheta(phase), pivot) + seat-height-offset math
+	-- onRelease uses for a flight's own startPosition, so mounting mid-swing
+	-- lands the rider exactly where the seat visually is, not at some
+	-- reference rest pose.
+	local seatPosition = swingSeatPosition(swingTheta(phase), pivot) + Vector3.new(0, LaunchConfig.RIDER_SEAT_HEIGHT_OFFSET, 0)
+	character:PivotTo(CFrame.lookAt(seatPosition, seatPosition + Vector3.new(0, 0, -1)))
+
 	ridingAssignedRemote:FireClient(player)
 
 	-- BUG FIX (see the written report): the anchor above assumes THIS
-	-- player's LaunchClient will come up and start driving the seat/
-	-- character every RenderStepped. If it never does -- a hung or
-	-- failed client-side WaitForChild, a disconnect mid-load, anything
+	-- player's LaunchClient is alive and already listening for
+	-- RidingAssigned. If it never acknowledges -- a hung or failed
+	-- client-side WaitForChild, a disconnect right as this fires, anything
 	-- -- the root stays anchored FOREVER with nothing server-side ever
-	-- moving or freeing it: a player stuck in place, unable to move,
-	-- with no way out. This bounded watchdog is the recovery: if THIS
-	-- exact rider/character (captured below, not re-read from the
-	-- per-player tables at fire time) hasn't acknowledged readiness
-	-- within RIDER_READY_TIMEOUT_SECONDS, fail OPEN -- unanchor so the
-	-- player at least regains ordinary movement, rather than staying
-	-- frozen indefinitely. Self-invalidating by construction: if this
-	-- rider legitimately released, left, or got cleared before the
-	-- timeout fires, activeCharacters[watchedPlayer] will have moved on
-	-- (or riderReadyFlags[watchedPlayer] will already be true) and this
-	-- no-ops -- and since every table here is keyed by Player, this
-	-- watchdog can only ever act on watchedPlayer's OWN entry, never
-	-- another concurrently-watched player's. Deliberately NOT a plain
-	-- timer that fires regardless of activity -- a real player who just
-	-- hasn't released yet within 15 seconds is fine and must not be
-	-- yanked off the swing; the ack is about the CLIENT being alive, not
-	-- about how fast the player plays.
+	-- moving or freeing it: a player stuck in place, unable to move, with no
+	-- way out. This bounded watchdog is the recovery: if THIS exact
+	-- rider/character (captured below, not re-read from the per-player
+	-- tables at fire time) hasn't acknowledged readiness within
+	-- RIDER_READY_TIMEOUT_SECONDS, fail OPEN -- unanchor so the player at
+	-- least regains ordinary movement, rather than staying frozen
+	-- indefinitely. Self-invalidating by construction: if this rider
+	-- legitimately released, left, or got cleared before the timeout fires,
+	-- activeCharacters[watchedPlayer] will have moved on (or
+	-- riderReadyFlags[watchedPlayer] will already be true) and this no-ops
+	-- -- and since every table here is keyed by Player, this watchdog can
+	-- only ever act on watchedPlayer's OWN entry, never another
+	-- concurrently-watched player's.
 	local watchedPlayer, watchedCharacter = player, character
 	task.delay(RIDER_READY_TIMEOUT_SECONDS, function()
 		if activeCharacters[watchedPlayer] ~= watchedCharacter or riderReadyFlags[watchedPlayer] then
@@ -1302,7 +1344,72 @@ end)
 -- in their own loop iteration, reading and writing only that iteration's own
 -- `player` key in every per-player table -- one player's landing can never
 -- see or touch another's.
+-- ===== Automatic proximity mounting (see the written report) =====
+-- DETECTION CHOICE: a plain distance check against the seat's own
+-- closed-form position, run right here in the already-existing Heartbeat
+-- loop, scoped to players currently "grounded" -- not a Touched-based
+-- physics trigger, and not a spatial query (Workspace:GetPartBoundsInRadius/
+-- Region3). Two reasons:
+--   1. There is no server-owned PART that ever sits at the seat's live,
+--      swinging position to attach a trigger/query to in the first place.
+--      SeatCore is Anchored (see SwingBuilder.luau) and its CFrame is set
+--      every RenderStepped by the RIDING PLAYER'S OWN CLIENT, purely
+--      locally, for smoothness (see LaunchClient.client.luau) -- the server
+--      never positions it and has no authoritative moving Instance to query
+--      against. swingSeatPosition(swingTheta(phase), pivot) IS the seat's
+--      true position, already computed from nothing but server time and the
+--      (stationary) pivot -- reading it directly is cheaper and MORE
+--      authoritative than building and continuously repositioning a second,
+--      purely-for-detection trigger part just so Touched/GetPartBoundsInRadius
+--      has something physical to test against.
+--   2. "Don't loop over every player" is the right instinct for a game with
+--      an unbounded population, but LaneConfig.LANE_COUNT (6) is a HARD cap
+--      on concurrent players here (Players.MaxPlayers, see LaneConfig.luau)
+--      -- so "every player" is never more than 6 entries, and this loop only
+--      even reaches the distance math for whichever subset of those 6 are
+--      currently "grounded" (riding/flying/boxing players are skipped
+--      immediately). That's a fixed, tiny amount of work every frame, not a
+--      scaling concern -- there is no larger population this could ever
+--      need to hold up against.
+-- OWNERSHIP: this loop reads playerSwingPivots[player] -- THIS iteration's
+-- own player, always -- and PlayerProfile.getBaseIndex(player), same. There
+-- is no step anywhere in this check that compares one player's position
+-- against another player's pivot, so a player can structurally never be
+-- mounted onto a swing that isn't their own, independent of proximity.
+local function checkProximityMounts()
+	for _, player in Players:GetPlayers() do
+		if states[player] ~= "grounded" then
+			continue
+		end
+		local character = activeCharacters[player]
+		if not character then
+			continue
+		end
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if not humanoid or humanoid.Health <= 0 then
+			continue
+		end
+		local rootPart = humanoid.RootPart
+		if not rootPart then
+			continue
+		end
+		local pivot = playerSwingPivots[player]
+		local laneIndex = PlayerProfile.getBaseIndex(player)
+		if not pivot or laneIndex == nil then
+			continue
+		end
+
+		local phase = swingPhase(laneIndex)
+		local seatPosition = swingSeatPosition(swingTheta(phase), pivot)
+		if (rootPart.Position - seatPosition).Magnitude <= LaunchConfig.SWING_MOUNT_RADIUS_STUDS then
+			mountPlayer(player, character, humanoid, rootPart, pivot, phase)
+		end
+	end
+end
+
 RunService.Heartbeat:Connect(function()
+	checkProximityMounts()
+
 	local now = Workspace:GetServerTimeNow()
 	for player, flight in activeFlights do
 		if states[player] ~= "inflight" then
@@ -1331,7 +1438,7 @@ RunService.Heartbeat:Connect(function()
 			-- activeCharacters[player] also set (see onRelease) -- this
 			-- can't actually happen, but keeps the type checker honest
 			-- instead of asserting it away.
-			states[player] = "riding"
+			states[player] = "grounded"
 			continue
 		end
 

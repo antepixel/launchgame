@@ -6,31 +6,29 @@
 -- tier, indexed 1-11 same as SWING_TIER_DISTANCE_SCALE/ShopConfig.SWING_
 -- TIER_PRICES -- must stay exactly as many entries as those two.
 --
--- FOUR BANDS, each a genuinely different STRUCTURE, not a recolour of the
--- same four boxes -- see SwingBuilder.server.luau, which reads every field
--- below to construct (and, on a tier change, completely rebuild) the swing
--- from ~20-40 parts:
---   1-3   Playground -- wooden A-frame, rope, weathered colours, small.
---   4-6   Industrial -- vertical steel poles, bolted gussets, chain-link
---         seat chain, hazard stripes, taller/heavier.
---   7-9   Engineered -- sleek chrome/foil, glowing accent trim, contoured
---         seat, thick rod "chain", cleaner and larger.
---   10-11 Spectacular -- neon, a floating seat, glowing energy tether
---         instead of a chain, enormous.
--- Within a band, only scale/colour/detail-count differ -- see the written
--- report for why every tier still visibly changes something even when the
--- band (and therefore the SHAPE) stays the same.
+-- FOUR MATERIAL BANDS (approved four-band scheme -- exact per-tier values,
+-- not a reinterpretation): the frame darkens per tier WITHIN a band so no
+-- two tiers are identical, and both material and accentColor change
+-- completely ACROSS a band boundary -- see SwingBuilder.luau, which reads
+-- every field below to construct (and, on a tier change, completely
+-- rebuild) the swing:
+--   1-3   Wood -- weathered brown, darkens tier to tier.
+--   4-6   Industrial steel (DiamondPlate) -- cool grey, warm gold accent.
+--   7-9   Engineered titanium (Metal) -- bright silver, blue accent.
+--   10-11 Obsidian (Metal) -- near-black, violet accent, full neon trim.
+-- The A-FRAME SILHOUETTE itself (scale, postAngleDegrees, postShape,
+-- beamShape) is UNCHANGED by this scheme and must stay that way -- see the
+-- written report on the A-frame rebuild this scheme was layered on top of.
 local SwingTierVisuals = {}
 
-export type BraceStyle = "ARung" | "CrossGusset" | "DiagonalGusset" | "Strut"
 export type ChainStyle = "Rope" | "Chain" | "Rod" | "Energy"
-export type GroundPad = "Dirt" | "Concrete" | "Metal" | "Glow"
 
 export type TierVisual = {
 	-- ===== Frame proportions ===== all in studs/degrees BEFORE `scale` is
 	-- applied -- see SwingBuilder.build, which multiplies every dimension by
 	-- `scale` uniformly so the whole structure grows together, never just
-	-- one axis.
+	-- one axis. MUST NOT CHANGE as part of the four-band visual scheme --
+	-- the A-frame silhouette is a separate, frozen concern.
 	scale: number,
 	-- Degrees each post splays outward from vertical at the BOTTOM (0 = dead
 	-- vertical steel/chrome column; >0 = classic A-frame). The post's TOP
@@ -39,28 +37,45 @@ export type TierVisual = {
 	postAngleDegrees: number,
 	postShape: Enum.PartType,
 	beamShape: Enum.PartType,
-	capShape: Enum.PartType,
-	braceStyle: BraceStyle,
+
+	-- ===== X-bracing -- two crossed struts per level, between the two legs
+	-- of ONE A-frame side (see SwingBuilder.buildBraces). Count per tier:
+	-- 0,0,0,0,1,2,2,3,3,4,5 -- exact, approved values. =====
 	braceCount: number,
-	groundPad: GroundPad,
-	hazardStripes: boolean,
+	-- ===== Beam collars -- cylinders encircling the beam, centred on it, NO
+	-- rotation needed (see SwingBuilder.buildBeamCollars). Count per tier:
+	-- 0,0,0,0,0,0,1,2,3,4,5 -- exact, approved values. =====
+	collarCount: number,
+
+	-- ===== Glow trim -- ONE accentColor rod along the beam underside plus
+	-- one along each of the four legs (see SwingBuilder.buildTrim). Tiers
+	-- 1-5: frameMaterial, opaque (glowAccent = false, glowTransparency
+	-- unused). Tiers 6-11: Neon, per-tier glowTransparency
+	-- (0.55/0.45/0.38/0.30/0.22/0.14 for tiers 6/7/8/9/10/11). =====
 	glowAccent: boolean,
-	glowColor: Color3,
+	glowTransparency: number,
+
+	-- ===== Ground pads: Wood tiers 1-3, Slate tiers 4-11. Colour is always
+	-- frameColor lerped 40% toward black -- computed in SwingBuilder, not
+	-- stored here. =====
+	groundPadMaterial: Enum.Material,
+
+	-- ===== Chains and seat: Wood tiers 1-3, Metal tiers 4-11. Colour is
+	-- always frameColor lerped 22% toward (210,210,215), reflectance is
+	-- always this tier's `reflectance` x 0.5 -- both computed in
+	-- SwingBuilder, not stored here. =====
+	chainSeatMaterial: Enum.Material,
 
 	-- ===== Chain/rope/rod/energy tether =====
 	chainStyle: ChainStyle,
 	chainLinkCount: number, -- ignored when chainStyle == "Energy"
 
-	-- ===== Materials/colours -- FOUR independent slots (frame, trim, seat,
-	-- chain), never all the same, per "surface variety" =====
+	-- ===== Frame + accent -- per the approved four-band table: frameColor/
+	-- accentColor/frameMaterial/reflectance, exact per tier. =====
 	frameMaterial: Enum.Material,
 	frameColor: Color3,
-	trimMaterial: Enum.Material,
-	trimColor: Color3,
-	seatMaterial: Enum.Material,
-	seatColor: Color3,
-	chainMaterial: Enum.Material,
-	chainColor: Color3,
+	accentColor: Color3,
+	reflectance: number,
 
 	-- ===== Flight trail(s) -- see LaunchServer.server.luau's
 	-- createFlightTrail for exactly how every field is applied. =====
@@ -133,23 +148,18 @@ SwingTierVisuals.TIERS = {
 		postAngleDegrees = 12,
 		postShape = Enum.PartType.Block,
 		beamShape = Enum.PartType.Block,
-		capShape = Enum.PartType.Ball,
-		braceStyle = "ARung",
-		braceCount = 1,
-		groundPad = "Dirt",
-		hazardStripes = false,
+		braceCount = 0,
+		collarCount = 0,
 		glowAccent = false,
-		glowColor = Color3.fromRGB(255, 255, 255),
+		glowTransparency = 0,
+		groundPadMaterial = Enum.Material.Wood,
+		chainSeatMaterial = Enum.Material.Wood,
 		chainStyle = "Rope",
 		chainLinkCount = 5,
 		frameMaterial = Enum.Material.Wood,
-		frameColor = Color3.fromRGB(96, 64, 32),
-		trimMaterial = Enum.Material.WoodPlanks,
-		trimColor = Color3.fromRGB(70, 46, 22),
-		seatMaterial = Enum.Material.WoodPlanks,
-		seatColor = Color3.fromRGB(140, 100, 55),
-		chainMaterial = Enum.Material.Fabric,
-		chainColor = Color3.fromRGB(180, 160, 120),
+		frameColor = Color3.fromRGB(146, 104, 64),
+		accentColor = Color3.fromRGB(120, 86, 54),
+		reflectance = 0.00,
 		trailEnabled = false,
 		trailLifetime = 0,
 		trailWidthStart = 0,
@@ -172,23 +182,18 @@ SwingTierVisuals.TIERS = {
 		postAngleDegrees = 12,
 		postShape = Enum.PartType.Block,
 		beamShape = Enum.PartType.Block,
-		capShape = Enum.PartType.Ball,
-		braceStyle = "ARung",
-		braceCount = 1,
-		groundPad = "Dirt",
-		hazardStripes = false,
+		braceCount = 0,
+		collarCount = 0,
 		glowAccent = false,
-		glowColor = Color3.fromRGB(255, 255, 255),
+		glowTransparency = 0,
+		groundPadMaterial = Enum.Material.Wood,
+		chainSeatMaterial = Enum.Material.Wood,
 		chainStyle = "Rope",
 		chainLinkCount = 5,
 		frameMaterial = Enum.Material.Wood,
-		frameColor = Color3.fromRGB(120, 80, 42),
-		trimMaterial = Enum.Material.WoodPlanks,
-		trimColor = Color3.fromRGB(90, 58, 28),
-		seatMaterial = Enum.Material.WoodPlanks,
-		seatColor = Color3.fromRGB(155, 112, 62),
-		chainMaterial = Enum.Material.Fabric,
-		chainColor = Color3.fromRGB(195, 172, 128),
+		frameColor = Color3.fromRGB(122, 84, 52),
+		accentColor = Color3.fromRGB(150, 118, 78),
+		reflectance = 0.00,
 		trailEnabled = false,
 		trailLifetime = 0,
 		trailWidthStart = 0,
@@ -213,23 +218,18 @@ SwingTierVisuals.TIERS = {
 		postAngleDegrees = 11,
 		postShape = Enum.PartType.Block,
 		beamShape = Enum.PartType.Block,
-		capShape = Enum.PartType.Ball,
-		braceStyle = "ARung",
-		braceCount = 1,
-		groundPad = "Dirt",
-		hazardStripes = false,
+		braceCount = 0,
+		collarCount = 0,
 		glowAccent = false,
-		glowColor = Color3.fromRGB(255, 255, 255),
+		glowTransparency = 0,
+		groundPadMaterial = Enum.Material.Wood,
+		chainSeatMaterial = Enum.Material.Wood,
 		chainStyle = "Rope",
 		chainLinkCount = 6,
-		frameMaterial = Enum.Material.WoodPlanks,
-		frameColor = Color3.fromRGB(150, 102, 51),
-		trimMaterial = Enum.Material.Wood,
-		trimColor = Color3.fromRGB(105, 70, 35),
-		seatMaterial = Enum.Material.WoodPlanks,
-		seatColor = Color3.fromRGB(170, 125, 70),
-		chainMaterial = Enum.Material.Fabric,
-		chainColor = Color3.fromRGB(205, 182, 135),
+		frameMaterial = Enum.Material.Wood,
+		frameColor = Color3.fromRGB(96, 64, 40),
+		accentColor = Color3.fromRGB(168, 132, 84),
+		reflectance = 0.00,
 		trailEnabled = true,
 		trailLifetime = 0.35,
 		trailWidthStart = 1.0,
@@ -246,30 +246,25 @@ SwingTierVisuals.TIERS = {
 		burstSize = 0.9,
 		burstLifetime = 0.35,
 	},
-	-- Tier 4: industrial begins -- vertical steel poles, bolted gusset
-	-- braces, a real chain-link seat chain, muted hazard stripes.
+	-- Tier 4: industrial steel begins -- diamond-plate frame, a real
+	-- chain-link seat chain. No X-bracing yet -- that starts at tier 5.
 	{
 		scale = 1.55,
 		postAngleDegrees = 0,
 		postShape = Enum.PartType.Cylinder,
 		beamShape = Enum.PartType.Cylinder,
-		capShape = Enum.PartType.Cylinder,
-		braceStyle = "CrossGusset",
-		braceCount = 2,
-		groundPad = "Concrete",
-		hazardStripes = true,
+		braceCount = 0,
+		collarCount = 0,
 		glowAccent = false,
-		glowColor = Color3.fromRGB(255, 255, 255),
+		glowTransparency = 0,
+		groundPadMaterial = Enum.Material.Slate,
+		chainSeatMaterial = Enum.Material.Metal,
 		chainStyle = "Chain",
 		chainLinkCount = 7,
-		frameMaterial = Enum.Material.Metal,
-		frameColor = Color3.fromRGB(90, 95, 100),
-		trimMaterial = Enum.Material.DiamondPlate,
-		trimColor = Color3.fromRGB(60, 62, 66),
-		seatMaterial = Enum.Material.Metal,
-		seatColor = Color3.fromRGB(80, 110, 80),
-		chainMaterial = Enum.Material.DiamondPlate,
-		chainColor = Color3.fromRGB(70, 72, 76),
+		frameMaterial = Enum.Material.DiamondPlate,
+		frameColor = Color3.fromRGB(112, 118, 126),
+		accentColor = Color3.fromRGB(214, 156, 58),
+		reflectance = 0.04,
 		trailEnabled = true,
 		trailLifetime = 0.45,
 		trailWidthStart = 1.2,
@@ -286,29 +281,24 @@ SwingTierVisuals.TIERS = {
 		burstSize = 1.1,
 		burstLifetime = 0.4,
 	},
-	-- Tier 5: industrial, painted a louder safety red, more stripes.
+	-- Tier 5: industrial steel, darker frame, the first X-brace level.
 	{
 		scale = 1.75,
 		postAngleDegrees = 0,
 		postShape = Enum.PartType.Cylinder,
 		beamShape = Enum.PartType.Cylinder,
-		capShape = Enum.PartType.Cylinder,
-		braceStyle = "CrossGusset",
-		braceCount = 2,
-		groundPad = "Concrete",
-		hazardStripes = true,
+		braceCount = 1,
+		collarCount = 0,
 		glowAccent = false,
-		glowColor = Color3.fromRGB(255, 255, 255),
+		glowTransparency = 0,
+		groundPadMaterial = Enum.Material.Slate,
+		chainSeatMaterial = Enum.Material.Metal,
 		chainStyle = "Chain",
 		chainLinkCount = 7,
-		frameMaterial = Enum.Material.Metal,
-		frameColor = Color3.fromRGB(175, 45, 40),
-		trimMaterial = Enum.Material.DiamondPlate,
-		trimColor = Color3.fromRGB(40, 40, 42),
-		seatMaterial = Enum.Material.Metal,
-		seatColor = Color3.fromRGB(60, 60, 64),
-		chainMaterial = Enum.Material.DiamondPlate,
-		chainColor = Color3.fromRGB(80, 82, 86),
+		frameMaterial = Enum.Material.DiamondPlate,
+		frameColor = Color3.fromRGB(94, 100, 110),
+		accentColor = Color3.fromRGB(222, 164, 62),
+		reflectance = 0.05,
 		trailEnabled = true,
 		trailLifetime = 0.55,
 		trailWidthStart = 1.5,
@@ -325,31 +315,26 @@ SwingTierVisuals.TIERS = {
 		burstSize = 1.3,
 		burstLifetime = 0.4,
 	},
-	-- Tier 6: the biggest, heaviest industrial rig -- brushed steel
-	-- (DiamondPlate as the PRIMARY frame material now, not just trim),
-	-- full hazard-stripe treatment.
+	-- Tier 6: the biggest, heaviest industrial rig -- darkest steel in the
+	-- band, and the first tier with neon accent trim (glowAccent begins
+	-- here, not at the titanium band).
 	{
 		scale = 2.0,
 		postAngleDegrees = 0,
 		postShape = Enum.PartType.Cylinder,
 		beamShape = Enum.PartType.Cylinder,
-		capShape = Enum.PartType.Cylinder,
-		braceStyle = "CrossGusset",
-		braceCount = 3,
-		groundPad = "Concrete",
-		hazardStripes = true,
-		glowAccent = false,
-		glowColor = Color3.fromRGB(255, 255, 255),
+		braceCount = 2,
+		collarCount = 0,
+		glowAccent = true,
+		glowTransparency = 0.55,
+		groundPadMaterial = Enum.Material.Slate,
+		chainSeatMaterial = Enum.Material.Metal,
 		chainStyle = "Chain",
 		chainLinkCount = 8,
 		frameMaterial = Enum.Material.DiamondPlate,
-		frameColor = Color3.fromRGB(130, 133, 140),
-		trimMaterial = Enum.Material.Metal,
-		trimColor = Color3.fromRGB(35, 35, 38),
-		seatMaterial = Enum.Material.Metal,
-		seatColor = Color3.fromRGB(50, 50, 54),
-		chainMaterial = Enum.Material.Metal,
-		chainColor = Color3.fromRGB(150, 152, 158),
+		frameColor = Color3.fromRGB(76, 82, 92),
+		accentColor = Color3.fromRGB(230, 172, 66),
+		reflectance = 0.06,
 		trailEnabled = true,
 		trailLifetime = 0.65,
 		trailWidthStart = 1.8,
@@ -366,30 +351,25 @@ SwingTierVisuals.TIERS = {
 		burstSize = 1.6,
 		burstLifetime = 0.45,
 	},
-	-- Tier 7: engineered begins -- chrome, a glowing blue accent strip,
-	-- thick chrome "rod" instead of a chain, a contoured seat.
+	-- Tier 7: engineered titanium begins -- bright silver frame, blue
+	-- accent, thick "rod" instead of a chain, the first beam collar.
 	{
 		scale = 2.3,
 		postAngleDegrees = 0,
 		postShape = Enum.PartType.Cylinder,
 		beamShape = Enum.PartType.Cylinder,
-		capShape = Enum.PartType.Ball,
-		braceStyle = "DiagonalGusset",
 		braceCount = 2,
-		groundPad = "Metal",
-		hazardStripes = false,
+		collarCount = 1,
 		glowAccent = true,
-		glowColor = Color3.fromRGB(60, 160, 255),
+		glowTransparency = 0.45,
+		groundPadMaterial = Enum.Material.Slate,
+		chainSeatMaterial = Enum.Material.Metal,
 		chainStyle = "Rod",
 		chainLinkCount = 3,
-		frameMaterial = Enum.Material.Foil,
-		frameColor = Color3.fromRGB(210, 213, 224),
-		trimMaterial = Enum.Material.Neon,
-		trimColor = Color3.fromRGB(60, 160, 255),
-		seatMaterial = Enum.Material.Foil,
-		seatColor = Color3.fromRGB(230, 232, 240),
-		chainMaterial = Enum.Material.Foil,
-		chainColor = Color3.fromRGB(220, 223, 232),
+		frameMaterial = Enum.Material.Metal,
+		frameColor = Color3.fromRGB(206, 212, 220),
+		accentColor = Color3.fromRGB(86, 164, 214),
+		reflectance = 0.14,
 		trailEnabled = true,
 		trailLifetime = 0.75,
 		trailWidthStart = 2.0,
@@ -406,29 +386,24 @@ SwingTierVisuals.TIERS = {
 		burstSize = 1.9,
 		burstLifetime = 0.5,
 	},
-	-- Tier 8: engineered, brighter/warmer accent (gold), bigger.
+	-- Tier 8: engineered titanium, brighter frame, second beam collar.
 	{
 		scale = 2.55,
 		postAngleDegrees = 0,
 		postShape = Enum.PartType.Cylinder,
 		beamShape = Enum.PartType.Cylinder,
-		capShape = Enum.PartType.Ball,
-		braceStyle = "DiagonalGusset",
-		braceCount = 2,
-		groundPad = "Metal",
-		hazardStripes = false,
+		braceCount = 3,
+		collarCount = 2,
 		glowAccent = true,
-		glowColor = Color3.fromRGB(255, 195, 60),
+		glowTransparency = 0.38,
+		groundPadMaterial = Enum.Material.Slate,
+		chainSeatMaterial = Enum.Material.Metal,
 		chainStyle = "Rod",
 		chainLinkCount = 3,
-		frameMaterial = Enum.Material.Foil,
-		frameColor = Color3.fromRGB(225, 227, 235),
-		trimMaterial = Enum.Material.Neon,
-		trimColor = Color3.fromRGB(255, 195, 60),
-		seatMaterial = Enum.Material.Foil,
-		seatColor = Color3.fromRGB(240, 241, 246),
-		chainMaterial = Enum.Material.Foil,
-		chainColor = Color3.fromRGB(235, 237, 244),
+		frameMaterial = Enum.Material.Metal,
+		frameColor = Color3.fromRGB(182, 190, 202),
+		accentColor = Color3.fromRGB(72, 152, 208),
+		reflectance = 0.17,
 		trailEnabled = true,
 		trailLifetime = 0.85,
 		trailWidthStart = 2.3,
@@ -445,30 +420,25 @@ SwingTierVisuals.TIERS = {
 		burstSize = 2.2,
 		burstLifetime = 0.5,
 	},
-	-- Tier 9: the sleekest, largest engineered rig -- brighter still, the
-	-- last stop before neon takes over entirely.
+	-- Tier 9: the sleekest, largest engineered rig -- the last titanium
+	-- tier before obsidian takes over.
 	{
 		scale = 2.8,
 		postAngleDegrees = 0,
 		postShape = Enum.PartType.Cylinder,
 		beamShape = Enum.PartType.Cylinder,
-		capShape = Enum.PartType.Ball,
-		braceStyle = "DiagonalGusset",
-		braceCount = 2,
-		groundPad = "Metal",
-		hazardStripes = false,
+		braceCount = 3,
+		collarCount = 3,
 		glowAccent = true,
-		glowColor = Color3.fromRGB(255, 255, 255),
+		glowTransparency = 0.30,
+		groundPadMaterial = Enum.Material.Slate,
+		chainSeatMaterial = Enum.Material.Metal,
 		chainStyle = "Rod",
 		chainLinkCount = 2,
-		frameMaterial = Enum.Material.Foil,
-		frameColor = Color3.fromRGB(240, 241, 248),
-		trimMaterial = Enum.Material.Neon,
-		trimColor = Color3.fromRGB(255, 255, 255),
-		seatMaterial = Enum.Material.Foil,
-		seatColor = Color3.fromRGB(250, 250, 252),
-		chainMaterial = Enum.Material.Foil,
-		chainColor = Color3.fromRGB(245, 246, 250),
+		frameMaterial = Enum.Material.Metal,
+		frameColor = Color3.fromRGB(156, 166, 182),
+		accentColor = Color3.fromRGB(58, 140, 202),
+		reflectance = 0.20,
 		trailEnabled = true,
 		trailLifetime = 0.95,
 		trailWidthStart = 2.6,
@@ -485,30 +455,25 @@ SwingTierVisuals.TIERS = {
 		burstSize = 2.6,
 		burstLifetime = 0.55,
 	},
-	-- Tier 10: spectacular begins -- neon cyan, a floating seat, an ENERGY
-	-- tether instead of a chain, and a second layered trail.
+	-- Tier 10: obsidian begins -- near-black frame, violet accent, an
+	-- ENERGY tether instead of a chain, and a second layered trail.
 	{
 		scale = 3.15,
 		postAngleDegrees = 0,
 		postShape = Enum.PartType.Cylinder,
 		beamShape = Enum.PartType.Cylinder,
-		capShape = Enum.PartType.Ball,
-		braceStyle = "Strut",
-		braceCount = 2,
-		groundPad = "Glow",
-		hazardStripes = false,
+		braceCount = 4,
+		collarCount = 4,
 		glowAccent = true,
-		glowColor = Color3.fromRGB(50, 230, 255),
+		glowTransparency = 0.22,
+		groundPadMaterial = Enum.Material.Slate,
+		chainSeatMaterial = Enum.Material.Metal,
 		chainStyle = "Energy",
 		chainLinkCount = 0,
-		frameMaterial = Enum.Material.Foil,
-		frameColor = Color3.fromRGB(50, 230, 255),
-		trimMaterial = Enum.Material.Glass,
-		trimColor = Color3.fromRGB(180, 250, 255),
-		seatMaterial = Enum.Material.Neon,
-		seatColor = Color3.fromRGB(50, 230, 255),
-		chainMaterial = Enum.Material.Neon,
-		chainColor = Color3.fromRGB(80, 240, 255),
+		frameMaterial = Enum.Material.Metal,
+		frameColor = Color3.fromRGB(38, 32, 52),
+		accentColor = Color3.fromRGB(178, 140, 246),
+		reflectance = 0.26,
 		trailEnabled = true,
 		trailLifetime = 1.05,
 		trailWidthStart = 3.0,
@@ -525,30 +490,25 @@ SwingTierVisuals.TIERS = {
 		burstSize = 3.0,
 		burstLifetime = 0.6,
 	},
-	-- Tier 11: the flex -- blazing magenta neon, the biggest single jump of
-	-- the whole curve, everything at maximum.
+	-- Tier 11: the flex -- darkest obsidian frame, brightest violet neon,
+	-- the biggest single jump of the whole curve, everything at maximum.
 	{
 		scale = 3.6,
 		postAngleDegrees = 0,
 		postShape = Enum.PartType.Cylinder,
 		beamShape = Enum.PartType.Cylinder,
-		capShape = Enum.PartType.Ball,
-		braceStyle = "Strut",
-		braceCount = 3,
-		groundPad = "Glow",
-		hazardStripes = false,
+		braceCount = 5,
+		collarCount = 5,
 		glowAccent = true,
-		glowColor = Color3.fromRGB(255, 25, 190),
+		glowTransparency = 0.14,
+		groundPadMaterial = Enum.Material.Slate,
+		chainSeatMaterial = Enum.Material.Metal,
 		chainStyle = "Energy",
 		chainLinkCount = 0,
-		frameMaterial = Enum.Material.Foil,
-		frameColor = Color3.fromRGB(255, 25, 190),
-		trimMaterial = Enum.Material.Glass,
-		trimColor = Color3.fromRGB(255, 190, 240),
-		seatMaterial = Enum.Material.Neon,
-		seatColor = Color3.fromRGB(255, 25, 190),
-		chainMaterial = Enum.Material.Neon,
-		chainColor = Color3.fromRGB(255, 60, 210),
+		frameMaterial = Enum.Material.Metal,
+		frameColor = Color3.fromRGB(24, 20, 36),
+		accentColor = Color3.fromRGB(206, 172, 255),
+		reflectance = 0.32,
 		trailEnabled = true,
 		trailLifetime = 1.25,
 		trailWidthStart = 3.6,

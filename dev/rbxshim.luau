@@ -108,11 +108,24 @@ UDim2.fromScale = function(xs, ys)
 end
 
 local Color3 = {}
+local Color3Mt = {}
+Color3Mt.__index = function(t, k)
+	if k == "Lerp" then
+		return function(self, other, alpha)
+			return setmetatable({
+				r = self.r + (other.r - self.r) * alpha,
+				g = self.g + (other.g - self.g) * alpha,
+				b = self.b + (other.b - self.b) * alpha,
+			}, Color3Mt)
+		end
+	end
+	return nil
+end
 Color3.new = function(r, g, b)
-	return { r = r, g = g, b = b }
+	return setmetatable({ r = r, g = g, b = b }, Color3Mt)
 end
 Color3.fromRGB = function(r, g, b)
-	return { r = r / 255, g = g / 255, b = b / 255 }
+	return setmetatable({ r = r / 255, g = g / 255, b = b / 255 }, Color3Mt)
 end
 
 --============================= CFrame =============================--
