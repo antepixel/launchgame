@@ -9,15 +9,15 @@
 -- independent pitch, never an offset computed here. The ten slot pads are
 -- a real 2-column x 5-row grid (BASE_GRID_COLUMNS = 2), landing exactly on
 -- X = baseX +-11, Z = 71/85/99/113/127 -- see BaseGeometry.luau's
--- slotPosition, which reads every grid constant below. The surrounding
--- plot (mat, central path, side/back edges) is NEW this pass -- static
+-- slotPosition, which reads every grid constant below. The pads, same as
+-- the surrounding plot (mat, central path, side/back edges), are static
 -- per-lane world dressing built once at server start by
 -- MapBuilder.server.luau (see BaseGeometry's matPosition/
--- centralPathPosition/sideEdgePositions/backEdgePosition), independent of
--- whether that lane's player has joined yet. That's different from the ten
--- slot pads above, which PlayerProfile still builds per-player on join --
--- the plot is part of the LANE, the pads (and whatever sits on them) are
--- part of the PLAYER.
+-- centralPathPosition/sideEdgePositions/backEdgePosition/slotPosition),
+-- independent of whether that lane's player has joined yet -- so every
+-- plot reads as a base whether or not anyone is in it. PlayerProfile no
+-- longer builds any of this; it only finds the pads MapBuilder already
+-- built for its lane and places slime parts onto them.
 
 export type BaseConfig = {
 	SLOT_COUNT: number,
@@ -29,6 +29,7 @@ export type BaseConfig = {
 	BASE_SLOT_PAD_SIZE: Vector3,
 	BASE_SLOT_PAD_COLOR: Color3,
 	BASE_SLOT_PAD_MATERIAL: Enum.Material,
+	BASE_SLOT_PAD_Y_OFFSET: number,
 	BASE_SLIME_PART_SIZE: Vector3,
 
 	BASE_PLOT_CENTER_Z: number,
@@ -83,6 +84,16 @@ local BaseConfig: BaseConfig = {
 	BASE_SLOT_PAD_SIZE = Vector3.new(8, 0.6, 8),
 	BASE_SLOT_PAD_COLOR = Color3.fromRGB(182, 182, 188),
 	BASE_SLOT_PAD_MATERIAL = Enum.Material.Concrete,
+	-- How far ABOVE groundY the pad's CENTER sits (baked into BaseGeometry.
+	-- slotPosition, same "position already includes its own offset" shape as
+	-- BASE_MAT_Y_OFFSET etc below). Must clear the mat's own top surface
+	-- (BASE_MAT_Y_OFFSET + BASE_MAT_SIZE.Y / 2 = 0.2 + 0.2 = 0.4), not just
+	-- groundY -- a pad centered at groundY (the old behaviour) sits HALF
+	-- BURIED in the mat, since the mat's top is above groundY and the pad's
+	-- own half-height (0.3) isn't enough to clear it. 0.7 = mat top (0.4) +
+	-- pad half-height (0.3), so the pad's BOTTOM face lands exactly flush on
+	-- the mat's top face -- reads as sitting ON the mat, not sunk into it.
+	BASE_SLOT_PAD_Y_OFFSET = 0.7,
 	-- The placeholder "slime" itself once a slot is filled: a plain coloured
 	-- block in the slime's own tier colour (see SlimeConfig.SLIME_TIER_
 	-- COLORS), sized well clear of its pad. No models -- see the written

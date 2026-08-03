@@ -13,12 +13,15 @@
 -- rather than hand-copying dozens of near-identical JSON blocks into
 -- default.project.json. Only the Baseplate itself belongs there.
 --
--- The ten slot pads inside each plot are NOT built here -- those stay owned
--- by PlayerProfile.luau, built per-player on join (see BaseGeometry.
--- slotPosition/slotPositions), since which slots exist and what's on them
--- is per-player state, not static world dressing. Everything in THIS file
--- exists for all LANE_COUNT lanes from the moment the server starts,
--- whether or not that lane's player has joined yet.
+-- The ten slot pads inside each plot ARE built here, same as the mat and
+-- edges (see BaseGeometry.slotPosition/slotPositions) -- a pad marking
+-- where a slime would go is static per-lane world dressing, same as the
+-- plot it sits in, whether or not that lane's player has joined yet.
+-- PlayerProfile.luau no longer builds or owns any pad -- it only finds the
+-- pad already built here for its own lane + slot number and places a slime
+-- part onto it once revealed. Everything in THIS file exists for all
+-- LANE_COUNT lanes from the moment the server starts, whether or not that
+-- lane's player has joined yet.
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -101,6 +104,42 @@ for laneIndex = 0, LaneConfig.LANE_COUNT - 1 do
 
 	-- Back edge.
 	newBlock(BaseConfig.BASE_BACK_EDGE_SIZE, BaseGeometry.backEdgePosition(laneIndex), BaseConfig.BASE_EDGE_MATERIAL, BaseConfig.BASE_EDGE_COLOR, "BackEdge", laneFolder)
+
+	-- Ten slot pads, flush on top of the mat (BaseGeometry.slotPosition
+	-- already bakes in BASE_SLOT_PAD_Y_OFFSET) -- static, numbered markers
+	-- showing where a slime would go whether or not this lane's player has
+	-- joined yet, or a slime is currently sitting there. PlayerProfile finds
+	-- these by lane + slot number (Slot01..Slot10) rather than building its
+	-- own -- see PlayerProfile.luau's getSlotPad.
+	for slotNumber, slotPosition in BaseGeometry.slotPositions(laneIndex) do
+		local pad = newBlock(
+			BaseConfig.BASE_SLOT_PAD_SIZE,
+			slotPosition,
+			BaseConfig.BASE_SLOT_PAD_MATERIAL,
+			BaseConfig.BASE_SLOT_PAD_COLOR,
+			string.format("Slot%02d", slotNumber),
+			laneFolder
+		)
+
+		local surfaceGui = Instance.new("SurfaceGui")
+		surfaceGui.Name = "SlotLabel"
+		surfaceGui.Face = Enum.NormalId.Top
+		surfaceGui.LightInfluence = 0
+		surfaceGui.PixelsPerStud = 24
+		surfaceGui.Parent = pad
+
+		local label = Instance.new("TextLabel")
+		label.AnchorPoint = Vector2.new(0.5, 0.5)
+		label.Position = UDim2.fromScale(0.5, 0.5)
+		label.Size = UDim2.fromScale(0.8, 0.8)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.GothamBold
+		label.TextScaled = true
+		label.TextColor3 = Color3.new(1, 1, 1)
+		label.TextStrokeTransparency = 0.5
+		label.Text = tostring(slotNumber)
+		label.Parent = surfaceGui
+	end
 
 	-- Angled link: swing side -> base side, oriented along the line
 	-- between the two (swingX and baseX are rarely equal, so this is

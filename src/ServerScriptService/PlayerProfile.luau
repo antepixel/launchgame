@@ -119,6 +119,24 @@ local function releaseBaseIndex(index: number)
 	table.insert(freeBaseIndices, index)
 end
 
+-- ===== Slot pad lookup -- the ten pads are now static per-lane world
+-- dressing built once, for every lane, by MapBuilder.server.luau (see
+-- BaseConfig/BaseGeometry's written report on the map blockout). This
+-- module never builds a pad -- it only finds the one MapBuilder already
+-- built for a given lane + slot number and reads its Position/Size back,
+-- so a slime part always lands on the REAL pad instance rather than a
+-- second, independently-computed guess at where that pad ought to be.
+-- WaitForChild (not FindFirstChild) because MapBuilder.server.luau and this
+-- module are both top-level scripts with no guaranteed run order -- this
+-- yields, rather than erroring, on the rare case this module resolves
+-- first. =====
+local mapBlockout = Workspace:WaitForChild("MapBlockout")
+
+local function getSlotPad(baseIndex: number, slotNumber: number): BasePart
+	local laneFolder = mapBlockout:WaitForChild(string.format("Lane%02d", baseIndex))
+	return laneFolder:WaitForChild(string.format("Slot%02d", slotNumber)) :: BasePart
+end
+
 -- ===== Base visuals -- moved here from the old BaseBuilder.server.luau,
 -- which built ONE shared base at server start; now each player's base is
 -- built on demand, the moment they join. Named deterministically by UserId
@@ -130,36 +148,6 @@ local function buildBaseFolder(player: Player, baseIndex: number): Folder
 	folder.Parent = Workspace
 
 	local positions = BaseGeometry.slotPositions(baseIndex)
-	for i, position in positions do
-		local pad = Instance.new("Part")
-		pad.Name = string.format("Slot%02d", i)
-		pad.Anchored = true
-		pad.CanCollide = true
-		pad.Material = BaseConfig.BASE_SLOT_PAD_MATERIAL
-		pad.Size = BaseConfig.BASE_SLOT_PAD_SIZE
-		pad.Color = BaseConfig.BASE_SLOT_PAD_COLOR
-		pad.Position = position
-		pad.Parent = folder
-
-		local surfaceGui = Instance.new("SurfaceGui")
-		surfaceGui.Name = "SlotLabel"
-		surfaceGui.Face = Enum.NormalId.Top
-		surfaceGui.LightInfluence = 0
-		surfaceGui.PixelsPerStud = 24
-		surfaceGui.Parent = pad
-
-		local label = Instance.new("TextLabel")
-		label.AnchorPoint = Vector2.new(0.5, 0.5)
-		label.Position = UDim2.fromScale(0.5, 0.5)
-		label.Size = UDim2.fromScale(0.8, 0.8)
-		label.BackgroundTransparency = 1
-		label.Font = Enum.Font.GothamBold
-		label.TextScaled = true
-		label.TextColor3 = Color3.new(1, 1, 1)
-		label.TextStrokeTransparency = 0.5
-		label.Text = tostring(i)
-		label.Parent = surfaceGui
-	end
 
 	-- Nameplate over the whole base -- the one addition over the old
 	-- single-shared-base visuals: with several of these now side by side,
@@ -233,9 +221,9 @@ local function spawnSlimeVisual(profile: Profile, slotNumber: number, slime: Sli
 	part.Size = BaseConfig.BASE_SLIME_PART_SIZE
 	part.Color = slime.color
 
-	local slotPosition = BaseGeometry.slotPosition(profile.baseIndex, slotNumber)
-	local restHeight = BaseConfig.BASE_SLOT_PAD_SIZE.Y / 2 + BaseConfig.BASE_SLIME_PART_SIZE.Y / 2
-	part.Position = slotPosition + Vector3.new(0, restHeight, 0)
+	local pad = getSlotPad(profile.baseIndex, slotNumber)
+	local restHeight = pad.Size.Y / 2 + BaseConfig.BASE_SLIME_PART_SIZE.Y / 2
+	part.Position = pad.Position + Vector3.new(0, restHeight, 0)
 	part.Parent = profile.baseFolder
 	profile.visualParts[slotNumber] = part
 

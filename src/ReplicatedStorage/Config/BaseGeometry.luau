@@ -8,17 +8,18 @@
 -- the written report on the map blockout), never from an offset fanned out
 -- from any specific swing instance.
 --
--- TWO KINDS OF CALLER now (map blockout pass): PlayerProfile (which builds
--- each base's TEN SLOT PADS and places slime parts into it, per-player, on
--- join -- reads slotPosition/slotPositions, unchanged shape from before)
--- and MapBuilder.server.luau (which builds the STATIC plot dressing -- mat,
--- central path, side/back edges -- for all LANE_COUNT lanes at server
--- start, whether or not that lane's player has joined yet -- reads
--- matPosition/centralPathPosition/sideEdgePositions/backEdgePosition, new
--- this pass). Both kinds share the same baseX (LaneConfig.baseLaneCenterX)
--- for a given lane -- there is still only one source of truth for a lane's
--- own X, just two different Z schemes layered on top of it (the slot grid,
--- and the plot that grid sits inside).
+-- ONE KIND OF CALLER now (map blockout pass): MapBuilder.server.luau, which
+-- builds EVERYTHING this module describes -- the TEN SLOT PADS (reads
+-- slotPosition/slotPositions) and the surrounding static plot dressing --
+-- mat, central path, side/back edges (reads matPosition/centralPathPosition/
+-- sideEdgePositions/backEdgePosition) -- for all LANE_COUNT lanes at server
+-- start, whether or not that lane's player has joined yet. PlayerProfile no
+-- longer builds any of this; it only finds the pads MapBuilder already built
+-- for its own lane (by lane index + slot number) and places slime parts onto
+-- them. Every position here shares the same baseX (LaneConfig.
+-- baseLaneCenterX) for a given lane -- there is still only one source of
+-- truth for a lane's own X, just two different Z schemes layered on top of
+-- it (the slot grid, and the plot that grid sits inside).
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -40,7 +41,11 @@ local groundY = baseplate.Position.Y + baseplate.Size.Y / 2
 -- BASE_GRID_COLUMNS) -- X = baseX +-11 (half of BASE_SLOT_COLUMN_SPACING_
 -- STUDS), Z = BASE_SLOT_Z_START + row*BASE_SLOT_ROW_SPACING_STUDS (71, 85,
 -- 99, 113, 127). The world position of slot i (1-indexed) within the given
--- player's base. =====
+-- lane's base -- Y already includes BASE_SLOT_PAD_Y_OFFSET, same "the
+-- returned position IS the part's center, offset baked in" shape as
+-- matPosition/centralPathPosition/etc below, so this lands the pad flush on
+-- top of the mat rather than centered at bare groundY (which would bury it
+-- half inside the mat). =====
 function BaseGeometry.slotPosition(baseIndex: number, slotNumber: number): Vector3
 	local baseX = LaneConfig.baseLaneCenterX(baseIndex)
 	local columns = BaseConfig.BASE_GRID_COLUMNS
@@ -51,7 +56,7 @@ function BaseGeometry.slotPosition(baseIndex: number, slotNumber: number): Vecto
 	local row = (slotNumber - 1) // columns
 	local x = baseX - halfWidth + col * columnSpacing
 	local z = BaseConfig.BASE_SLOT_Z_START + row * BaseConfig.BASE_SLOT_ROW_SPACING_STUDS
-	return Vector3.new(x, groundY, z)
+	return Vector3.new(x, groundY + BaseConfig.BASE_SLOT_PAD_Y_OFFSET, z)
 end
 
 -- All SLOT_COUNT positions for one player's base, in slot order -- a
