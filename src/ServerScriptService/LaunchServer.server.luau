@@ -949,22 +949,47 @@ end
 -- different players' own reset timers can fire at any two overlapping
 -- instants and never stomp each other, since each one only ever touches its
 -- own captured landedPlayer's own table entry.
--- BUG FIX (see the written report -- automatic proximity mounting): this
--- used to unconditionally re-anchor the landed character and turn its
--- AutoRotate back off here, snapping them back onto the swing wherever they
--- happened to be standing after the post-landing window -- that made sense
--- when "riding" was the default/rest state everyone returned to. Now the
--- rest state is "grounded": the character is ALREADY unanchored with
--- AutoRotate on (see the Heartbeat landing handler below, which sets both
--- the instant the flight itself ends, well before this fires) and free to
--- walk wherever the player wants -- toward their base, the shop, back to
--- their own swing, whatever. This function's only remaining job is the
--- state flip and the client-facing "you can release again" signal; it must
--- not touch the character's position/anchoring/AutoRotate at all, or a
--- player who wandered off during the box/cooldown window would be yanked
--- back and frozen mid-walk the instant this timer fires.
-local function scheduleReset(landedPlayer: Player, _landedCharacter: Model)
+--
+-- THE WALK-BACK TAX (see the written report): the landing itself -- where the
+-- flight ends, where the band is scored, where the mystery box opens -- is
+-- UNTOUCHED by this; it stays exactly where trajectoryPosition/
+-- bandLuckForLandingZ put it, up to ~2,900 studs down the road at tier 11.
+-- What changes is what happens the instant the reward sequence is OVER: this
+-- function now teleports the player back to THEIR OWN lane -- swing X, pivot
+-- Z plus LaunchConfig.SWING_RETURN_CLEARANCE_STUDS (clear of
+-- SWING_MOUNT_RADIUS_STUDS at every tier -- see that constant's own comment),
+-- standing on the ground -- instead of leaving them to walk the whole
+-- distance back by hand. Explicitly unanchored, AutoRotate back on, in
+-- "grounded" state -- free to walk forward into their own swing to launch
+-- again, or turn and walk to their base -- matching every other grounded
+-- character, not a special case.
+--
+-- GUARDED the same way mountPlayer's own watchdog is: only acts if this
+-- exact character is still THIS player's current one. A death/respawn during
+-- the box/cooldown window would have already superseded landedCharacter via
+-- clearActiveRider/setupCharacter, and calling PivotTo on that now-stale
+-- (possibly already-destroyed) Model would error -- skipping the teleport
+-- entirely in that rare case is correct: a freshly spawned character already
+-- starts at its own lane's spawn, right next to the swing, so there is
+-- nothing to fix.
+local function scheduleReset(landedPlayer: Player, landedCharacter: Model)
 	task.delay(LaunchConfig.RESET_DELAY, function()
+		if landedPlayer.Parent and activeCharacters[landedPlayer] == landedCharacter then
+			local humanoid = landedCharacter:FindFirstChildOfClass("Humanoid") :: Humanoid?
+			local rootPart = humanoid and humanoid.RootPart
+			local laneIndex = PlayerProfile.getBaseIndex(landedPlayer)
+			if humanoid and rootPart and laneIndex then
+				local returnPosition = Vector3.new(
+					LaneConfig.laneCenterX(laneIndex),
+					groundY,
+					LaneConfig.SWING_PIVOT_Z + LaunchConfig.SWING_RETURN_CLEARANCE_STUDS
+				)
+				landedCharacter:PivotTo(CFrame.lookAt(returnPosition, returnPosition + Vector3.new(0, 0, -1)))
+				rootPart.Anchored = false
+				humanoid.AutoRotate = true
+			end
+		end
+
 		states[landedPlayer] = "grounded"
 		if landedPlayer.Parent then
 			resetReadyRemote:FireClient(landedPlayer)

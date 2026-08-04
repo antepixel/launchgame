@@ -28,6 +28,7 @@ export type LaunchConfig = {
 	SWING_BASE_PIVOT_HEIGHT_ABOVE_GROUND: number,
 	RIDER_SEAT_HEIGHT_OFFSET: number,
 	SWING_MOUNT_RADIUS_STUDS: number,
+	SWING_RETURN_CLEARANCE_STUDS: number,
 	SWEET_SPOT_PHASE: number,
 	SWEET_SPOT_WIDTH: number,
 	RUNWAY_BAND_LENGTH_STUDS: number,
@@ -231,6 +232,31 @@ local LaunchConfig: LaunchConfig = {
 	-- much farther back than this (see BaseConfig.BASE_PLOT_CENTER_Z), so it
 	-- was never the binding constraint on this number.
 	SWING_MOUNT_RADIUS_STUDS = 5,
+	-- Studs ADDED to LaneConfig.SWING_PIVOT_Z (never subtracted -- this is the
+	-- spawn/base side of the pivot, the same side SPAWN_Z sits on) to get a
+	-- GROUNDED player's return position after a flight's reward sequence
+	-- resolves (see LaunchServer.server.luau's scheduleReset) -- X is that
+	-- lane's own laneCenterX, Y is groundY, so this is the only geometry this
+	-- number has to get right.
+	--
+	-- Must clear SWING_MOUNT_RADIUS_STUDS from the seat's CURRENT (moving,
+	-- swinging) position at every phase of the cycle, at EVERY tier, not just
+	-- the seat's phase=0 rest position -- checkProximityMounts re-tests every
+	-- Heartbeat once the player is back to "grounded", so a return point that
+	-- only clears the rest position but drifts inside the radius at some
+	-- OTHER phase would auto-remount the player the moment the swing's own
+	-- sweep carries the seat back close enough, not on a deliberate walk-in.
+	-- TIER 1 is the binding case, not tier 11: a taller frame lifts the seat
+	-- (and the whole arc it sweeps) HIGHER above the ground the return point
+	-- sits on, which only ever increases the 3D distance from a fixed
+	-- ground-level point -- verified by sampling every phase at every tier's
+	-- own SwingTierVisuals.scale (1.0 .. 3.6): the closest the seat ever gets
+	-- to this return point, across the whole cycle, is ~6.43 studs at tier 1
+	-- (comfortably over the 5-stud radius) and only grows from there, up to
+	-- ~11.86 studs at tier 11 -- see the written report for the full per-tier
+	-- table. 10 clears tier 1 with a ~1.4-stud margin without pushing the
+	-- return point needlessly far from the swing at every other tier.
+	SWING_RETURN_CLEARANCE_STUDS = 10,
 	-- Where in the cycle (0-1, fraction of SWING_PERIOD_SECONDS) counts as the
 	-- sweet spot. 0.25 = the forward extreme of the arc, where the swing
 	-- momentarily pauses before reversing -- chosen deliberately over the center
