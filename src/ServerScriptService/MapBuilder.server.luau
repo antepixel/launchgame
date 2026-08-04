@@ -31,6 +31,11 @@ local BaseGeometry = require(ReplicatedStorage.Config.BaseGeometry)
 local GroundConfig = require(ReplicatedStorage.Config.GroundConfig)
 local PathConfig = require(ReplicatedStorage.Config.PathConfig)
 local StallConfig = require(ReplicatedStorage.Config.StallConfig)
+-- Only for the mount radius marker below -- SWING_MOUNT_RADIUS_STUDS and its
+-- accompanying marker colour/transparency/material/thickness/offset, all
+-- owned there alongside checkProximityMounts' own detection math (see
+-- LaunchServer.server.luau).
+local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 
 local baseplate = Workspace:WaitForChild("Baseplate") :: BasePart
 local groundY = baseplate.Position.Y + baseplate.Size.Y / 2
@@ -69,6 +74,20 @@ local function newFlatLink(pointA: Vector3, pointB: Vector3, width: number, thic
 	local length = (pointB - pointA).Magnitude
 	local cf = CFrame.new(mid, pointB)
 	return newPart(Vector3.new(width, thickness, length), cf, material, color, name, parent)
+end
+
+-- A flat, ground-lying disc -- used only by the mount radius marker below.
+-- Roblox's Cylinder shape puts its round faces on the part's own local
+-- +-X by default (same convention SwingBuilder.luau's ground pads use);
+-- rotating 90 degrees around Z turns that local X axis to point straight up
+-- (world +Y), so the round face ends up facing the sky instead of sideways
+-- -- a pancake lying flat on the ground, not a drum standing on its end.
+local function newFlatDisc(center: Vector3, diameter: number, thickness: number, material: Enum.Material, color: Color3, transparency: number, name: string, parent: Instance): Part
+	local part = newPart(Vector3.new(thickness, diameter, diameter), CFrame.new(center) * CFrame.Angles(0, 0, math.rad(90)), material, color, name, parent)
+	part.Shape = Enum.PartType.Cylinder
+	part.CanCollide = false
+	part.Transparency = transparency
+	return part
 end
 
 -- ===== Kerb: one part, the full width of the road. =====
@@ -140,6 +159,26 @@ for laneIndex = 0, LaneConfig.LANE_COUNT - 1 do
 		label.Text = tostring(slotNumber)
 		label.Parent = surfaceGui
 	end
+
+	-- Mount radius marker: a flat, non-collidable disc centred on THIS
+	-- lane's own swing pivot X/Z (swingX, LaneConfig.SWING_PIVOT_Z --
+	-- exactly what checkProximityMounts measures against, see
+	-- LaunchServer.server.luau), radius LaunchConfig.SWING_MOUNT_RADIUS_
+	-- STUDS -- a visible "here's where auto-mount kicks in" hitbox, built
+	-- for every lane whether or not that lane's player has joined yet, same
+	-- as the rest of the plot dressing. Colour/transparency/material read
+	-- from config (see LaunchConfig's own comment) so this can be tuned or
+	-- switched off (Transparency = 1) without touching this file.
+	newFlatDisc(
+		Vector3.new(swingX, groundY + LaunchConfig.SWING_MOUNT_RADIUS_MARKER_Y_OFFSET, LaneConfig.SWING_PIVOT_Z),
+		LaunchConfig.SWING_MOUNT_RADIUS_STUDS * 2,
+		LaunchConfig.SWING_MOUNT_RADIUS_MARKER_THICKNESS,
+		LaunchConfig.SWING_MOUNT_RADIUS_MARKER_MATERIAL,
+		LaunchConfig.SWING_MOUNT_RADIUS_MARKER_COLOR,
+		LaunchConfig.SWING_MOUNT_RADIUS_MARKER_TRANSPARENCY,
+		"MountRadiusMarker",
+		laneFolder
+	)
 
 	-- Angled link: swing side -> base side, oriented along the line
 	-- between the two (swingX and baseX are rarely equal, so this is

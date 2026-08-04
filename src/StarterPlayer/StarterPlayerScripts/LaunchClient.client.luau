@@ -108,6 +108,16 @@ local ridingAssignedRemoteMaybe = remotesFolder:WaitForChild("RidingAssigned", R
 -- frame, so the server can tell "client is alive" apart from "client never
 -- came up," which otherwise look identical from server state alone.
 local riderReadyRemoteMaybe = remotesFolder:WaitForChild("RiderReady", REMOTES_WAIT_TIMEOUT_SECONDS)
+-- Client -> server: content-free, exactly like Release/BoxPress -- fired by
+-- the click-anywhere/tap listener below while THIS client is grounded. See
+-- LaunchServer.server.luau's onReturnToSwing for the server-side gate
+-- (states[player] == "grounded") and the actual teleport.
+local returnToSwingRemoteMaybe = remotesFolder:WaitForChild("ReturnToSwing", REMOTES_WAIT_TIMEOUT_SECONDS)
+-- Client -> server: content-free, exactly like Release/BoxPress -- fired by
+-- the DISMOUNT button (visible only while riding, see below). See
+-- LaunchServer.server.luau's onDismount for the server-side gate
+-- (states[player] == "riding") and the actual teleport.
+local dismountRemoteMaybe = remotesFolder:WaitForChild("Dismount", REMOTES_WAIT_TIMEOUT_SECONDS)
 
 if not (
 	releaseRemoteMaybe
@@ -119,6 +129,8 @@ if not (
 	and slimeRevealedRemoteMaybe
 	and ridingAssignedRemoteMaybe
 	and riderReadyRemoteMaybe
+	and returnToSwingRemoteMaybe
+	and dismountRemoteMaybe
 ) then
 	failLaunchHud("one or more remotes inside ReplicatedStorage.Remotes")
 	return
@@ -133,6 +145,8 @@ local boxResultRemote = boxResultRemoteMaybe :: RemoteEvent
 local slimeRevealedRemote = slimeRevealedRemoteMaybe :: RemoteEvent
 local ridingAssignedRemote = ridingAssignedRemoteMaybe :: RemoteEvent
 local riderReadyRemote = riderReadyRemoteMaybe :: RemoteEvent
+local returnToSwingRemote = returnToSwingRemoteMaybe :: RemoteEvent
+local dismountRemote = dismountRemoteMaybe :: RemoteEvent
 
 -- BUG FIX (see the written report -- six-lane pass 1): this used to be a
 -- bare "SwingPivot"/"SwingStructure" WaitForChild -- the single shared
@@ -491,6 +505,40 @@ screenGui.ResetOnSpawn = false
 screenGui.IgnoreGuiInset = true
 screenGui.Parent = playerGui
 
+-- Groups every element that only means something while THIS client is
+-- riding, flying, or in the box sequence -- the distance readout, the
+-- multiplier/bar, the outcome text, and the release button -- behind ONE
+-- Visible flip instead of six independent ones (see setGrounded below, the
+-- single place this toggles). A plain full-screen, invisible-background
+-- Frame, not the ScreenGui itself: returnHintLabel (and the money/tier
+-- labels BaseClient.client.luau owns) must stay independently controllable,
+-- so the whole LaunchHud ScreenGui can never be the thing toggled here.
+-- Sized/positioned to exactly cover the ScreenGui so every child's existing
+-- UDim2 (all written relative to the full screen) renders identically
+-- whether parented here or directly to screenGui -- reparenting below is
+-- purely an organisational change, not a layout one.
+--
+-- BUG FIX (see the written report -- dismount button not responding): this
+-- is a pure grouping container, never meant to be interacted with directly
+-- -- only its children (the release button) are. Active is left at its
+-- default here for every OTHER label, but a Frame this large (the whole
+-- screen) sitting as a SIBLING of dismountButton, both visible at the same
+-- time ("riding"), made their relative click-hit priority depend on
+-- sibling order Roblox does not actually guarantee -- which is exactly the
+-- kind of thing that can silently swallow a click with no error and no
+-- visible effect, matching "pressing Dismount does nothing" exactly.
+-- Active = false removes the ambiguity outright: this frame can now never
+-- capture a click meant for anything else, regardless of sibling order,
+-- while its own children (releaseButton) keep receiving their own clicks
+-- completely independently of their parent's Active value.
+local flightHudFrame = Instance.new("Frame")
+flightHudFrame.Name = "FlightHud"
+flightHudFrame.Active = false
+flightHudFrame.BackgroundTransparency = 1
+flightHudFrame.Size = UDim2.fromScale(1, 1)
+flightHudFrame.Visible = false
+flightHudFrame.Parent = screenGui
+
 local distanceLabel = Instance.new("TextLabel")
 distanceLabel.Name = "DistanceReadout"
 distanceLabel.AnchorPoint = Vector2.new(0.5, 0)
@@ -502,19 +550,22 @@ distanceLabel.TextScaled = true
 distanceLabel.TextColor3 = Color3.new(1, 1, 1)
 distanceLabel.TextStrokeTransparency = 0.4
 distanceLabel.Text = "Time your release!"
-distanceLabel.Parent = screenGui
+distanceLabel.Parent = flightHudFrame
 
 -- The bar track: a fixed vertical strip. The moving indicator's Y POSITION inside
 -- it (not its size) is the swing position -- "the bar IS the swing position."
+-- LEFT side of the screen, vertically centred (mirrored from its old right-
+-- side spot -- see the written report): the DISMOUNT button now takes the
+-- middle of the right-hand side instead (see dismountButton below).
 local barTrack = Instance.new("Frame")
 barTrack.Name = "SwingBarTrack"
-barTrack.AnchorPoint = Vector2.new(1, 0.5)
-barTrack.Position = UDim2.new(0.97, 0, 0.5, 0)
+barTrack.AnchorPoint = Vector2.new(0, 0.5)
+barTrack.Position = UDim2.new(0.03, 0, 0.5, 0)
 barTrack.Size = UDim2.new(0, 36, 0, 360)
 barTrack.BackgroundColor3 = Color3.new(0.1, 0.1, 0.1)
 barTrack.BackgroundTransparency = 0.25
 barTrack.BorderSizePixel = 0
-barTrack.Parent = screenGui
+barTrack.Parent = flightHudFrame
 
 local barTrackCorner = Instance.new("UICorner")
 barTrackCorner.CornerRadius = UDim.new(0, 8)
@@ -613,10 +664,12 @@ barIndicatorGlow.Parent = barIndicator
 -- gradual-ramp range, a distinct brighter look when in the sweet spot. Reads as
 -- a smoothly climbing/falling number now (grading removed the flat "2x!" snap
 -- text) -- the hit/miss signal lives in the bar, not in this label freezing.
+-- Mirrored to sit right above the bar's own NEW left-side spot (see
+-- barTrack above).
 local multiplierLabel = Instance.new("TextLabel")
 multiplierLabel.Name = "MultiplierReadout"
-multiplierLabel.AnchorPoint = Vector2.new(1, 1)
-multiplierLabel.Position = UDim2.new(0.97, 0, 0.5, -190)
+multiplierLabel.AnchorPoint = Vector2.new(0, 1)
+multiplierLabel.Position = UDim2.new(0.03, 0, 0.5, -190)
 multiplierLabel.Size = UDim2.new(0, 120, 0, 40)
 multiplierLabel.BackgroundTransparency = 1
 multiplierLabel.Font = Enum.Font.GothamBold
@@ -624,7 +677,7 @@ multiplierLabel.TextScaled = true
 multiplierLabel.TextColor3 = Color3.new(1, 1, 1)
 multiplierLabel.TextStrokeTransparency = 0.4
 multiplierLabel.Text = "0.75x"
-multiplierLabel.Parent = screenGui
+multiplierLabel.Parent = flightHudFrame
 
 -- Outcome readout: the short result word (see LaunchConfig.OUTCOME_BANDS),
 -- set once per release, in doRelease below, from the same phase the release
@@ -648,7 +701,7 @@ outcomeLabel.TextScaled = true
 outcomeLabel.TextColor3 = Color3.new(0.75, 0.75, 0.8)
 outcomeLabel.TextStrokeTransparency = 0.5
 outcomeLabel.Text = ""
-outcomeLabel.Parent = screenGui
+outcomeLabel.Parent = flightHudFrame
 
 -- Distance sub-readout: small and muted on purpose -- the player launches for
 -- luck, not studs, so luck gets the big primary line (see distanceLabel's
@@ -666,7 +719,7 @@ distanceSubLabel.TextScaled = true
 distanceSubLabel.TextColor3 = Color3.new(0.6, 0.6, 0.65)
 distanceSubLabel.TextStrokeTransparency = 0.6
 distanceSubLabel.Text = ""
-distanceSubLabel.Parent = screenGui
+distanceSubLabel.Parent = flightHudFrame
 
 local releaseButton = Instance.new("TextButton")
 releaseButton.Name = "ReleaseButton"
@@ -678,11 +731,64 @@ releaseButton.Font = Enum.Font.GothamBold
 releaseButton.TextScaled = true
 releaseButton.TextColor3 = Color3.new(1, 1, 1)
 releaseButton.Text = "RELEASE!"
-releaseButton.Parent = screenGui
+releaseButton.Parent = flightHudFrame
 
 local releaseButtonCorner = Instance.new("UICorner")
 releaseButtonCorner.CornerRadius = UDim.new(0, 10)
 releaseButtonCorner.Parent = releaseButton
+
+-- Return hint: the ONLY affordance telling a player, once frozen at their
+-- landing spot with the reward sequence fully resolved, that a click/tap
+-- anywhere sends them back to their own swing -- see the click-anywhere
+-- listener and refreshReturnAffordance below. Sits at the same screen
+-- position the release button occupies (both anchored/positioned near the
+-- bottom-centre) -- safe now that flightHudFrame (which owns the release
+-- button) and this label are never visible at the same time: this label
+-- only shows while grounded, and flightHudFrame only shows while NOT
+-- grounded (see setGrounded). Hidden by default; kept in sync with both
+-- `grounded` and whether the character is actually frozen by
+-- refreshReturnAffordance, not a plain assignment.
+local returnHintLabel = Instance.new("TextLabel")
+returnHintLabel.Name = "ReturnHint"
+returnHintLabel.AnchorPoint = Vector2.new(0.5, 1)
+returnHintLabel.Position = UDim2.new(0.5, 0, 0.86, 0)
+returnHintLabel.Size = UDim2.new(0, 420, 0, 32)
+returnHintLabel.BackgroundTransparency = 1
+returnHintLabel.Font = Enum.Font.GothamBold
+returnHintLabel.TextScaled = true
+returnHintLabel.TextColor3 = Color3.new(1, 1, 1)
+returnHintLabel.TextStrokeTransparency = 0.4
+returnHintLabel.Text = "Click or tap anywhere to return to your swing"
+returnHintLabel.Visible = false
+returnHintLabel.Parent = screenGui
+
+-- Dismount button: visible ONLY while actually RIDING -- narrower than
+-- flightHudFrame's own "riding, flying, or box" window (see setMounted
+-- below, the single place this and `mounted` change together) -- lets a
+-- player back off a swing they mounted but don't want to launch from,
+-- without waiting through an unwanted flight/box sequence. Middle of the
+-- right-hand side -- the bar moved to the LEFT (see barTrack above) to
+-- clear this exact spot. ZIndex explicitly above flightHudFrame's default
+-- (see the written report -- dismount button not responding): belt-and-
+-- braces on top of flightHudFrame.Active = false, so this is never
+-- ambiguous about which of the two wins a click even if that changes later.
+local dismountButton = Instance.new("TextButton")
+dismountButton.Name = "DismountButton"
+dismountButton.AnchorPoint = Vector2.new(1, 0.5)
+dismountButton.Position = UDim2.new(0.97, 0, 0.5, 0)
+dismountButton.Size = UDim2.new(0, 160, 0, 44)
+dismountButton.BackgroundColor3 = Color3.new(0.18, 0.18, 0.22)
+dismountButton.Font = Enum.Font.GothamBold
+dismountButton.TextScaled = true
+dismountButton.TextColor3 = Color3.new(1, 1, 1)
+dismountButton.Text = "DISMOUNT"
+dismountButton.ZIndex = 2
+dismountButton.Visible = false
+dismountButton.Parent = screenGui
+
+local dismountButtonCorner = Instance.new("UICorner")
+dismountButtonCorner.CornerRadius = UDim.new(0, 10)
+dismountButtonCorner.Parent = dismountButton
 
 -- ===== Mystery box UI: hidden until BoxStarted, shown center-screen as a
 -- distinct modal-ish panel (not just another HUD label) since this is its own
@@ -883,6 +989,25 @@ local function renderBarForPhase(phase: number)
 end
 
 -- ===== State =====
+
+-- Whether THIS client's own character is currently frozen -- Anchored, with
+-- AutoRotate off -- which only happens (see LaunchServer.server.luau's
+-- Heartbeat landing handler) between landing and a successful return: the
+-- server keeps a landed player anchored all the way through the box and the
+-- slime reveal, specifically so the Humanoid controller (and, on mobile,
+-- tap-to-move) categorically cannot move them until they choose to leave.
+-- Read directly off the character's own RootPart.Anchored (an ordinary
+-- replicated BasePart property) rather than a second, locally tracked flag,
+-- so this can never drift out of sync with the actual server-side freeze --
+-- see refreshReturnAffordance below and the click-anywhere listener further
+-- down, both of which call this fresh rather than caching it.
+local function characterIsFrozen(): boolean
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local rootPart = humanoid and humanoid.RootPart
+	return rootPart ~= nil and rootPart.Anchored
+end
+
 local canRelease = true
 -- AUTOMATIC PROXIMITY MOUNTING (see the written report): true only between
 -- this client's own RidingAssigned (server-side proximity mount) and the
@@ -895,11 +1020,55 @@ local canRelease = true
 -- dying mid-ride, which the server also resets to "grounded" for, see
 -- LaunchServer.server.luau's clearActiveRider -- never leaves a stale true
 -- behind that would otherwise PivotTo a brand-new character onto a seat the
--- server no longer thinks it owns.
+-- server no longer thinks it owns. Also drives the DISMOUNT button's own
+-- visibility (see setMounted) -- visible only in exactly this window, a
+-- narrower one than flightHudFrame's own "riding, flying, or box."
 local mounted = false
 
+local function setMounted(value: boolean)
+	mounted = value
+	dismountButton.Visible = value
+end
+
+-- PLAYER-TRIGGERED RETURN (see the written report): true exactly when the
+-- server's own states[player] == "grounded" -- starts true (a fresh/
+-- respawned character always starts grounded, same reasoning `mounted`
+-- starts false), flips false the instant this client's own RidingAssigned
+-- arrives (mounting), and flips back true the instant ResetReady arrives
+-- (the reward sequence -- landing, box, reveal -- has fully resolved). Those
+-- are the SAME two remotes that already drive `mounted`/`canRelease`, so
+-- `grounded` never needs its own server round-trip to stay in sync -- it is
+-- always the logical complement of "currently riding/flying/boxing," which
+-- is exactly what those two events already bracket. Also drives
+-- flightHudFrame's own visibility (see setGrounded) -- the OPPOSITE of
+-- `grounded`, since the whole flight HUD only means something in exactly
+-- the window `grounded` is false.
+local grounded = true
+
+-- The return hint shows under a NARROWER condition than `grounded` alone
+-- (see the written report): `grounded` alone stays true for ordinary
+-- walking-around-the-lane time too (right after a return, or at first
+-- spawn), where a click/tap must NOT re-fire the return -- only while the
+-- character is ALSO still frozen at the landing spot does clicking actually
+-- do anything, so the hint only shows then. Called from setGrounded's own
+-- transitions (the only two moments frozen state can meaningfully change
+-- while this runs) AND, optimistically, right after the click-anywhere
+-- listener fires the remote -- see that connection below -- so the hint
+-- disappears the instant a return is triggered, not on the next state
+-- transition.
+local function refreshReturnAffordance()
+	returnHintLabel.Visible = grounded and characterIsFrozen()
+end
+
+local function setGrounded(value: boolean)
+	grounded = value
+	flightHudFrame.Visible = not value
+	refreshReturnAffordance()
+end
+
 player.CharacterAdded:Connect(function()
-	mounted = false
+	setMounted(false)
+	setGrounded(true)
 end)
 
 local function doRelease()
@@ -977,10 +1146,73 @@ end
 
 boxButton.MouseButton1Click:Connect(doBoxPress)
 
+-- EXIT button: lets a player who mounted but hasn't released yet back off
+-- their swing instead of being forced to sit through a flight they didn't
+-- mean to start. Refuses locally while not actually mounted -- same
+-- "don't let the HUD get out of sync with a press the server was always
+-- going to reject anyway" reasoning doRelease's own `mounted` guard uses --
+-- though the button is only ever visible while `mounted` in the first
+-- place (see setMounted), so this is a defensive backstop, not the primary
+-- gate. LaunchServer.server.luau's onDismount is the REAL gate
+-- (states[player] == "riding"), re-checked server-side regardless of
+-- anything this button claims.
+local function doDismount()
+	if not mounted then
+		return
+	end
+	dismountRemote:FireServer()
+end
+
+dismountButton.MouseButton1Click:Connect(doDismount)
+
+-- A MOUSE click OR a TOUCH tap -- while grounded AND actually frozen at the
+-- landing spot, nowhere else -- returns the player to their own swing (see
+-- the written report). Server-authoritative: returnToSwingRemote carries no
+-- data, and LaunchServer.server.luau's onReturnToSwing re-checks
+-- states[player] == "grounded" itself before moving anything, so these
+-- local gates are purely to avoid firing a pointless remote (and, for
+-- touch, to avoid hijacking movement -- see below), not a trust boundary.
+--
+-- BOTH input types now require characterIsFrozen() (see its own comment,
+-- defined above with the rest of this client's state), not just `grounded`
+-- alone: `grounded` alone stays true for ordinary walking-around-the-lane
+-- time too (right after a return, or at first spawn), where a click must do
+-- nothing -- only while the character is ALSO still frozen does clicking
+-- actually mean "return."
+--
+-- TOUCH SPECIFICALLY (see the written report): Roblox's default mobile
+-- control scheme drives ordinary walking via tap-to-move, which fires this
+-- SAME InputBegan event, with gameProcessedEvent == false, for every
+-- movement tap -- the built-in character controller consumes it through its
+-- own bound action, not through GUI hit-testing, so gameProcessedEvent
+-- can't distinguish "tapped to walk" from "tapped to return." Gating touch
+-- on characterIsFrozen() resolves that unambiguously: the server keeps a
+-- landed player Anchored all the way through the box and reveal
+-- specifically so they categorically CANNOT be moved by the Humanoid
+-- controller (see LaunchServer.server.luau's Heartbeat landing handler and
+-- onReturnToSwing) -- a tap during that window can ONLY mean "return," tap-
+-- to-move has nothing to compete with. The instant onReturnToSwing
+-- unanchors the root, taps go back to meaning "walk" and are no longer
+-- treated as a return gesture. MOUSE never had this ambiguity to begin with
+-- (the default PC control scheme drives walking from WASD, not clicks), but
+-- is now gated the same way for consistency with the hint's own visibility
+-- (see refreshReturnAffordance) -- what the hint promises is exactly what
+-- either input type now does.
+local RETURN_TRIGGER_MOUSE_TYPES = {
+	[Enum.UserInputType.MouseButton1] = true,
+	[Enum.UserInputType.MouseButton2] = true,
+	[Enum.UserInputType.MouseButton3] = true,
+}
+
 -- Space does double duty: release the swing normally, or press the box when
 -- one's up -- never both at once, since boxActive and canRelease can't be
 -- simultaneously true (see resetReadyRemote's guard below).
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+	-- Ignore any click/tap the engine already routed to a GUI element (a
+	-- button, this HUD's own panels, the Inventory/Swing Shop windows) --
+	-- WITHOUT this check, pressing the Inventory or Swing Shop button would
+	-- also count as "click anywhere" and immediately teleport the player
+	-- back to their swing on every single press.
 	if gameProcessedEvent then
 		return
 	end
@@ -990,6 +1222,20 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 		else
 			doRelease()
 		end
+		return
+	end
+	if not grounded then
+		return
+	end
+	local isReturnTrigger = RETURN_TRIGGER_MOUSE_TYPES[input.UserInputType] or input.UserInputType == Enum.UserInputType.Touch
+	if isReturnTrigger and characterIsFrozen() then
+		returnToSwingRemote:FireServer()
+		-- Optimistic: the ONLY way `characterIsFrozen()` ever goes false
+		-- while `grounded` stays true is a successful return (see
+		-- onReturnToSwing) -- hide the hint immediately rather than waiting
+		-- for a further event, since nothing else will trigger a refresh
+		-- until the NEXT setGrounded/setMounted transition.
+		refreshReturnAffordance()
 	end
 end)
 
@@ -1030,8 +1276,12 @@ flightStartedRemote.OnClientEvent:Connect(function(distance: number, archHeight:
 	-- flight ends the server puts this player back in "grounded" (via
 	-- box/cooldown, see LaunchServer.server.luau), not straight back onto
 	-- the seat -- so nothing should try to PivotTo them onto the seat again
-	-- until a fresh RidingAssigned actually arrives.
-	mounted = false
+	-- until a fresh RidingAssigned actually arrives. Also hides the DISMOUNT
+	-- button -- there is nothing left to dismount FROM once a flight is
+	-- already underway (the server's own onDismount would reject it too,
+	-- see its own guard). flightHudFrame stays visible regardless -- see
+	-- setGrounded -- `grounded` doesn't change here, only `mounted`.
+	setMounted(false)
 	flightDistance = distance
 	flightArcHeight = archHeight
 	flightDuration = duration
@@ -1050,6 +1300,11 @@ end)
 
 resetReadyRemote.OnClientEvent:Connect(function()
 	canRelease = true
+	-- The reward sequence (landing, box, reveal) has fully resolved -- the
+	-- player is grounded again, right where they landed (see the written
+	-- report: the return is no longer automatic). Shows the click-anywhere
+	-- hint and re-arms the listener above.
+	setGrounded(true)
 	-- Defensive cleanup, not the normal path (a box that OPENED already hides
 	-- itself below on its own timer): if ResetReady ever arrives while a box
 	-- is still marked active for any reason, this guarantees no stuck box UI
@@ -1156,8 +1411,13 @@ ridingAssignedRemote.OnClientEvent:Connect(function()
 	-- swing seat (see LaunchServer.server.luau's mountPlayer -- automatic
 	-- proximity mounting, no button/prompt/keypress involved). This is the
 	-- one and only place `mounted` is set true -- see its declaration above
-	-- for every place it goes false again.
-	mounted = true
+	-- for every place it goes false again. Also shows the DISMOUNT button.
+	setMounted(true)
+	-- No longer grounded -- hides the click-anywhere hint, disarms the
+	-- return listener, and shows the rest of the flight HUD (distance/
+	-- multiplier/bar/release button) for the duration of the ride/flight/box
+	-- sequence -- see setGrounded.
+	setGrounded(false)
 
 	-- Ack readiness -- see LaunchServer.server.luau's mountPlayer watchdog.
 	-- Reaching this line at all already proves every WaitForChild gate above

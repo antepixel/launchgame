@@ -28,6 +28,11 @@ export type LaunchConfig = {
 	SWING_BASE_PIVOT_HEIGHT_ABOVE_GROUND: number,
 	RIDER_SEAT_HEIGHT_OFFSET: number,
 	SWING_MOUNT_RADIUS_STUDS: number,
+	SWING_MOUNT_RADIUS_MARKER_COLOR: Color3,
+	SWING_MOUNT_RADIUS_MARKER_TRANSPARENCY: number,
+	SWING_MOUNT_RADIUS_MARKER_MATERIAL: Enum.Material,
+	SWING_MOUNT_RADIUS_MARKER_THICKNESS: number,
+	SWING_MOUNT_RADIUS_MARKER_Y_OFFSET: number,
 	SWING_RETURN_CLEARANCE_STUDS: number,
 	SWEET_SPOT_PHASE: number,
 	SWEET_SPOT_WIDTH: number,
@@ -221,42 +226,77 @@ local LaunchConfig: LaunchConfig = {
 	-- assumed.
 	RIDER_SEAT_HEIGHT_OFFSET = 2.0,
 	-- Studs: how close a GROUNDED player's HumanoidRootPart must come to
-	-- their OWN swing seat's CURRENT (moving) position -- swingSeatPosition
-	-- (swingTheta(swingPhase(laneIndex)), pivot), the exact same closed-form
-	-- point onRelease launches from -- before LaunchServer's proximity check
-	-- auto-mounts them. Deliberately modest: at tier 1 the seat's own rest
-	-- position already sits only SWING_PIVOT_Z - SWING_ROPE_LENGTH studs from
-	-- the pivot -- too large a radius here would make the seat's own idle
-	-- position reach into mount range on its own. Kept small enough to read
-	-- as "you walked up to it," not "you were nearby." Each lane's base sits
-	-- much farther back than this (see BaseConfig.BASE_PLOT_CENTER_Z), so it
-	-- was never the binding constraint on this number.
-	SWING_MOUNT_RADIUS_STUDS = 5,
+	-- their OWN swing pivot's X/Z -- HORIZONTAL distance only, Y dropped
+	-- entirely -- before LaunchServer's proximity check auto-mounts them
+	-- (see checkProximityMounts).
+	--
+	-- MEASURED FROM THE PIVOT, NOT THE SEAT (see the written report): the
+	-- seat is a small target constantly swinging through
+	-- SWING_ARC_HALF_ANGLE_DEGREES either side of vertical -- measuring
+	-- against its live position meant a player effectively had to walk into
+	-- the seat itself, at whatever instant the Heartbeat sampled it, to ever
+	-- register. The pivot's X/Z never move (SwingBuilder.build only ever
+	-- touches its Y -- see SwingGeometry.pivotYForScale) -- measuring
+	-- against that instead, with Y dropped, turns mounting into a fixed
+	-- circle on the ground around the frame's own footprint, and makes a
+	-- tier-11 frame (whose pivot sits far higher off the ground than tier
+	-- 1's) exactly as easy to mount as tier 1, since height was never part
+	-- of the check to begin with.
+	--
+	-- SIZED TO THE FRAME, NOT THE SEAT: SwingTierVisuals' footprint clamp
+	-- caps every tier-7-and-up frame at ~35.01 studs wide (half-width
+	-- ~17.5), centred on the pivot's own X -- see FOOTPRINT_SCALE_MAX's own
+	-- comment. 18 clears that half-width with a small margin (covers
+	-- standing anywhere near the frame, not just dead-centre on the seat)
+	-- while staying well clear of the ADJACENT lane: lanes sit
+	-- LaneConfig.laneCenterX's own 40-stud pitch apart, so two neighbouring
+	-- mount circles (18 + 18 = 36) leave a 4-stud gap between them -- this
+	-- circle can never reach, let alone overlap, an adjacent lane's own
+	-- pivot (40 studs away, more than double this radius).
+	SWING_MOUNT_RADIUS_STUDS = 18,
+	-- ===== Mount radius marker (see the written report): a flat, non-
+	-- collidable disc MapBuilder.server.luau draws on the ground at every
+	-- lane's own pivot X/Z, radius SWING_MOUNT_RADIUS_STUDS -- a visible
+	-- "here's where auto-mount kicks in" hitbox, built once for all
+	-- LANE_COUNT lanes whether or not that lane's player has joined yet,
+	-- same as the rest of the plot dressing. Colour/transparency broken out
+	-- here, separately from the radius itself, purely so this can be tuned
+	-- (or made invisible -- Transparency = 1) without touching the actual
+	-- mount-detection math above. =====
+	SWING_MOUNT_RADIUS_MARKER_COLOR = Color3.fromRGB(90, 200, 255),
+	-- High by design -- a loud, opaque circle would compete with the frame
+	-- and the ground beneath it for attention; this should read as a faint
+	-- "range ring," visible on inspection, not a bright decal.
+	SWING_MOUNT_RADIUS_MARKER_TRANSPARENCY = 0.75,
+	-- Neon reads clearly as an indicator/overlay rather than a physical
+	-- ground material, distinguishing it at a glance from the mat/path/edge
+	-- parts (all Concrete/Pebble) it sits alongside.
+	SWING_MOUNT_RADIUS_MARKER_MATERIAL = Enum.Material.Neon,
+	-- Vertical thickness of the disc -- thin, a decal-like marker, not a
+	-- physical slab.
+	SWING_MOUNT_RADIUS_MARKER_THICKNESS = 0.15,
+	-- Studs above groundY the disc's CENTER sits -- just enough to clear the
+	-- bare ground plane it's drawn on (the swing pivot sits on open ground,
+	-- not on the mat -- see LaneConfig.SWING_PIVOT_Z vs. BaseConfig.
+	-- BASE_PLOT_CENTER_Z) without z-fighting it.
+	SWING_MOUNT_RADIUS_MARKER_Y_OFFSET = 0.05,
 	-- Studs ADDED to LaneConfig.SWING_PIVOT_Z (never subtracted -- this is the
 	-- spawn/base side of the pivot, the same side SPAWN_Z sits on) to get a
 	-- GROUNDED player's return position after a flight's reward sequence
-	-- resolves (see LaunchServer.server.luau's scheduleReset) -- X is that
+	-- resolves (see LaunchServer.server.luau's onReturnToSwing) -- X is that
 	-- lane's own laneCenterX, Y is groundY, so this is the only geometry this
 	-- number has to get right.
 	--
-	-- Must clear SWING_MOUNT_RADIUS_STUDS from the seat's CURRENT (moving,
-	-- swinging) position at every phase of the cycle, at EVERY tier, not just
-	-- the seat's phase=0 rest position -- checkProximityMounts re-tests every
-	-- Heartbeat once the player is back to "grounded", so a return point that
-	-- only clears the rest position but drifts inside the radius at some
-	-- OTHER phase would auto-remount the player the moment the swing's own
-	-- sweep carries the seat back close enough, not on a deliberate walk-in.
-	-- TIER 1 is the binding case, not tier 11: a taller frame lifts the seat
-	-- (and the whole arc it sweeps) HIGHER above the ground the return point
-	-- sits on, which only ever increases the 3D distance from a fixed
-	-- ground-level point -- verified by sampling every phase at every tier's
-	-- own SwingTierVisuals.scale (1.0 .. 3.6): the closest the seat ever gets
-	-- to this return point, across the whole cycle, is ~6.43 studs at tier 1
-	-- (comfortably over the 5-stud radius) and only grows from there, up to
-	-- ~11.86 studs at tier 11 -- see the written report for the full per-tier
-	-- table. 10 clears tier 1 with a ~1.4-stud margin without pushing the
-	-- return point needlessly far from the swing at every other tier.
-	SWING_RETURN_CLEARANCE_STUDS = 10,
+	-- Must clear SWING_MOUNT_RADIUS_STUDS, or a player who returns gets
+	-- auto-remounted the instant they land there. Simpler to verify than it
+	-- used to be: checkProximityMounts now measures pure HORIZONTAL (X/Z)
+	-- distance from the PIVOT, not 3D distance from the live swinging seat
+	-- (see SWING_MOUNT_RADIUS_STUDS's own comment) -- and the return
+	-- position shares its X exactly with the pivot's own X (both are that
+	-- lane's laneCenterX), so the distance being checked is just this
+	-- constant itself, with no tier, phase, or Y term left to sample. 22 >
+	-- 18 with a clean 4-stud margin, at every tier, unconditionally.
+	SWING_RETURN_CLEARANCE_STUDS = 22,
 	-- Where in the cycle (0-1, fraction of SWING_PERIOD_SECONDS) counts as the
 	-- sweet spot. 0.25 = the forward extreme of the arc, where the swing
 	-- momentarily pauses before reversing -- chosen deliberately over the center
