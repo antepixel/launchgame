@@ -8,7 +8,7 @@
 -- WORLD X still comes from that player's own lane index, just a wider,
 -- independent pitch, never an offset computed here. The ten slot pads are
 -- a real 2-column x 5-row grid (BASE_GRID_COLUMNS = 2), landing exactly on
--- X = baseX +-11, Z = 71/85/99/113/127 -- see BaseGeometry.luau's
+-- X = baseX +-11, Z = 117/131/145/159/173 -- see BaseGeometry.luau's
 -- slotPosition, which reads every grid constant below. The pads, same as
 -- the surrounding plot (mat, central path, side/back edges), are static
 -- per-lane world dressing built once at server start by
@@ -75,8 +75,11 @@ local BaseConfig: BaseConfig = {
 	BASE_SLOT_COLUMN_SPACING_STUDS = 22,
 	-- Studs between adjacent rows (Z).
 	BASE_SLOT_ROW_SPACING_STUDS = 14,
-	-- Z of the FIRST row (slot 1/2). Rows then run 71, 85, 99, 113, 127.
-	BASE_SLOT_Z_START = 71,
+	-- Z of the FIRST row (slot 1/2). Rows then run 117, 131, 145, 159, 173 --
+	-- shifted +46 along with the whole plot (see BASE_PLOT_CENTER_Z below)
+	-- when the shop walkway moved from behind the bases to between the
+	-- swings and the bases -- see the written report.
+	BASE_SLOT_Z_START = 117,
 
 	-- ===== Visuals =====
 	-- Each slot's pad -- a flat marker showing where a slime would go,
@@ -105,8 +108,18 @@ local BaseConfig: BaseConfig = {
 	-- comes from LaneConfig.baseLaneCenterX(baseIndex)). All Y offsets are
 	-- ABOVE ground level (BaseGeometry's own groundY, read from the
 	-- Baseplate, never hardcoded), even though they happen to equal the
-	-- literal numbers given while groundY is 0 on this map. =====
-	BASE_PLOT_CENTER_Z = 104,
+	-- literal numbers given while groundY is 0 on this map.
+	--
+	-- MOVED +46 (was 104, see the written report): the shop walkway used to
+	-- sit BEHIND every plot (PathConfig.BACK_WALKWAY_Z, then 174) --
+	-- reaching a shop meant walking past your entire base first. The
+	-- walkway moved to Z = 62, between the swings and the bases, so the
+	-- plots had to move back by the same +46 to keep clear of it: the mat's
+	-- own front edge (BASE_PLOT_CENTER_Z - BASE_MAT_SIZE.Z / 2 = 150 - 42 =
+	-- 108) now sits past the walkway's own back edge (62 + 9 = 71), with
+	-- PathConfig's new Spur bridging the 62-108 gap between them -- see
+	-- PathConfig.luau. =====
+	BASE_PLOT_CENTER_Z = 150,
 
 	-- The mat: sits flush on the ground (Y offset = size.Y/2).
 	BASE_MAT_SIZE = Vector3.new(44, 0.4, 84),
@@ -127,9 +140,11 @@ local BaseConfig: BaseConfig = {
 	BASE_SIDE_EDGE_X_OFFSET = 22.5,
 	BASE_SIDE_EDGE_Y_OFFSET = 0.55,
 
-	-- Back edge: one per lane, closing off the far end of the plot.
+	-- Back edge: one per lane, closing off the far end of the plot. Shifted
+	-- +46 along with BASE_PLOT_CENTER_Z above (146 -> 192 = new plot centre
+	-- 150 + mat half-depth 42, same relationship as before).
 	BASE_BACK_EDGE_SIZE = Vector3.new(46, 1.1, 1),
-	BASE_BACK_EDGE_Z = 146,
+	BASE_BACK_EDGE_Z = 192,
 	BASE_BACK_EDGE_Y_OFFSET = 0.55,
 
 	-- Side and back edges share one colour/material.

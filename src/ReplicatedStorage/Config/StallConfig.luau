@@ -74,7 +74,15 @@ export type StallConfig = {
 
 local StallConfig: StallConfig = {
 	STALL_X_POSITIONS = { -222, 222 },
-	STALL_CENTER_Z = 174,
+	-- Moved from 174 (behind every plot) to level with the walkway -- see
+	-- PathConfig.BACK_WALKWAY_Z -- when the shop walkway moved from behind
+	-- the bases to between the swings and the bases -- see the written
+	-- report. 76, not 62: a later pass moved the walkway again, from 62 to
+	-- 76, to give the player's post-flight return position more clearance
+	-- (see PathConfig's own header) -- this follows it exactly, same as
+	-- STALL_SIGN_Z below. X positions, footprint, and "faces inward" logic
+	-- are all unchanged; only this Z and STALL_SIGN_Z move.
+	STALL_CENTER_Z = 76,
 	STALL_DEPTH = 30,
 
 	-- Four posts: X = x0 +- this, Z = STALL_CENTER_Z +- this -- all four
@@ -131,10 +139,12 @@ local StallConfig: StallConfig = {
 	STALL_HEAD_Y_OFFSET = 8.5,
 	STALL_HEAD_COLOR = Color3.fromRGB(226, 190, 148),
 
-	-- Sign: X = x0 + face*this, Z = its own STALL_SIGN_Z (162, NOT
-	-- STALL_CENTER_Z) -- stands forward of the stall itself.
+	-- Sign: X = x0 + face*this, Z = its own STALL_SIGN_Z (64, NOT
+	-- STALL_CENTER_Z) -- stands forward of the stall itself, same -12
+	-- offset from STALL_CENTER_Z the stall has always used (162 when
+	-- STALL_CENTER_Z was 174; 50 when it was 62; now 64 = 76 - 12).
 	STALL_SIGN_X_OFFSET = 12,
-	STALL_SIGN_Z = 162,
+	STALL_SIGN_Z = 64,
 	STALL_SIGN_LEG_SIZE = Vector3.new(1.6, 8, 1.6),
 	STALL_SIGN_LEG_Y_OFFSET = 4,
 	STALL_SIGN_LEG_COLOR = Color3.fromRGB(96, 66, 42),

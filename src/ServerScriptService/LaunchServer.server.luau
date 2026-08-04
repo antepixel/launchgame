@@ -148,6 +148,16 @@ local returnToSwingRemote = makeRemote("ReturnToSwing")
 -- (states[player] == "riding") and lane, same as ReturnToSwing above -- see
 -- onDismount below.
 local dismountRemote = makeRemote("Dismount")
+-- Server -> client: fires ONCE, right after onDismount below actually moves
+-- the player, so THIS client can clear its own `mounted` flag and stop
+-- driving the character onto the seat every RenderStepped -- see the
+-- written report (dismount investigation, round 2): without this, the
+-- client's own render loop kept PivotTo'ing the character back onto the
+-- still-swinging seat every frame, since nothing client-side ever knew the
+-- server had dismounted it (only FlightStarted/CharacterAdded ever cleared
+-- `mounted` before now) -- the server's own teleport won the race for one
+-- Heartbeat and then instantly lost it to the very next RenderStepped.
+local dismountedRemote = makeRemote("Dismounted")
 
 -- Reveal the whole subtree ATOMICALLY, now that every remote above already
 -- exists as this folder's child -- see the comment at the top of this
@@ -1200,6 +1210,12 @@ local function onDismount(player: Player)
 	end
 	moveToLaneReturn(character, humanoid, rootPart, laneIndex)
 	states[player] = "grounded"
+	-- Tells THIS client to clear its own `mounted` flag -- see
+	-- dismountedRemote's own comment above for why this is required, not
+	-- optional: without it, the client's render loop has no way to learn
+	-- the server just dismounted it, and keeps driving the character back
+	-- onto the seat every frame regardless of what the server just did.
+	dismountedRemote:FireClient(player)
 end
 
 dismountRemote.OnServerEvent:Connect(onDismount)

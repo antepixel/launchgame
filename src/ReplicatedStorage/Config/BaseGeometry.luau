@@ -39,8 +39,8 @@ local groundY = baseplate.Position.Y + baseplate.Size.Y / 2
 
 -- ===== Slot grid: TEN pads, a real 2-column x 5-row grid (see BaseConfig.
 -- BASE_GRID_COLUMNS) -- X = baseX +-11 (half of BASE_SLOT_COLUMN_SPACING_
--- STUDS), Z = BASE_SLOT_Z_START + row*BASE_SLOT_ROW_SPACING_STUDS (71, 85,
--- 99, 113, 127). The world position of slot i (1-indexed) within the given
+-- STUDS), Z = BASE_SLOT_Z_START + row*BASE_SLOT_ROW_SPACING_STUDS (117, 131,
+-- 145, 159, 173). The world position of slot i (1-indexed) within the given
 -- lane's base -- Y already includes BASE_SLOT_PAD_Y_OFFSET, same "the
 -- returned position IS the part's center, offset baked in" shape as
 -- matPosition/centralPathPosition/etc below, so this lands the pad flush on
@@ -71,8 +71,8 @@ function BaseGeometry.slotPositions(baseIndex: number): { Vector3 }
 end
 
 -- ===== Plot dressing: the mat, its central path, and the raised edges
--- framing it -- all centred on BaseConfig.BASE_PLOT_CENTER_Z (104), except
--- the back edge, which sits at its own BASE_BACK_EDGE_Z (146). Every Y is
+-- framing it -- all centred on BaseConfig.BASE_PLOT_CENTER_Z (150), except
+-- the back edge, which sits at its own BASE_BACK_EDGE_Z (192). Every Y is
 -- groundY (read from the Baseplate above, never hardcoded) plus that
 -- element's own offset -- see BaseConfig for why the central path's offset
 -- isn't simply size.Y/2 like the others. =====

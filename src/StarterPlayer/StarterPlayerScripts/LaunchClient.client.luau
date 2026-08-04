@@ -118,6 +118,12 @@ local returnToSwingRemoteMaybe = remotesFolder:WaitForChild("ReturnToSwing", REM
 -- LaunchServer.server.luau's onDismount for the server-side gate
 -- (states[player] == "riding") and the actual teleport.
 local dismountRemoteMaybe = remotesFolder:WaitForChild("Dismount", REMOTES_WAIT_TIMEOUT_SECONDS)
+-- Server -> client: fires ONCE, right after LaunchServer.server.luau's
+-- onDismount actually moves this player -- see its own comment for why
+-- this exists: without an explicit signal, this client's own render loop
+-- has no way to learn the server just dismounted it, and keeps driving the
+-- character back onto the seat every frame regardless.
+local dismountedRemoteMaybe = remotesFolder:WaitForChild("Dismounted", REMOTES_WAIT_TIMEOUT_SECONDS)
 
 if not (
 	releaseRemoteMaybe
@@ -131,6 +137,7 @@ if not (
 	and riderReadyRemoteMaybe
 	and returnToSwingRemoteMaybe
 	and dismountRemoteMaybe
+	and dismountedRemoteMaybe
 ) then
 	failLaunchHud("one or more remotes inside ReplicatedStorage.Remotes")
 	return
@@ -147,6 +154,7 @@ local ridingAssignedRemote = ridingAssignedRemoteMaybe :: RemoteEvent
 local riderReadyRemote = riderReadyRemoteMaybe :: RemoteEvent
 local returnToSwingRemote = returnToSwingRemoteMaybe :: RemoteEvent
 local dismountRemote = dismountRemoteMaybe :: RemoteEvent
+local dismountedRemote = dismountedRemoteMaybe :: RemoteEvent
 
 -- BUG FIX (see the written report -- six-lane pass 1): this used to be a
 -- bare "SwingPivot"/"SwingStructure" WaitForChild -- the single shared
@@ -1424,6 +1432,25 @@ ridingAssignedRemote.OnClientEvent:Connect(function()
 	-- succeeded and this script is listening/about to drive the character
 	-- every RenderStepped, which is exactly what the server is asking about.
 	riderReadyRemote:FireServer()
+end)
+
+-- Dismounted: the server just moved THIS client's character off the swing
+-- via the DISMOUNT button (see LaunchServer.server.luau's onDismount) --
+-- the ONLY thing that ever clears `mounted` outside of FlightStarted/
+-- CharacterAdded. REQUIRED, not optional (see the written report -- dismount
+-- investigation, round 2): without an explicit signal, `mounted` stayed
+-- true after a dismount, so the RenderStepped loop below kept PivotTo'ing
+-- the character back onto the seat's still-swinging position every single
+-- frame -- the server's own teleport won for one Heartbeat and then
+-- instantly lost to the very next RenderStepped, which is exactly what
+-- made the button look like it did nothing. Same two calls RidingAssigned's
+-- own handler makes, just the reverse direction -- no longer mounted, and
+-- grounded again (shows the return hint, re-arms the click-anywhere
+-- listener, shows the rest of the flight HUD as hidden), matching exactly
+-- what a normal post-landing return already does.
+dismountedRemote.OnClientEvent:Connect(function()
+	setMounted(false)
+	setGrounded(true)
 end)
 
 -- BUG FIX (real cause of the flight stutter, see the written report): a plain

@@ -1,8 +1,9 @@
 --!strict
 -- Builds the map blockout once, at server startup: the kerb along the road
 -- edge, each lane's plot (mat, central path, side/back edges), the paved
--- links connecting a lane's swing to its own base, the back walkway tying
--- every lane together, and the two shop stalls. Purely decorative/static --
+-- links connecting a lane's swing to its own base, the walkway tying every
+-- lane together (between the swings and the bases -- see PathConfig's own
+-- header), and the two shop stalls. Purely decorative/static --
 -- this script only ever CREATES new Workspace instances and never reads or
 -- writes anything the swing/launch/scoring logic depends on, so it cannot
 -- affect them.
@@ -180,20 +181,27 @@ for laneIndex = 0, LaneConfig.LANE_COUNT - 1 do
 		laneFolder
 	)
 
-	-- Angled link: swing side -> base side, oriented along the line
-	-- between the two (swingX and baseX are rarely equal, so this is
-	-- genuinely angled, not just a straight strip).
+	-- Angled link: swing side -> WALKWAY (see PathConfig's own header --
+	-- the walkway now sits between the swings and the bases, not behind
+	-- them), oriented along the line between the two (swingX and baseX are
+	-- rarely equal, so this is genuinely angled, not just a straight
+	-- strip).
 	local linkY = groundY + PathConfig.ANGLED_LINK_Y_OFFSET
 	local linkStart = Vector3.new(swingX, linkY, PathConfig.ANGLED_LINK_START_Z)
 	local linkEnd = Vector3.new(baseX, linkY, PathConfig.ANGLED_LINK_END_Z)
 	newFlatLink(linkStart, linkEnd, PathConfig.ANGLED_LINK_WIDTH, PathConfig.ANGLED_LINK_THICKNESS, PathConfig.PATH_MATERIAL, PathConfig.PATH_COLOR, "AngledLink", laneFolder)
 
-	-- Spur: behind the plot, still on baseX.
+	-- Spur: WALKWAY -> plot, still on baseX -- bridges the gap between the
+	-- walkway (reached first now) and the plot (moved back to clear it) so
+	-- a player can walk swing -> walkway -> base without ever stepping on
+	-- bare grass. See PathConfig.SPUR_Z/SPUR_SIZE's own comment for the
+	-- exact span.
 	local spurPosition = Vector3.new(baseX, groundY + PathConfig.SPUR_Y_OFFSET, PathConfig.SPUR_Z)
 	newBlock(PathConfig.SPUR_SIZE, spurPosition, PathConfig.PATH_MATERIAL, PathConfig.PATH_COLOR, "Spur", laneFolder)
 end
 
--- ===== Back walkway: ONE part, spanning every lane. =====
+-- ===== Walkway: ONE part, spanning every lane, between the swings and the
+-- bases (see PathConfig's own header for why it moved here). =====
 newBlock(
 	PathConfig.BACK_WALKWAY_SIZE,
 	Vector3.new(LaneConfig.ROAD_CENTER_X, groundY + PathConfig.BACK_WALKWAY_Y_OFFSET, PathConfig.BACK_WALKWAY_Z),
