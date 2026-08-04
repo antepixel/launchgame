@@ -1059,18 +1059,42 @@ local grounded = true
 -- spawn), where a click/tap must NOT re-fire the return -- only while the
 -- character is ALSO still frozen at the landing spot does clicking actually
 -- do anything, so the hint only shows then. Called from setGrounded's own
--- transitions (the only two moments frozen state can meaningfully change
--- while this runs) AND, optimistically, right after the click-anywhere
--- listener fires the remote -- see that connection below -- so the hint
--- disappears the instant a return is triggered, not on the next state
--- transition.
+-- transitions, the only moments this needs RE-EVALUATING (grounded flipping,
+-- or a fresh/respawned character starting frozen-or-not) -- the CLICK that
+-- actually triggers a return does NOT call this any more (see the written
+-- report -- HUD elements persisting after return): characterIsFrozen() reads
+-- a replicated property that hasn't caught up to that click yet at the
+-- instant it fires, so recomputing here would just recompute the same
+-- stale true. That listener now hides returnHintLabel directly instead --
+-- see its own comment.
 local function refreshReturnAffordance()
 	returnHintLabel.Visible = grounded and characterIsFrozen()
+end
+
+-- BUG FIX (see the written report -- HUD elements persisting after return):
+-- boxFrame and slimeRevealFrame are BOTH siblings of flightHudFrame, not
+-- children of it (see their own construction above) -- flightHudFrame.Visible
+-- alone never touches either. This used to be hidden only inline inside
+-- resetReadyRemote's own handler, which meant it only ever ran on THAT one
+-- path back to "grounded" -- a fresh/respawned CharacterAdded or a Dismounted
+-- re-entering "grounded" never cleared either, structurally, even though
+-- neither is reachable from those two paths TODAY. Centralised here instead,
+-- called from setGrounded itself, so every path that ever re-enters
+-- "grounded" clears the same set by construction, not by each remote's own
+-- handler remembering to.
+local function hideFlightBoxRevealUI()
+	boxActive = false
+	boxWaitingForResult = false
+	boxFrame.Visible = false
+	slimeRevealFrame.Visible = false
 end
 
 local function setGrounded(value: boolean)
 	grounded = value
 	flightHudFrame.Visible = not value
+	if value then
+		hideFlightBoxRevealUI()
+	end
 	refreshReturnAffordance()
 end
 
@@ -1238,12 +1262,22 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 	local isReturnTrigger = RETURN_TRIGGER_MOUSE_TYPES[input.UserInputType] or input.UserInputType == Enum.UserInputType.Touch
 	if isReturnTrigger and characterIsFrozen() then
 		returnToSwingRemote:FireServer()
-		-- Optimistic: the ONLY way `characterIsFrozen()` ever goes false
-		-- while `grounded` stays true is a successful return (see
-		-- onReturnToSwing) -- hide the hint immediately rather than waiting
-		-- for a further event, since nothing else will trigger a refresh
-		-- until the NEXT setGrounded/setMounted transition.
-		refreshReturnAffordance()
+		-- BUG FIX (see the written report -- HUD elements persisting after
+		-- return): this used to call refreshReturnAffordance() here, on the
+		-- assumption that characterIsFrozen() would already read false by
+		-- this point -- it never does: FireServer() doesn't yield, so this
+		-- runs synchronously, before the server has even received the
+		-- click, let alone unanchored the root. refreshReturnAffordance()
+		-- therefore recomputed the exact same true it already had, and
+		-- onReturnToSwing fires no remote back to the client, so nothing
+		-- ever corrected it afterward either -- the hint stayed up until
+		-- the player's NEXT setGrounded transition (their next mount).
+		-- Unconditional now instead of a re-check: reaching this branch at
+		-- all already means grounded and characterIsFrozen() were BOTH true
+		-- an instant ago, which is exactly what makes this click a real
+		-- return request -- so hide it outright, not contingent on a
+		-- property that hasn't replicated the consequence of this click yet.
+		returnHintLabel.Visible = false
 	end
 end)
 
@@ -1311,21 +1345,13 @@ resetReadyRemote.OnClientEvent:Connect(function()
 	-- The reward sequence (landing, box, reveal) has fully resolved -- the
 	-- player is grounded again, right where they landed (see the written
 	-- report: the return is no longer automatic). Shows the click-anywhere
-	-- hint and re-arms the listener above.
+	-- hint and re-arms the listener above. setGrounded(true) itself now also
+	-- force-hides boxFrame/slimeRevealFrame (see hideFlightBoxRevealUI) --
+	-- this used to be inlined here as a defensive backstop specific to this
+	-- one handler; centralising it means every OTHER path back to "grounded"
+	-- (a fresh/respawned CharacterAdded, Dismounted) gets the exact same
+	-- guarantee, not just this one.
 	setGrounded(true)
-	-- Defensive cleanup, not the normal path (a box that OPENED already hides
-	-- itself below on its own timer): if ResetReady ever arrives while a box
-	-- is still marked active for any reason, this guarantees no stuck box UI
-	-- survives into the next round -- ResetReady only ever fires once the
-	-- server-side sequence (box included) has fully resolved, so seeing it is
-	-- always a safe moment to force this closed.
-	boxActive = false
-	boxWaitingForResult = false
-	boxFrame.Visible = false
-	-- Same defensive guarantee, extended to the slime panel: a normal open
-	-- already hides this itself after RESET_DELAY (see SlimeRevealed below),
-	-- but ResetReady arriving is ALWAYS a safe moment to force it closed too.
-	slimeRevealFrame.Visible = false
 	distanceLabel.Text = "Time your release!"
 	distanceLabel.TextColor3 = Color3.new(1, 1, 1)
 end)
@@ -1826,72 +1852,6 @@ local function rescanRemoteLanes()
 	remoteLanes = scanned
 end
 
--- ===== TEMPORARY DEBUG INSTRUMENTATION -- Bug 3 investigation only, remove
--- once renderOtherLanes' actual behaviour is confirmed from Output.
---
--- BUG FIX (see the written report): the previous version of this only ever
--- printed once, on the FIRST rescan (~REMOTE_LANE_RESCAN_INTERVAL_SECONDS
--- after this client loads) -- which cannot tell "discovery is permanently
--- broken" apart from "the other five players just hadn't joined/built their
--- lane yet at that exact moment," since both look identical (0 lanes, one
--- print, silence forever after). Reports now instead whenever the CACHED
--- LANE COUNT actually CHANGES between rescans, plus unconditionally on the
--- very first rescan regardless of what it finds -- still not per-frame
--- (this only ever runs from inside the same throttled rescan branch
--- renderOtherLanes already gates on).
---
--- Also widened WHAT gets reported: rather than only describing lanes that
--- ALREADY made it into the cache (which tells you nothing about lanes
--- discovery is REJECTING), this does its own independent walk of
--- Workspace:GetChildren(), filtered by a PLAIN string.find for "SwingPivot"
--- (not SWING_PIVOT_NAME_PATTERN, and not restricted to BasePart) -- so a
--- pivot that exists but fails the pattern, the type check, the LaneIndex
--- attribute check, or the SwingStructure_<...> lookup still shows up here,
--- with enough detail to see exactly WHICH check it's failing.
---
--- LOOK FOR: "[LaunchClient][DEBUG-REMOTE-LANES]" in Output. =====
-local debugPreviousLaneCount: number? = nil
-local function debugReportOnLaneCountChange()
-	local currentLaneCount = #remoteLanes
-	if debugPreviousLaneCount ~= nil and currentLaneCount == debugPreviousLaneCount then
-		return
-	end
-	debugPreviousLaneCount = currentLaneCount
-
-	local workspaceChildren = Workspace:GetChildren()
-	print(string.format(
-		"[LaunchClient][DEBUG-REMOTE-LANES] localUserId=%s workspaceChildCount=%d cachedLaneCount=%d",
-		tostring(player.UserId),
-		#workspaceChildren,
-		currentLaneCount
-	))
-	for _, instance in workspaceChildren do
-		if string.find(instance.Name, "SwingPivot", 1, true) then
-			-- The pattern's one capture group IS the userIdText a real match
-			-- would produce -- reused directly for the structure lookup below
-			-- rather than re-deriving it, so this print can never disagree
-			-- with what rescanRemoteLanes itself would have done with the
-			-- same instance.
-			local capturedUserIdText = instance.Name:match(SWING_PIVOT_NAME_PATTERN)
-			local laneIndexAttribute = instance:GetAttribute("LaneIndex")
-			local structureFound = false
-			if capturedUserIdText then
-				structureFound = Workspace:FindFirstChild("SwingStructure_" .. capturedUserIdText) ~= nil
-			end
-			print(string.format(
-				"[LaunchClient][DEBUG-REMOTE-LANES]   name=%s className=%s matchesPattern=%s laneIndexValue=%s laneIndexType=%s structureFound=%s",
-				instance.Name,
-				instance.ClassName,
-				tostring(capturedUserIdText ~= nil),
-				tostring(laneIndexAttribute),
-				typeof(laneIndexAttribute),
-				tostring(structureFound)
-			))
-		end
-	end
-end
--- ===== END TEMPORARY DEBUG INSTRUMENTATION =====
-
 -- Renders every OTHER connected player's own lane, every frame, from the
 -- cache alone -- PivotTo itself must stay per-frame (that's the whole fix),
 -- only the Workspace WALK that discovers/refreshes the lane list is
@@ -1907,9 +1867,6 @@ local function renderOtherLanes()
 	if now - lastRemoteLaneScanClock >= LaunchConfig.REMOTE_LANE_RESCAN_INTERVAL_SECONDS then
 		lastRemoteLaneScanClock = now
 		rescanRemoteLanes()
-		-- TEMPORARY (see above) -- guarded internally, only prints on the
-		-- first rescan and again whenever the cached lane count changes.
-		debugReportOnLaneCountChange()
 	end
 
 	for _, lane in remoteLanes do
