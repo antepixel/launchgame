@@ -41,6 +41,7 @@ export type LaunchConfig = {
 	BOX_DOUBLE_CHANCE: number,
 	BOX_ROLL_DELAY_SECONDS: number,
 	SWING_TIER_DISTANCE_SCALE: { number },
+	REMOTE_LANE_RESCAN_INTERVAL_SECONDS: number,
 }
 
 local LaunchConfig: LaunchConfig = {
@@ -423,6 +424,18 @@ local LaunchConfig: LaunchConfig = {
 	-- to land just inside the LAST band on the road (see LuckCurve.VALUES),
 	-- not past it.
 	SWING_TIER_DISTANCE_SCALE = { 1.0, 3.0, 4.4, 6.4, 8.2, 9.2, 10.8, 11.6, 12.6, 13.8, 14.8 },
+
+	-- ===== Remote-lane rendering (client only -- see LaunchClient.client.
+	-- luau's renderOtherLanes/rescanRemoteLanes) =====
+	-- Seconds between rescans of Workspace for every OTHER player's own
+	-- SwingPivot_*/SwingStructure_* pair. Lanes only change on join, leave,
+	-- or a tier purchase rebuilding the structure -- never every frame --
+	-- so this is a throttle on the (relatively expensive) Workspace:
+	-- GetChildren() walk, not on rendering itself: PivotTo still runs every
+	-- single RenderStepped from whatever the cache currently holds,
+	-- regardless of this value. A fraction of a second is ample -- a lane
+	-- appearing/disappearing/rebuilding is never time-critical to notice.
+	REMOTE_LANE_RESCAN_INTERVAL_SECONDS = 0.5,
 }
 
 return LaunchConfig

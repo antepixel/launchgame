@@ -46,8 +46,23 @@ local devRebuildSwingEvent = ServerScriptService:WaitForChild("DevRebuildCurrent
 -- connection time. If Gate 1 above is ever loosened or removed by mistake
 -- (a bad edit, a copy-paste into a place that isn't actually Studio-gated
 -- the same way), this is what still stops anyone not explicitly listed in
--- DevConfig.ALLOWLISTED_USER_IDS from doing anything through this remote.
+-- DevConfig.ALLOWLISTED_USER_IDS from doing anything through this remote --
+-- UNLESS RunService:IsStudio() is ALSO true (see the written report -- Bug
+-- 2): Studio's own multi-client test mode hands every simulated client a
+-- placeholder UserId that can never match a real one hand-entered into
+-- ALLOWLISTED_USER_IDS, which otherwise made this panel unusable in exactly
+-- the mode it's needed for. Skipping the allowlist while IsStudio() is true
+-- does not weaken this gate's own defense-in-depth purpose: this whole file
+-- already returns before ever creating the remote when IsStudio() is false
+-- (see Gate 1), so the ONLY way this function's IsStudio() branch is ever
+-- reached at all is when Gate 1 already confirmed it -- a published server
+-- (IsStudio() always false there, and this file never even runs) still
+-- requires an allowlisted UserId if Gate 1 is ever bypassed, exactly as
+-- before.
 local function isAllowlisted(player: Player): boolean
+	if RunService:IsStudio() then
+		return true
+	end
 	return table.find(DevConfig.ALLOWLISTED_USER_IDS, player.UserId) ~= nil
 end
 

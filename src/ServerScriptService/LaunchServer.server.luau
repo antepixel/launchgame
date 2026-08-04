@@ -43,6 +43,24 @@ local PlayerProfile = require(ServerScriptService.PlayerProfile)
 
 Workspace.Gravity = LaunchConfig.GRAVITY
 
+-- BUG FIX (see the written report -- Bug 1, character spawns at the wrong
+-- lane): with CharacterAutoLoads left at its default (true), Roblox spawns a
+-- character for a newly-joined player automatically, on its own timeline,
+-- with no guarantee that happens after onLaneAssignmentPlayerAdded below has
+-- had a chance to set player.RespawnLocation to THIS player's own lane spawn
+-- -- and RespawnLocation has no retroactive effect on a character that
+-- already spawned. When the engine's own auto-spawn won that race, it fell
+-- back to choosing among all six enabled Neutral SpawnLocations, landing a
+-- player at a random lane instead of their own. Disabling CharacterAutoLoads
+-- removes the race outright: no character can exist for a player until this
+-- file explicitly calls player:LoadCharacter() itself, strictly after that
+-- player's own lane (and RespawnLocation) is already known -- see
+-- onLaneAssignmentPlayerAdded below. setupCharacter's own humanoid.Died
+-- handler is now also the ONLY thing that ever respawns a player after
+-- death, for the same reason (Roblox's automatic post-death respawn is also
+-- gated by this flag) -- see its own comment.
+Players.CharacterAutoLoads = false
+
 -- BUG FIX (see the written report): a client's WaitForChild("Remotes") could
 -- resolve to a Folder that ReplicatedStorage already has a reference to
 -- before every remote inside it exists -- Roblox replicates "this Instance
@@ -352,6 +370,14 @@ end
 local function destroyPlayerSwing(player: Player)
 	local pivot = playerSwingPivots[player]
 	if pivot then
+		-- Replicated occupant state (see the written report -- frozen remote
+		-- players): every other client's own render loop only ever acts on
+		-- "riding"/"flying" (see LaunchClient.client.luau's renderOtherLanes),
+		-- so this is mostly belt-and-braces -- the pivot is about to be
+		-- destroyed outright, which every client observes on its own -- but
+		-- it costs nothing and matches the same explicit reset every other
+		-- teardown path below now performs.
+		pivot:SetAttribute("RiderState", "empty")
 		pivot:Destroy()
 	end
 	local folder = playerSwingFolders[player]
@@ -459,12 +485,30 @@ local function onLaneAssignmentPlayerAdded(player: Player)
 			return
 		end
 		buildPlayerSwing(player, baseIndex)
-		-- This player's OWN lane spawn, so a respawn returns them next to
-		-- their own swing instead of Roblox picking any of the six at
-		-- random -- see laneSpawns above.
+		-- This player's OWN lane spawn -- kept as a FALLBACK for Roblox's own
+		-- spawn-selection inside LoadCharacter() below (and for any future
+		-- engine-driven respawn), not relied on by itself any more (see the
+		-- written report -- Bug 1): setupCharacter's own explicit PivotTo,
+		-- driven from this same baseIndex, is what actually guarantees this
+		-- player ends up standing at their own lane, whether or not this
+		-- assignment took effect.
 		local spawnPart = laneSpawns[baseIndex + 1]
 		if spawnPart then
 			player.RespawnLocation = spawnPart
+		end
+
+		-- CharacterAutoLoads is now false (see above) -- nothing spawns this
+		-- player's FIRST character except this explicit call, made only once
+		-- their own lane (and RespawnLocation) is already fully set up, so
+		-- there is no longer any window where a character could exist before
+		-- its lane is known. Re-checked here, not just relied on the earlier
+		-- guard above: buildPlayerSwing/the RespawnLocation assignment are
+		-- both synchronous (no yield), so player.Parent cannot actually have
+		-- changed since that check, but this keeps the guard sitting directly
+		-- next to the call it protects rather than several lines and two
+		-- other operations away.
+		if player.Parent then
+			player:LoadCharacter()
 		end
 	end)
 end
@@ -1026,6 +1070,18 @@ local function clearActiveRider(player: Player)
 	activeFlights[player] = nil
 	activeBoxes[player] = nil
 	riderReadyFlags[player] = nil
+	-- Replicated occupant state (see the written report -- frozen remote
+	-- players): a rider who dies or disconnects mid-ride/mid-flight must not
+	-- leave their pivot stuck reporting "riding"/"flying" forever -- every
+	-- OTHER client's own render loop (LaunchClient.client.luau's
+	-- renderOtherLanes) would otherwise keep trying to fly/seat a character
+	-- that's already respawned or gone. Reset here unconditionally, the same
+	-- "grounded, no matter what they were doing before" reasoning states[
+	-- player] below already uses.
+	local ownPivot = playerSwingPivots[player]
+	if ownPivot then
+		ownPivot:SetAttribute("RiderState", "empty")
+	end
 	-- "grounded", not "riding": this player has no character right now (or is
 	-- about to get a fresh one, see setupCharacter) -- there is nothing to
 	-- anchor them to, and a fresh/respawned character always starts grounded
@@ -1100,6 +1156,30 @@ end
 -- correct for whatever body type/HipHeight a given player's avatar has, not
 -- just the default rig.
 --
+-- THIS FILE NOW ALSO PivotTo's A CHARACTER'S FIRST SPAWN/RESPAWN DIRECTLY
+-- (see moveToLaneSpawn below and setupCharacter's own comment -- Bug 1,
+-- written report): RespawnLocation is kept as a fallback for Roblox's own
+-- spawn-selection inside LoadCharacter(), but is no longer trusted alone,
+-- so the same standing-height math this function already needed is needed
+-- there too, not just here.
+local function moveToLaneSpawn(character: Model, humanoid: Humanoid, rootPart: BasePart, laneIndex: number)
+	-- Same HipHeight + rootPart.Size.Y / 2 standing-height derivation as
+	-- moveToLaneReturn below -- see its own comment for why a bare groundY
+	-- would leave the rig embedded in the floor. X is this lane's own
+	-- swing-center X (matches LaneSpawn<N>'s own placed X -- see laneSpawns
+	-- above); Z is LaneConfig.SPAWN_Z, the SAME Z every LaneSpawn part is
+	-- placed at -- this is a SPAWN position, not the "return to swing after
+	-- a flight" position moveToLaneReturn computes, so it deliberately does
+	-- NOT reuse LaunchConfig.SWING_PIVOT_Z/SWING_RETURN_CLEARANCE_STUDS.
+	local standingHeight = humanoid.HipHeight + rootPart.Size.Y / 2
+	local spawnPosition = Vector3.new(
+		LaneConfig.laneCenterX(laneIndex),
+		groundY + standingHeight,
+		LaneConfig.SPAWN_Z
+	)
+	character:PivotTo(CFrame.lookAt(spawnPosition, spawnPosition + Vector3.new(0, 0, -1)))
+end
+
 -- THE SIX LANE SPAWNS DO NOT HAVE THIS PROBLEM (checked, not assumed): they
 -- are real SpawnLocation parts (see laneSpawns above) that Roblox's own
 -- built-in respawn logic places a character ON TOP OF automatically,
@@ -1110,7 +1190,7 @@ end
 -- PivotTo's a character to a bare ground-level Y -- landing and mounting
 -- both intentionally still use their own existing, unrelated height
 -- constants, not this one, and are untouched).
-local function moveToLaneReturn(character: Model, humanoid: Humanoid, rootPart: BasePart, laneIndex: number)
+local function moveToLaneReturn(character: Model, humanoid: Humanoid, rootPart: BasePart, laneIndex: number, pivot: BasePart?)
 	local standingHeight = humanoid.HipHeight + rootPart.Size.Y / 2
 	local returnPosition = Vector3.new(
 		LaneConfig.laneCenterX(laneIndex),
@@ -1120,6 +1200,15 @@ local function moveToLaneReturn(character: Model, humanoid: Humanoid, rootPart: 
 	character:PivotTo(CFrame.lookAt(returnPosition, returnPosition + Vector3.new(0, 0, -1)))
 	rootPart.Anchored = false
 	humanoid.AutoRotate = true
+	-- Replicated occupant state (see the written report -- frozen remote
+	-- players): the ONLY two callers of this function (onReturnToSwing,
+	-- onDismount below) are the only two places besides a landing that ever
+	-- take a rider off "riding"/"flying" without going through clearActiveRider
+	-- -- both now pass this player's own pivot so every other client's render
+	-- loop stops touching this character the instant the state flips.
+	if pivot then
+		pivot:SetAttribute("RiderState", "empty")
+	end
 end
 
 -- Fired by a GROUNDED player's own click-anywhere/tap listener once the
@@ -1159,7 +1248,7 @@ local function onReturnToSwing(player: Player)
 	if not humanoid or not rootPart or not laneIndex then
 		return
 	end
-	moveToLaneReturn(character, humanoid, rootPart, laneIndex)
+	moveToLaneReturn(character, humanoid, rootPart, laneIndex, playerSwingPivots[player])
 end
 
 returnToSwingRemote.OnServerEvent:Connect(onReturnToSwing)
@@ -1208,7 +1297,7 @@ local function onDismount(player: Player)
 	if not laneIndex then
 		return
 	end
-	moveToLaneReturn(character, humanoid, rootPart, laneIndex)
+	moveToLaneReturn(character, humanoid, rootPart, laneIndex, playerSwingPivots[player])
 	states[player] = "grounded"
 	-- Tells THIS client to clear its own `mounted` flag -- see
 	-- dismountedRemote's own comment above for why this is required, not
@@ -1259,8 +1348,35 @@ local function setupCharacter(player: Player, character: Model)
 
 	-- Captured once, right away, before this character's joints have ever
 	-- been touched by applyFlightPose -- see the bug-fix comment on
-	-- characterNeutralPose above.
+	-- characterNeutralPose above. Runs exactly once per character: setupCharacter
+	-- itself is only ever invoked from the two CharacterAdded connections/
+	-- catch-up checks at the bottom of this file, one call per distinct
+	-- character Model, so this can neither be skipped nor run twice for the
+	-- same character.
 	characterNeutralPose[character] = captureNeutralPose(character)
+
+	-- Explicit lane placement (see the written report -- Bug 1): runs for
+	-- EVERY character this script ever sees -- the first one LoadCharacter()
+	-- produces in onLaneAssignmentPlayerAdded, and every respawn this same
+	-- function's own humanoid.Died handler below triggers -- derived from
+	-- THIS player's own baseIndex, the SAME index buildPlayerSwing already
+	-- used to place their swing, never a second guess at it. RespawnLocation
+	-- (see onLaneAssignmentPlayerAdded) is kept only as a fallback for
+	-- whatever Roblox's own spawn-selection inside LoadCharacter() does; this
+	-- is what actually guarantees the result, so it is not skipped even when
+	-- RespawnLocation was almost certainly already correct. Skipped
+	-- gracefully (not an error) if this player's baseIndex somehow isn't
+	-- known yet -- shouldn't be reachable (a character can now only ever be
+	-- spawned, by this file, after baseIndex is confirmed -- see
+	-- onLaneAssignmentPlayerAdded), kept as the same defensive shape every
+	-- other baseIndex read in this file already uses.
+	do
+		local rootPart = humanoid.RootPart
+		local laneIndex = PlayerProfile.getBaseIndex(player)
+		if rootPart and laneIndex then
+			moveToLaneSpawn(character, humanoid, rootPart, laneIndex)
+		end
+	end
 
 	humanoid.Died:Connect(function()
 		-- Guards against a stale Died firing after this exact character has
@@ -1271,6 +1387,17 @@ local function setupCharacter(player: Player, character: Model)
 		-- the watchdog below uses.
 		if activeCharacters[player] == character then
 			clearActiveRider(player)
+		end
+		-- BUG FIX (see the written report -- Bug 1): CharacterAutoLoads is now
+		-- false (see this file's own top), which also disables Roblox's own
+		-- automatic post-death respawn -- without this call, a player who
+		-- dies would simply never get a character back. Guarded on
+		-- player.Parent, same "don't act on a player who's already gone"
+		-- reasoning onLaneAssignmentPlayerAdded's own LoadCharacter guard
+		-- uses -- Humanoid.Died can still fire during the brief window after
+		-- a disconnect, before PlayerRemoving's own cleanup runs.
+		if player.Parent then
+			player:LoadCharacter()
 		end
 	end)
 
@@ -1318,6 +1445,13 @@ end
 local function mountPlayer(player: Player, character: Model, humanoid: Humanoid, rootPart: BasePart, pivot: BasePart, phase: number)
 	states[player] = "riding"
 	riderReadyFlags[player] = false
+	-- Replicated occupant state (see the written report -- frozen remote
+	-- players): every OTHER connected client's own render loop (see
+	-- LaunchClient.client.luau's renderOtherLanes) reads this attribute to
+	-- know whether to seat this player's character on their own swing at
+	-- all -- ridingAssignedRemote below still only ever reaches THIS player
+	-- (unchanged), so this is the only signal any other client gets.
+	pivot:SetAttribute("RiderState", "riding")
 
 	-- Same reasoning the old always-anchored-at-spawn version used: the
 	-- CLIENT drives this part's CFrame every RenderStepped once riding (see
@@ -1558,6 +1692,23 @@ local function onRelease(player: Player)
 		trailRig = trailRig,
 	}
 
+	-- Replicated occupant state (see the written report -- frozen remote
+	-- players): the exact same numbers flightStartedRemote below carries to
+	-- the flying player alone, ALSO written here as attributes on this
+	-- player's own pivot so every OTHER connected client can recompute this
+	-- same flight itself (trajectoryCFrame is pure and already byte-
+	-- identical client and server -- see LaunchClient.client.luau) with no
+	-- new remote and no per-frame server work. Written BEFORE RiderState
+	-- flips to "flying" -- see renderOtherLanes' own comment for why a
+	-- client must never be able to observe "flying" with a stale or missing
+	-- param still attached.
+	pivot:SetAttribute("FlightStartTime", startTime)
+	pivot:SetAttribute("FlightStartPos", startPosition)
+	pivot:SetAttribute("FlightDistance", distance)
+	pivot:SetAttribute("FlightArcHeight", archHeight)
+	pivot:SetAttribute("FlightDuration", duration)
+	pivot:SetAttribute("RiderState", "flying")
+
 	flightStartedRemote:FireClient(player, distance, archHeight, duration, startPosition, startTime, luck)
 end
 
@@ -1733,6 +1884,16 @@ RunService.Heartbeat:Connect(function()
 		character:PivotTo(CFrame.lookAt(landingPosition, landingPosition + Vector3.new(0, 0, -1)))
 		restoreFlightPose(flight.poseJoints)
 		destroyFlightTrail(flight.trailRig)
+
+		-- Replicated occupant state (see the written report -- frozen remote
+		-- players): tells every OTHER client's own render loop to stop
+		-- advancing this character along the trajectory the instant the
+		-- server's own one-shot landing PivotTo above lands -- see
+		-- renderOtherLanes, which only ever acts on "riding"/"flying".
+		local landedPivot = playerSwingPivots[player]
+		if landedPivot then
+			landedPivot:SetAttribute("RiderState", "landed")
+		end
 
 		local earnedLuck = flight.luck
 

@@ -30,9 +30,18 @@ local SlimeUpgradeConfig = require(ReplicatedStorage.Config.SlimeUpgradeConfig)
 
 local player = Players.LocalPlayer
 
-if not table.find(DevConfig.ALLOWLISTED_USER_IDS, player.UserId) then
-	return
-end
+-- GATE 2 -- USERID ALLOWLIST: REMOVED (see the written report -- Bug 2), not
+-- just relaxed, on THIS file specifically -- unlike the server's own copy of
+-- this gate (DevPanelServer.server.luau's isAllowlisted), which still has a
+-- real "not in Studio" branch to fall back to, Gate 1 immediately above
+-- ALREADY returns unconditionally whenever RunService:IsStudio() is false --
+-- there is no code path left in this file, ever, where IsStudio() is false
+-- at this point. A "skip only while IsStudio()" version of this check would
+-- therefore always take the skip branch here, i.e. always pass -- so it's
+-- removed outright rather than kept as a conditional that can never
+-- evaluate its own other branch. This was always COSMETIC ONLY anyway (see
+-- this file's own header) -- the server's independent copy of Gate 2 is the
+-- one that actually matters, and is untouched in its "not Studio" branch.
 
 local playerGui = player:WaitForChild("PlayerGui")
 
