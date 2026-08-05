@@ -1096,6 +1096,31 @@ local function clearActiveRider(player: Player)
 	-- shared rider slot. Resetting to tier 1 here would incorrectly stomp a
 	-- departing/dying rider's own owned-tier look with a baseline that has
 	-- nothing to do with them.
+
+	-- BUG FIX (see the written report -- mid-flight death): everything above
+	-- this point is server-side bookkeeping only -- it never told the OWNING
+	-- client's own LaunchClient.client.luau that its flight was cancelled.
+	-- That client has no Humanoid.Died listener of its own and no other way
+	-- to learn a death happened, so its local flightActive/canRelease state
+	-- (set once by FlightStarted/doRelease, see that file's own comments)
+	-- was never cleared: the abandoned render loop kept PivotTo'ing whatever
+	-- player.Character currently was -- the newly RESPAWNED character, once
+	-- the Died handler's own player:LoadCharacter() call produced one --
+	-- along the old trajectory, and canRelease stayed stuck false forever
+	-- since the Heartbeat flight loop drops this player's flight the
+	-- instant states[player] is no longer "inflight."
+	-- This is a DEATH/DISCONNECT CANCELLATION signal, not a landing signal
+	-- -- reusing resetReadyRemote (rather than adding a second, narrower
+	-- remote) because its own OnClientEvent handler already does exactly
+	-- "return to neutral: not releasing, not flying, HUD hidden," which is
+	-- correct here regardless of what this player was doing when they died.
+	-- Guarded on player.Parent, the same guard scheduleReset's own delayed
+	-- fire already uses -- necessary here because clearActiveRider also runs
+	-- from PlayerRemoving, by which point firing to a gone player would
+	-- error.
+	if player.Parent then
+		resetReadyRemote:FireClient(player)
+	end
 end
 
 -- Shared by both the 0-luck landing path (no box) and the box's own "opened"

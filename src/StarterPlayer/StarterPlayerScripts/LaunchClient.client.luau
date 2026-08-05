@@ -495,6 +495,28 @@ local flightArcHeight = 0
 local flightStartPosition = Vector3.zero
 local flightLuck = 0
 
+-- BUG FIX (see the written report -- mid-flight death): the ONLY other place
+-- flightActive ever went false was the render loop reaching u >= 1 on its
+-- own -- a passive, time-based self-clear with no cancellation input. A
+-- death mid-flight left this true forever (no Humanoid.Died listener exists
+-- in this file, see (b) of the written report), so the abandoned render
+-- loop kept PivotTo'ing whatever player.Character currently was -- the
+-- newly RESPAWNED character -- along the old trajectory. Called from
+-- resetReadyRemote's handler below, now fired by the server for BOTH a
+-- normal landing AND a death/disconnect cancellation (see LaunchServer.
+-- server.luau's clearActiveRider) -- resetting already-false/already-zero
+-- values on a normal landing is a harmless no-op, which is what makes this
+-- safe to call from both.
+local function resetFlightState()
+	flightActive = false
+	flightStartTime = 0
+	flightDuration = 0
+	flightDistance = 0
+	flightArcHeight = 0
+	flightStartPosition = Vector3.zero
+	flightLuck = 0
+end
+
 -- ===== Mystery box state (set by BoxStarted, driven by BoxResult) =====
 -- boxActive gates whether Space/the box button do anything -- true from
 -- BoxStarted until the box opens (BoxResult with opened = true) or a reset
@@ -1340,8 +1362,46 @@ flightStartedRemote.OnClientEvent:Connect(function(distance: number, archHeight:
 	camera.CameraType = Enum.CameraType.Custom
 end)
 
+-- BUG FIX (see the written report -- mid-flight death): clears every readout
+-- a flight leaves behind -- distance/luck (distanceLabel doubles as both),
+-- the distance sub-readout, the live multiplier, and the frozen outcome
+-- text -- back to the same values they hold before a player has ever
+-- released. Without this, a value left behind by an ABANDONED flight (see
+-- resetFlightState's own comment) would sit on an INVISIBLE flightHudFrame
+-- indefinitely and get revealed again, unchanged, the next time
+-- setGrounded(false) shows it -- which is exactly the "Luck x100,000!" /
+-- "Perfect! 2.00x" / "2960.0 studs" still on screen after a respawn. Reset
+-- text matches each label's own pre-flight default (see their construction
+-- above). One place, called from resetReadyRemote's handler below, the only
+-- caller either kind of reset (landing or death/disconnect cancellation)
+-- goes through.
+local function resetFlightHudText()
+	distanceLabel.Text = "Time your release!"
+	distanceLabel.TextColor3 = Color3.new(1, 1, 1)
+	distanceSubLabel.Text = ""
+	multiplierLabel.Text = "0.75x"
+	multiplierLabel.TextColor3 = Color3.new(1, 1, 1)
+	outcomeLabel.Text = ""
+end
+
+-- BUG FIX (see the written report -- mid-flight death): this remote now has
+-- TWO callers server-side, not one -- a normal landing (LaunchServer.
+-- server.luau's scheduleReset, unchanged) AND a death/disconnect
+-- cancellation (clearActiveRider, newly added) -- so everything in this
+-- handler must be safe to run with no flight or box ever having been in
+-- progress. It already was: setGrounded(true) unconditionally calls
+-- hideFlightBoxRevealUI regardless of whether a box was actually up (see
+-- its own comment), and resetFlightState/resetFlightHudText below just
+-- assign fixed reset values, which is a no-op when those variables/labels
+-- are already at that value -- nothing here reads or depends on a flight
+-- having actually completed. Also naturally idempotent for the same
+-- reason, which matters because clearActiveRider's own new fire CAN land
+-- alongside an already-scheduled landing fire for the same player (see the
+-- written report's double-fire trace) -- a second run of this handler just
+-- re-applies the same reset values, not a problem to guard against.
 resetReadyRemote.OnClientEvent:Connect(function()
 	canRelease = true
+	resetFlightState()
 	-- The reward sequence (landing, box, reveal) has fully resolved -- the
 	-- player is grounded again, right where they landed (see the written
 	-- report: the return is no longer automatic). Shows the click-anywhere
@@ -1352,8 +1412,7 @@ resetReadyRemote.OnClientEvent:Connect(function()
 	-- (a fresh/respawned CharacterAdded, Dismounted) gets the exact same
 	-- guarantee, not just this one.
 	setGrounded(true)
-	distanceLabel.Text = "Time your release!"
-	distanceLabel.TextColor3 = Color3.new(1, 1, 1)
+	resetFlightHudText()
 end)
 
 -- BoxStarted: fired once per landing that earned luck > 0 (see LaunchServer's
