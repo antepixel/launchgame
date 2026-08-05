@@ -219,6 +219,10 @@ local function spawnSlimeVisual(profile: Profile, slotNumber: number, slime: Sli
 	part.CanCollide = false
 	part.Material = Enum.Material.SmoothPlastic
 	part.Size = BaseConfig.BASE_SLIME_PART_SIZE
+	-- Per-slime colour, not the tier's (see the written report -- `color` is
+	-- now the per-slime field; `slime.tierColor` is the shared one). This is
+	-- the placeholder cube itself -- the one place this pass is actually
+	-- visible in-game without any mesh/model work.
 	part.Color = slime.color
 
 	local pad = getSlotPad(profile.baseIndex, slotNumber)
@@ -253,7 +257,7 @@ local function spawnSlimeVisual(profile: Profile, slotNumber: number, slime: Sli
 	nameLabel.Size = UDim2.new(1, 0, 0, 34)
 	nameLabel.Font = Enum.Font.GothamBold
 	nameLabel.TextScaled = true
-	nameLabel.TextColor3 = slime.color
+	nameLabel.TextColor3 = slime.tierColor
 	nameLabel.TextStrokeTransparency = 0.3
 	nameLabel.Text = string.format("%s (Lv %d)", slime.name, level)
 	nameLabel.Parent = nameTag

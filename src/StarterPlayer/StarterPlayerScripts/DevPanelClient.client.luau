@@ -307,6 +307,10 @@ local function populateSlimeList(tier: number)
 		button.BackgroundColor3 = Color3.new(0.16, 0.16, 0.19)
 		button.Font = Enum.Font.Gotham
 		button.TextScaled = true
+		-- Per-slime colour, not the tier's (see the written report) -- this
+		-- list already exists specifically to tell the individual slimes
+		-- within one tier apart, so per-slime colour serves its own purpose
+		-- directly.
 		button.TextColor3 = slime.color
 		button.Text = slime.name
 		button.Parent = slimeListFrame

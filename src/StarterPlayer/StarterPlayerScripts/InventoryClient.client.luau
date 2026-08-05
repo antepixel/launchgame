@@ -326,7 +326,11 @@ local function buildBaseRow(slotNumber: number, globalIndex: number?, level: num
 	label.Parent = row
 
 	if slime then
-		label.TextColor3 = slime.color
+		-- Tier colour, not per-slime (see the written report -- this row's own
+		-- colour choice was left ambiguous by design: it isn't literally an
+		-- "inventory row," it's a BASE SLOT row, a different section of this
+		-- same panel -- defaulting to tier colour rather than guessing).
+		label.TextColor3 = slime.tierColor
 		local currentIncome = SlimeUpgrade.incomeForLevel(slime.incomePerSecond, level)
 		label.Text = string.format("Slot %d: %s -- Lv %d -- %s", slotNumber, slime.name, level, incomeText(currentIncome))
 
@@ -379,7 +383,10 @@ local function buildInventoryRow(order: number, globalIndex: number, count: numb
 	label.Font = Enum.Font.Gotham
 	label.TextScaled = true
 	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.TextColor3 = slime.color
+	-- Tier colour, not per-slime -- this row identifies which TIER a stack
+	-- belongs to at a glance, same reasoning the reveal panel's own tier
+	-- label uses (see LaunchClient.client.luau's SlimeRevealed handler).
+	label.TextColor3 = slime.tierColor
 	label.Text = string.format("%s x%d -- %s", slime.name, count, incomeText(slime.incomePerSecond))
 	label.ZIndex = 10
 	label.Parent = row

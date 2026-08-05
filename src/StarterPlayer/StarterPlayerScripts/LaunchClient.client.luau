@@ -1480,9 +1480,14 @@ slimeRevealedRemote.OnClientEvent:Connect(function(globalIndex: number, isNew: b
 		tierText = flourish .. " " .. tierText .. " " .. flourish
 	end
 	slimeTierLabel.Text = tierText
-	slimeTierLabel.TextColor3 = slime.color
+	-- Both the tier label and the panel's own border colour are tier
+	-- identity, not individual identity (see the written report and
+	-- slimeRevealBorder's own construction comment above -- "a Common's
+	-- border is a dull grey sliver, a Divine's is bright gold") -- both stay
+	-- on slime.tierColor, unchanged in meaning from before this pass.
+	slimeTierLabel.TextColor3 = slime.tierColor
 	slimeTierLabel.TextSize = SlimeConfig.SLIME_TIER_TEXT_SIZE_BASE + (slime.tier - 1) * SlimeConfig.SLIME_TIER_TEXT_SIZE_STEP
-	slimeRevealBorder.Color = slime.color
+	slimeRevealBorder.Color = slime.tierColor
 	slimeNameLabel.Text = slime.name
 
 	if isNew then

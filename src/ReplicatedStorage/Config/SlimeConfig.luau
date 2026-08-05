@@ -9,6 +9,7 @@ export type SlimeConfig = {
 	SLIME_TIER_NAMES: { string },
 	SLIME_TIER_COUNTS: { number },
 	SLIME_TIER_COLORS: { Color3 },
+	SLIME_COLOR_BY_TIER: { { Color3 } },
 	SLIME_INCOME_BY_TIER: { { number } },
 	SLIME_LUCK_ANCHOR_LOW: number,
 	SLIME_LUCK_ANCHOR_HIGH: number,
@@ -43,14 +44,14 @@ local SlimeConfig: SlimeConfig = {
 	-- reference game's own shape (a big "junk rare" bucket below the true
 	-- top tier).
 	SLIME_TIER_COUNTS = { 6, 6, 6, 6, 6, 6, 21, 8 },
-	-- Placeholder colours ONLY -- swapped for real art later. Each slime's
-	-- individual colour (see SlimeData.luau) is simply its tier's colour for
-	-- now, so this array alone controls what every slime in the game looks
-	-- like at a glance: dull grey at the bottom, escalating through green/
-	-- blue/purple/orange/red to a deep "mysterious" violet for Secret and a
-	-- bright warm gold-white for Divine -- deliberately the two furthest-
-	-- apart colours in the list, since those are the two tiers that most need
-	-- to read as "obviously different" from everything below them.
+	-- Placeholder colours ONLY -- swapped for real art later. This is the
+	-- TIER's own colour -- kept as a SEPARATE field on every slime (see
+	-- SlimeData.luau's `tierColor`), read wherever a tier needs to read as
+	-- "obviously different" from the tiers around it (the reveal panel,
+	-- inventory rows -- see the written report): dull grey at the bottom,
+	-- escalating through green/blue/purple/orange/red to a deep "mysterious"
+	-- violet for Secret and a bright warm gold-white for Divine --
+	-- deliberately the two furthest-apart colours in the list.
 	SLIME_TIER_COLORS = {
 		Color3.fromRGB(184, 184, 191), -- Common: light grey
 		Color3.fromRGB(77, 217, 89), -- Uncommon: green
@@ -60,6 +61,80 @@ local SlimeConfig: SlimeConfig = {
 		Color3.fromRGB(242, 38, 77), -- Mythic: crimson
 		Color3.fromRGB(140, 26, 191), -- Secret: deep violet
 		Color3.fromRGB(255, 237, 153), -- Divine: gold-white
+	},
+	-- Placeholder colours ONLY -- swapped for real art later, same as
+	-- SLIME_TIER_COLORS above. PER-SLIME, not per-tier (see the written
+	-- report -- every slime used to just inherit its tier's own colour,
+	-- making every slime within a tier visually identical): one array per
+	-- tier, one entry per slime in that tier, SAME SHAPE and SAME per-tier
+	-- indexing as SLIME_INCOME_BY_TIER below (SlimeData.luau's generator
+	-- reads this the identical way, entry i to "<TierName> Slime i", and
+	-- asserts its length against SLIME_TIER_COUNTS the same way too) --
+	-- deliberately the least-restructuring fit for that existing loop.
+	--
+	-- AUTHORED, not generated -- every value below is a hand-picked RGB
+	-- triple, not a computed hue rotation. Common through Mythic (the six
+	-- 6-slime tiers) each use the SAME six hues, in the SAME order --
+	-- green/red/blue/yellow/purple/orange -- so colours repeat ACROSS tiers
+	-- (every tier's own "Slime 1" is green) but never WITHIN one, which is
+	-- the only invariant that actually matters here (tier identity already
+	-- comes from SLIME_TIER_COLORS above, not from this array). Secret (21)
+	-- reuses those same six for its first six slimes, then adds 15 further
+	-- authored hues, distinct from the six AND from each other, so all 21
+	-- stay pairwise distinct within the tier. Divine (8) reuses the same six
+	-- plus the FIRST TWO of Secret's own 15 extra hues -- reused rather than
+	-- reinvented, since only within-tier uniqueness is required, never
+	-- cross-tier uniqueness.
+	SLIME_COLOR_BY_TIER = {
+		{ -- Common
+			Color3.fromRGB(70, 200, 80), Color3.fromRGB(225, 60, 60), Color3.fromRGB(60, 120, 240),
+			Color3.fromRGB(245, 215, 55), Color3.fromRGB(165, 80, 220), Color3.fromRGB(250, 140, 40),
+		},
+		{ -- Uncommon
+			Color3.fromRGB(70, 200, 80), Color3.fromRGB(225, 60, 60), Color3.fromRGB(60, 120, 240),
+			Color3.fromRGB(245, 215, 55), Color3.fromRGB(165, 80, 220), Color3.fromRGB(250, 140, 40),
+		},
+		{ -- Rare
+			Color3.fromRGB(70, 200, 80), Color3.fromRGB(225, 60, 60), Color3.fromRGB(60, 120, 240),
+			Color3.fromRGB(245, 215, 55), Color3.fromRGB(165, 80, 220), Color3.fromRGB(250, 140, 40),
+		},
+		{ -- Epic
+			Color3.fromRGB(70, 200, 80), Color3.fromRGB(225, 60, 60), Color3.fromRGB(60, 120, 240),
+			Color3.fromRGB(245, 215, 55), Color3.fromRGB(165, 80, 220), Color3.fromRGB(250, 140, 40),
+		},
+		{ -- Legendary
+			Color3.fromRGB(70, 200, 80), Color3.fromRGB(225, 60, 60), Color3.fromRGB(60, 120, 240),
+			Color3.fromRGB(245, 215, 55), Color3.fromRGB(165, 80, 220), Color3.fromRGB(250, 140, 40),
+		},
+		{ -- Mythic
+			Color3.fromRGB(70, 200, 80), Color3.fromRGB(225, 60, 60), Color3.fromRGB(60, 120, 240),
+			Color3.fromRGB(245, 215, 55), Color3.fromRGB(165, 80, 220), Color3.fromRGB(250, 140, 40),
+		},
+		{ -- Secret (21): the six above, then 15 further authored hues
+			Color3.fromRGB(70, 200, 80), Color3.fromRGB(225, 60, 60), Color3.fromRGB(60, 120, 240),
+			Color3.fromRGB(245, 215, 55), Color3.fromRGB(165, 80, 220), Color3.fromRGB(250, 140, 40),
+			Color3.fromRGB(35, 190, 175), -- teal
+			Color3.fromRGB(235, 55, 150), -- magenta
+			Color3.fromRGB(160, 225, 45), -- lime
+			Color3.fromRGB(95, 55, 195), -- indigo
+			Color3.fromRGB(55, 200, 230), -- sky cyan
+			Color3.fromRGB(140, 35, 55), -- maroon
+			Color3.fromRGB(150, 145, 30), -- olive
+			Color3.fromRGB(240, 110, 95), -- coral
+			Color3.fromRGB(95, 105, 170), -- slate blue
+			Color3.fromRGB(110, 225, 165), -- mint
+			Color3.fromRGB(150, 55, 115), -- plum
+			Color3.fromRGB(70, 150, 190), -- steel blue
+			Color3.fromRGB(170, 110, 45), -- amber brown
+			Color3.fromRGB(215, 90, 130), -- rose
+			Color3.fromRGB(200, 220, 70), -- chartreuse
+		},
+		{ -- Divine (8): the six above, then the first two of Secret's own extra hues
+			Color3.fromRGB(70, 200, 80), Color3.fromRGB(225, 60, 60), Color3.fromRGB(60, 120, 240),
+			Color3.fromRGB(245, 215, 55), Color3.fromRGB(165, 80, 220), Color3.fromRGB(250, 140, 40),
+			Color3.fromRGB(35, 190, 175), -- teal
+			Color3.fromRGB(235, 55, 150), -- magenta
+		},
 	},
 	-- MEASURED economy -- income-per-second for every one of the 65 slimes,
 	-- read off the reference game's own index screen, one array per tier IN
