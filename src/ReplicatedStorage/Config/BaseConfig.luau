@@ -30,7 +30,6 @@ export type BaseConfig = {
 	BASE_SLOT_PAD_COLOR: Color3,
 	BASE_SLOT_PAD_MATERIAL: Enum.Material,
 	BASE_SLOT_PAD_Y_OFFSET: number,
-	BASE_SLIME_PART_SIZE: Vector3,
 
 	BASE_PLOT_CENTER_Z: number,
 	BASE_MAT_SIZE: Vector3,
@@ -49,6 +48,13 @@ export type BaseConfig = {
 	BASE_BACK_EDGE_Y_OFFSET: number,
 	BASE_EDGE_COLOR: Color3,
 	BASE_EDGE_MATERIAL: Enum.Material,
+
+	BASE_SIGN_WIDTH_STUDS: number,
+	BASE_SIGN_BOARD_COLOR: Color3,
+	BASE_SIGN_POST_COLOR: Color3,
+	BASE_SIGN_TEXT_COLOR: Color3,
+	BASE_SIGN_ENTRANCE_SETBACK_FRACTION: number,
+	BASE_SIGN_YAW_DEGREES: number,
 }
 
 local BaseConfig: BaseConfig = {
@@ -97,11 +103,11 @@ local BaseConfig: BaseConfig = {
 	-- pad half-height (0.3), so the pad's BOTTOM face lands exactly flush on
 	-- the mat's top face -- reads as sitting ON the mat, not sunk into it.
 	BASE_SLOT_PAD_Y_OFFSET = 0.7,
-	-- The placeholder "slime" itself once a slot is filled: a plain coloured
-	-- block in the slime's own tier colour (see SlimeConfig.SLIME_TIER_
-	-- COLORS), sized well clear of its pad. No models -- see the written
-	-- report.
-	BASE_SLIME_PART_SIZE = Vector3.new(4, 4, 4),
+	-- The slime itself, once a slot is filled, is now the imported mesh (see
+	-- SlimeBuilder.luau) -- its size is a width-in-studs argument passed to
+	-- SlimeBuilder.build (PlayerProfile.luau's own SLOT_SLIME_WIDTH_STUDS),
+	-- not a config value here; there is no separate placeholder-part size to
+	-- own any more.
 
 	-- ===== Plot dressing: the mat, its central path, and the raised edges
 	-- framing it -- everything centred on this single Z per lane (X still
@@ -150,6 +156,51 @@ local BaseConfig: BaseConfig = {
 	-- Side and back edges share one colour/material.
 	BASE_EDGE_COLOR = Color3.fromRGB(232, 230, 222),
 	BASE_EDGE_MATERIAL = Enum.Material.Concrete,
+
+	-- ===== The entrance sign: a physical wooden post-and-board (see
+	-- SignBuilder.luau and assets/Sign.rbxmx), replacing the floating
+	-- "<name>'s Base" billboard that used to hang over slot 1. Unlike that
+	-- billboard, this is real geometry -- it shrinks with distance like
+	-- everything else on the map instead of holding a fixed pixel size on
+	-- the horizon. Its POSITION is derived in BaseGeometry.
+	-- entranceSignPosition, not here. =====
+	--
+	-- How wide (studs) the board is built. Height follows automatically from
+	-- the asset's own fixed 2.62/2.70 height/width ratio, not a second number
+	-- here -- 8 studs wide comes out ~7.76 studs tall, with the board face
+	-- itself spanning Y ~3.26 to ~7.11 above ground (comfortably at and above
+	-- a character's eye level). 8 reads from the walkway ~25 studs away
+	-- without dominating the plot: it's 8 of the mat's own 44 studs of width
+	-- (BASE_MAT_SIZE.X), under a fifth of the frontage.
+	BASE_SIGN_WIDTH_STUDS = 8,
+	-- Warm brown board, slightly darker post, so the two read as separate
+	-- pieces of timber rather than one flat silhouette. The imported mesh
+	-- arrives with its own baked TextureID, which SignBuilder clears -- these
+	-- colours only show once it has.
+	BASE_SIGN_BOARD_COLOR = Color3.fromRGB(120, 80, 45),
+	BASE_SIGN_POST_COLOR = Color3.fromRGB(95, 62, 35),
+	-- Cream, for contrast against the warm brown board above.
+	BASE_SIGN_TEXT_COLOR = Color3.fromRGB(247, 239, 219),
+
+	-- How far OUT of the plot, toward the walkway, the sign stands -- as a
+	-- fraction of the gap between the plot's own front edge
+	-- (BASE_PLOT_CENTER_Z - BASE_MAT_SIZE.Z / 2 = 108) and the walkway
+	-- (PathConfig.BACK_WALKWAY_Z = 76). It used to sit ON the front edge,
+	-- level with the plot, which meant a player only read it once they had
+	-- already arrived. A third of the way out (Z ~= 97.3) puts it at the
+	-- MOUTH of the entrance instead -- alongside the spur that bridges the
+	-- walkway to the plot, so it reads on approach rather than on arrival --
+	-- while still clearing both the mat behind it and the walkway ahead by
+	-- ~9 and ~10 studs. See BaseGeometry.entranceSignPosition, which does
+	-- the derivation; nothing here or there hardcodes a Z.
+	BASE_SIGN_ENTRANCE_SETBACK_FRACTION = 1 / 3,
+	-- How far the sign turns in toward the central path, the way a real sign
+	-- at the mouth of a driveway angles to greet you rather than staring
+	-- straight down the road. The sign stands on the path's -X side, so this
+	-- turns its board face toward +X. Modest on purpose: past ~25 degrees the
+	-- board starts to foreshorten badly for anyone walking straight up the
+	-- spur, which is the one approach it most needs to be readable from.
+	BASE_SIGN_YAW_DEGREES = 20,
 }
 
 return BaseConfig

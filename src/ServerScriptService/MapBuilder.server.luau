@@ -47,6 +47,7 @@ local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local RunwayGeometry = require(ReplicatedStorage.Config.RunwayGeometry)
 local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
 local GiantSlimeConfig = require(ReplicatedStorage.Config.GiantSlimeConfig)
+local SlimeBuilder = require(ReplicatedStorage.SlimeBuilder)
 
 local baseplate = Workspace:WaitForChild("Baseplate") :: BasePart
 local groundY = baseplate.Position.Y + baseplate.Size.Y / 2
@@ -287,29 +288,31 @@ end
 
 -- ===== Giant slime landmark (see the written report -- this is the entire
 -- reason a new player has anything to fly toward, since the road otherwise
--- ends in nothing). PURELY DECORATIVE: five plain Parts (a body, two eyes,
--- two pupils), Anchored, CanCollide false, no script ever attached, built
--- once here alongside everything else in this file -- never per-player, and
+-- ends in nothing). PURELY DECORATIVE: the ground patch plus the SAME
+-- imported slime mesh every slot slime uses (see SlimeBuilder.luau), scaled
+-- to landmark size -- no longer five separately hand-built ball/eye/pupil
+-- Parts. Anchored, CanCollide false, no script ever attached, built once
+-- here alongside everything else in this file -- never per-player, and
 -- invisible to every scoring path (bandLuckForLandingZ reads landing Z
 -- against LuckCurve.VALUES/RunwayGeometry only -- nothing here is ever
 -- consulted by it, and this object owns no state a client or server script
--- ever reads back). Every size/shape/colour number lives in
--- GiantSlimeConfig.luau -- see that file's own header for the size
--- derivation (targets ~15% of the vertical camera FOV from the swing
--- pivot).
+-- ever reads back). Every size/colour number lives in GiantSlimeConfig.luau
+-- -- see that file's own header for the size derivation (targets ~15% of
+-- the vertical camera FOV from the swing pivot).
 --
 -- POSITION, DERIVED, NOT HARDCODED: X is the road's own centerline
 -- (LaneConfig.ROAD_CENTER_X, the same one every band/lane already uses). Y
 -- is RunwayGeometry.RUNWAY_TOP_Y -- the exact same road/platform surface
 -- height RunwayBuilder places every band's top at and LaunchServer lands a
--- flight on -- plus half the body's own height, so the body rests ON that
--- surface rather than floating or clipping into it. Z is the far edge of
--- the LAST band (RunwayGeometry.RUNWAY_START_Z minus the total road length,
--- #LuckCurve.VALUES * LaunchConfig.RUNWAY_BAND_LENGTH_STUDS -- the same
--- band-count and band-length sources bandLuckForLandingZ itself reads),
--- pushed further out by GiantSlimeConfig.Z_OFFSET_PAST_LAST_BAND_STUDS. If
--- the road's own length, start, or surface height ever changes, every one
--- of these moves with it automatically -- nothing here is a fixed Z or Y.
+-- flight on -- the body's bottom (measured, see SlimeBuilder.worldAABB)
+-- rests ON that surface rather than floating or clipping into it. Z is the
+-- far edge of the LAST band (RunwayGeometry.RUNWAY_START_Z minus the total
+-- road length, #LuckCurve.VALUES * LaunchConfig.RUNWAY_BAND_LENGTH_STUDS --
+-- the same band-count and band-length sources bandLuckForLandingZ itself
+-- reads), pushed further out by GiantSlimeConfig.Z_OFFSET_PAST_LAST_BAND_
+-- STUDS. If the road's own length, start, or surface height ever changes,
+-- every one of these moves with it automatically -- nothing here is a fixed
+-- Z or Y. X/Z and the ground patch are UNCHANGED from the pre-mesh pass.
 do
 	local lastBandFarEdgeZ = RunwayGeometry.RUNWAY_START_Z - (#LuckCurve.VALUES * LaunchConfig.RUNWAY_BAND_LENGTH_STUDS)
 	local slimeCenterZ = lastBandFarEdgeZ - GiantSlimeConfig.Z_OFFSET_PAST_LAST_BAND_STUDS
@@ -322,9 +325,6 @@ do
 	-- this project already uses (see buildPlayerSwing/SwingBuilder.build's
 	-- own folder handling).
 
-	local bodyRadiusXZ = GiantSlimeConfig.BODY_WIDTH_STUDS / 2
-	local bodyCenterY = slimeGroundY + GiantSlimeConfig.BODY_HEIGHT_STUDS / 2
-
 	-- Ground patch (see the written report): the slime sits
 	-- Z_OFFSET_PAST_LAST_BAND_STUDS past the road's own far edge, well past
 	-- where the Baseplate itself ends, so without this it would rest over
@@ -336,10 +336,7 @@ do
 	-- never visibly drift apart. Built here, BEFORE the body, purely so it
 	-- reads first in the Model's own child order -- Roblox rendering itself
 	-- doesn't care about sibling order. Top surface pinned to slimeGroundY
-	-- (RunwayGeometry.RUNWAY_TOP_Y) -- the exact same height the body's own
-	-- Y is already built from two lines below -- so the body's Y is
-	-- completely unaffected by this; only the patch's own center Y is
-	-- derived from its thickness.
+	-- (RunwayGeometry.RUNWAY_TOP_Y) -- UNCHANGED by the mesh pass.
 	local groundPatchFootprint = GiantSlimeConfig.BODY_WIDTH_STUDS + 2 * GiantSlimeConfig.GROUND_PATCH_MARGIN_STUDS
 	local groundPatch = Instance.new("Part")
 	groundPatch.Name = "GroundPatch"
@@ -351,56 +348,50 @@ do
 	groundPatch.CFrame = CFrame.new(LaneConfig.ROAD_CENTER_X, slimeGroundY - GiantSlimeConfig.GROUND_PATCH_THICKNESS_STUDS / 2, slimeCenterZ)
 	groundPatch.Parent = slimeModel
 
-	local body = Instance.new("Part")
+	-- Body: the imported mesh, scaled to the landmark's own width (see
+	-- SlimeBuilder.build's own ScaleTo comment) -- BODY_WIDTH_STUDS is
+	-- unchanged from the pre-mesh pass; height is no longer set here at all,
+	-- it follows automatically from the mesh's own fixed ~0.677 height/width
+	-- ratio (see GiantSlimeConfig's own header).
+	local body = SlimeBuilder.build(GiantSlimeConfig.BODY_COLOR, GiantSlimeConfig.BODY_WIDTH_STUDS)
 	body.Name = "Body"
-	body.Shape = Enum.PartType.Ball
-	body.Anchored = true
-	body.CanCollide = false
-	body.Material = Enum.Material.SmoothPlastic
-	body.Color = GiantSlimeConfig.BODY_COLOR
-	body.Size = Vector3.new(GiantSlimeConfig.BODY_WIDTH_STUDS, GiantSlimeConfig.BODY_HEIGHT_STUDS, GiantSlimeConfig.BODY_WIDTH_STUDS)
-	body.CFrame = CFrame.new(LaneConfig.ROAD_CENTER_X, bodyCenterY, slimeCenterZ)
+
+	-- FACING, RE-DERIVED AGAINST BOTH THE REAL FLIGHT FORMULA AND THE MESH'S
+	-- REAL FACE AXIS -- NEITHER ASSUMED (see the written report):
+	--
+	-- 1) WORLD DIRECTION: LaunchServer.server.luau's own trajectoryPosition
+	-- computes z = startPosition.Z - distance * u -- a flight's Z strictly
+	-- DECREASES as u climbs from 0 to 1, so every flight travels toward -Z,
+	-- arriving at this landmark (built at the far, most-negative-Z end of
+	-- the road) FROM the +Z direction. The body's face needs to point +Z in
+	-- world space to look back the way an incoming flight came from --
+	-- toward the swings -- "greeting the incoming player," not turned away.
+	--
+	-- 2) MESH AXIS: verified from the template's own geometry, not assumed
+	-- (see SlimeBuilder.luau's own MESH_FACE_AXIS comment) -- the mesh's
+	-- face sits toward local -Z, which is exactly what CFrame.lookAt always
+	-- aims at its target. So a plain CFrame.lookAt(pos, pos + Vector3.new(0,
+	-- 0, 1)) already points the ACTUAL face at world +Z, with no extra
+	-- axis-correction math needed on top -- confirmed, not merely assumed
+	-- to be the same "-Z is forward" convention this whole project already
+	-- uses for every other oriented placement.
+	local facing = CFrame.lookAt(
+		Vector3.new(LaneConfig.ROAD_CENTER_X, 0, slimeCenterZ),
+		Vector3.new(LaneConfig.ROAD_CENTER_X, 0, slimeCenterZ) + Vector3.new(0, 0, 1)
+	)
+	body:PivotTo(facing)
+
+	-- Bottom-align against slimeGroundY -- MEASURED, not a hardcoded rest
+	-- height (see SlimeBuilder.worldAABB's own comment: an explicit
+	-- world-axis AABB over every descendant's transformed corners, never
+	-- Model:GetBoundingBox). worldAABB returns (minCorner, maxCorner) --
+	-- only minCorner is needed here (this block never sizes anything off the
+	-- model's own top), so the second return value is simply left
+	-- uncaptured -- valid Luau, not a signature mismatch (confirmed against
+	-- spawnSlimeVisual's own two-value capture, see PlayerProfile.luau).
+	local minCorner = SlimeBuilder.worldAABB(body)
+	body:PivotTo(body:GetPivot() + Vector3.new(0, slimeGroundY - minCorner.Y, 0))
+
 	body.Parent = slimeModel
-
-	-- Eye/pupil geometry, all derived from the body's own dimensions (see
-	-- GiantSlimeConfig's own header on why these are fractions, not
-	-- absolute studs) -- computed once, shared by both eyes via the loop
-	-- below rather than duplicated per side.
-	local eyeDiameter = GiantSlimeConfig.BODY_HEIGHT_STUDS * GiantSlimeConfig.EYE_DIAMETER_FRACTION
-	local eyeSpacing = GiantSlimeConfig.BODY_WIDTH_STUDS * GiantSlimeConfig.EYE_SPACING_FRACTION
-	local eyeCenterY = bodyCenterY + GiantSlimeConfig.BODY_HEIGHT_STUDS * GiantSlimeConfig.EYE_HEIGHT_FRACTION
-	-- Toward the VIEWER (+Z, back toward the swing/road -- see LaunchServer.
-	-- server.luau's launchDirection, flight always travels -Z, so the face
-	-- greeting an incoming flight has to sit on the body's +Z side).
-	local eyeCenterZ = slimeCenterZ + bodyRadiusXZ * GiantSlimeConfig.EYE_FORWARD_FRACTION
-	local pupilDiameter = eyeDiameter * GiantSlimeConfig.PUPIL_DIAMETER_FRACTION
-
-	for _, xSign in { -1, 1 } do
-		local sideName = if xSign < 0 then "Left" else "Right"
-		local eyeX = LaneConfig.ROAD_CENTER_X + xSign * (eyeSpacing / 2)
-
-		local eye = Instance.new("Part")
-		eye.Name = "Eye" .. sideName
-		eye.Shape = Enum.PartType.Ball
-		eye.Anchored = true
-		eye.CanCollide = false
-		eye.Material = Enum.Material.SmoothPlastic
-		eye.Color = GiantSlimeConfig.EYE_COLOR
-		eye.Size = Vector3.new(eyeDiameter, eyeDiameter, eyeDiameter)
-		eye.CFrame = CFrame.new(eyeX, eyeCenterY, eyeCenterZ)
-		eye.Parent = slimeModel
-
-		local pupil = Instance.new("Part")
-		pupil.Name = "Pupil" .. sideName
-		pupil.Shape = Enum.PartType.Ball
-		pupil.Anchored = true
-		pupil.CanCollide = false
-		pupil.Material = Enum.Material.SmoothPlastic
-		pupil.Color = GiantSlimeConfig.PUPIL_COLOR
-		pupil.Size = Vector3.new(pupilDiameter, pupilDiameter, pupilDiameter)
-		pupil.CFrame = CFrame.new(eyeX, eyeCenterY, eyeCenterZ + GiantSlimeConfig.PUPIL_FORWARD_OFFSET_STUDS)
-		pupil.Parent = slimeModel
-	end
-
 	slimeModel.Parent = Workspace
 end

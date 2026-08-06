@@ -24,6 +24,8 @@ local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local PersistenceConfig = require(ReplicatedStorage.Config.PersistenceConfig)
 local ShopConfig = require(ReplicatedStorage.Config.ShopConfig)
+local SignBuilder = require(ReplicatedStorage.SignBuilder)
+local SlimeBuilder = require(ReplicatedStorage.SlimeBuilder)
 local SlimeData = require(ReplicatedStorage.Config.SlimeData)
 local SlimeUpgrade = require(ReplicatedStorage.Config.SlimeUpgrade)
 local SlimeUpgradeConfig = require(ReplicatedStorage.Config.SlimeUpgradeConfig)
@@ -36,7 +38,7 @@ type Profile = {
 	baseFolder: Folder,
 	money: number,
 	slots: { [number]: number }, -- slot number -> globalIndex, missing = empty
-	visualParts: { [number]: BasePart }, -- slot number -> that slot's placeholder part, missing = empty
+	visualParts: { [number]: Model }, -- slot number -> that slot's slime Model (see SlimeBuilder.luau), missing = empty
 	-- UNPLACED copies held, stacked by globalIndex -> count (missing/0 =
 	-- none held). Placed copies are NOT counted here -- they're already
 	-- fully represented by `slots` above; a slime's TOTAL owned count is
@@ -142,41 +144,69 @@ end
 -- built on demand, the moment they join. Named deterministically by UserId
 -- (Base_<UserId>) so BaseClient.client.luau can find each player's OWN base
 -- with a plain WaitForChild, no remote round-trip needed. =====
+-- Which way a player is looking when they walk into their own plot -- they
+-- come up the spur from the walkway (PathConfig.BACK_WALKWAY_Z) moving in +Z,
+-- so the sign's board has to point back down that approach, toward -Z.
+local SIGN_FACE_DIRECTION = Vector3.new(0, 0, -1)
+
 local function buildBaseFolder(player: Player, baseIndex: number): Folder
 	local folder = Instance.new("Folder")
 	folder.Name = string.format("Base_%d", player.UserId)
 	folder.Parent = Workspace
 
-	local positions = BaseGeometry.slotPositions(baseIndex)
+	-- A PHYSICAL WOODEN SIGN AT THE PLOT ENTRANCE, replacing the floating
+	-- "<name>'s Base" BillboardGui that used to hang over slot 1 (see the
+	-- written report). With several bases side by side something still has to
+	-- say whose is whose at a glance, but the old billboard did it by hanging
+	-- a pixel-Offset-sized GUI in the air -- and a BillboardGui's Offset is
+	-- SCREEN PIXELS, so it held a fixed size at every distance and read as a
+	-- grey band on the horizon from anywhere on the map. This is real
+	-- geometry with a SurfaceGui painted on it, so it shrinks with distance
+	-- like everything else and needs no MaxDistance clamp to stay out of the
+	-- skyline.
+	local sign = SignBuilder.build(
+		string.format("%s's Base", player.Name),
+		player.UserId,
+		BaseConfig.BASE_SIGN_WIDTH_STUDS
+	)
+	sign.Name = "EntranceSign"
 
-	-- Nameplate over the whole base -- the one addition over the old
-	-- single-shared-base visuals: with several of these now side by side,
-	-- something has to say whose is whose at a glance. Text/colour only,
-	-- same placeholder philosophy as everything else here.
-	local nameplateAnchor = Instance.new("Part")
-	nameplateAnchor.Name = "NameplateAnchor"
-	nameplateAnchor.Anchored = true
-	nameplateAnchor.CanCollide = false
-	nameplateAnchor.Transparency = 1
-	nameplateAnchor.Size = Vector3.new(1, 1, 1)
-	nameplateAnchor.Position = positions[1] + Vector3.new(0, 6, 0)
-	nameplateAnchor.Parent = folder
+	-- FACE IT AT THE APPROACHING PLAYER, VERIFIED RATHER THAN ASSUMED. The
+	-- board's own exposed face is measured from the asset's geometry at
+	-- module load (SignBuilder.BOARD_FACE_AXIS -- the post sits behind the
+	-- board's +Z side, leaving -Z flat and unobstructed), and faceCFrame
+	-- turns "point that face this way" into a CFrame off that measurement
+	-- instead of relying on lookAt's -Z-is-forward convention happening to
+	-- line up. It currently does line up exactly, but that is a fact about
+	-- this export, not something this call depends on.
+	--
+	-- THEN TURN IT IN TOWARD THE PATH (BASE_SIGN_YAW_DEGREES), the way a sign
+	-- at the mouth of a driveway angles to greet you. Composed on the RIGHT,
+	-- so it is a yaw in the SIGN'S OWN frame applied on top of whatever
+	-- faceCFrame decided -- which is what keeps the asset's self-correction
+	-- intact. Working it through both cases: with the board on -Z (today) the
+	-- face axis is local -Z and faceCFrame returns identity, so the composed
+	-- face lands at (-sin, 0, -cos); with the board re-exported onto +Z the
+	-- face axis is local +Z and faceCFrame returns a 180-degree yaw, and the
+	-- composed face lands at (-sin, 0, -cos) again -- identical. NEGATIVE
+	-- because a positive yaw about +Y would swing the face toward -X, away
+	-- from the path; the sign stands on the path's -X side and has to turn
+	-- toward +X.
+	local signPosition = BaseGeometry.entranceSignPosition(baseIndex)
+	local signYaw = CFrame.Angles(0, -math.rad(BaseConfig.BASE_SIGN_YAW_DEGREES), 0)
+	sign:PivotTo(SignBuilder.faceCFrame(signPosition, SIGN_FACE_DIRECTION) * signYaw)
 
-	local billboard = Instance.new("BillboardGui")
-	billboard.Name = "NameplateGui"
-	billboard.Size = UDim2.new(0, 220, 0, 44)
-	billboard.AlwaysOnTop = true
-	billboard.Parent = nameplateAnchor
-
-	local nameLabel = Instance.new("TextLabel")
-	nameLabel.BackgroundTransparency = 1
-	nameLabel.Size = UDim2.fromScale(1, 1)
-	nameLabel.Font = Enum.Font.GothamBold
-	nameLabel.TextScaled = true
-	nameLabel.TextColor3 = Color3.new(1, 1, 1)
-	nameLabel.TextStrokeTransparency = 0.3
-	nameLabel.Text = string.format("%s's Base", player.Name)
-	nameLabel.Parent = billboard
+	-- Sit it ON the ground -- MEASURED, not a hardcoded rest height (see
+	-- SignBuilder.worldAABB: an explicit world-axis AABB over every
+	-- descendant's transformed corners, never Model:GetBoundingBox, which
+	-- returns an ORIENTED box whose axes can come back permuted). Shifting
+	-- the whole model up by (targetY - minCorner.Y) lands the post's foot
+	-- exactly on the ground, whatever the mesh's own internal pivot is --
+	-- and it is measured AFTER the rotation above, so it reflects the pose
+	-- the sign actually ends up in.
+	local minCorner = SignBuilder.worldAABB(sign)
+	sign:PivotTo(sign:GetPivot() + Vector3.new(0, signPosition.Y - minCorner.Y, 0))
+	sign.Parent = folder
 
 	folder:SetAttribute("Money", 0)
 	folder:SetAttribute("SwingTier", 1)
@@ -212,37 +242,128 @@ local function formatIncomePerSecond(perSecond: number): string
 	return "$" .. formatted .. suffix .. "/s"
 end
 
+-- How wide (studs) a placed slot slime is built -- see SlimeBuilder.build's
+-- own ScaleTo comment for how this turns into an absolute Model scale.
+-- Height follows automatically from the mesh's own fixed ~0.677 height/
+-- width ratio, not a second number here. 7 (raised from 6, see the written
+-- report -- 6 read as small against the 8x8 pad): height comes out to
+-- ~4.74 studs (7 * 0.677), leaving ~0.5 studs of pad clearance on every
+-- side (8-stud pad minus a ~7-stud footprint, split both sides).
+local SLOT_SLIME_WIDTH_STUDS = 7
+
+-- Nametag label heights (pixels) -- named so the BillboardGui's own Size can
+-- be COMPUTED from them (see spawnSlimeVisual's own comment) instead of
+-- carrying a second, independently-drifting fixed height.
+local NAME_LABEL_HEIGHT_PIXELS = 34
+local INCOME_LABEL_HEIGHT_PIXELS = 24
+
+-- How far from the CAMERA (not the character -- BillboardGui.MaxDistance is
+-- measured camera-side) a slot's tag still draws. The ten pads span Z 117 to
+-- 173 (five rows 14 studs apart, see BaseConfig) across two columns 22 studs
+-- apart, so the whole grid's own diagonal is ~60 studs. Standing at one slot,
+-- the neighbouring slots sit ~14 (next row, same column) to ~26 studs away
+-- (next row, other column); the far end of the plot is 56+. 40 covers the
+-- near cluster once the default third-person camera's own ~12-stud pullback
+-- is added on top (~26 + ~12), while staying comfortably under the 56-stud
+-- row span -- so a player at the front of their base draws the front slots'
+-- tags and not all ten at once.
+local NAMETAG_MAX_DISTANCE_STUDS = 40
+
 local function spawnSlimeVisual(profile: Profile, slotNumber: number, slime: SlimeData.Slime, level: number)
-	local part = Instance.new("Part")
-	part.Name = slime.name
-	part.Anchored = true
-	part.CanCollide = false
-	part.Material = Enum.Material.SmoothPlastic
-	part.Size = BaseConfig.BASE_SLIME_PART_SIZE
-	-- Per-slime colour, not the tier's (see the written report -- `color` is
-	-- now the per-slime field; `slime.tierColor` is the shared one). This is
-	-- the placeholder cube itself -- the one place this pass is actually
-	-- visible in-game without any mesh/model work.
-	part.Color = slime.color
-
 	local pad = getSlotPad(profile.baseIndex, slotNumber)
-	local restHeight = pad.Size.Y / 2 + BaseConfig.BASE_SLIME_PART_SIZE.Y / 2
-	part.Position = pad.Position + Vector3.new(0, restHeight, 0)
-	part.Parent = profile.baseFolder
-	profile.visualParts[slotNumber] = part
+	local padTopY = pad.Position.Y + pad.Size.Y / 2
 
-	-- Two stacked lines -- name on top (tier-coloured, as before), income
-	-- per second below it (green, matching the money readout's own colour
-	-- so "this is money" reads instantly) -- a UIListLayout stacks them so
-	-- neither has to hardcode the other's height. Tall/wide enough, and
-	-- billboards always face the camera, to read clearly from a player
-	-- standing at their own base looking at their slots.
+	-- Per-slime colour, not the tier's (see the written report -- `color` is
+	-- the per-slime field; `slime.tierColor` is the shared one). This is the
+	-- imported mesh (see SlimeBuilder.luau) -- the one place this colour is
+	-- actually visible in-game.
+	local model = SlimeBuilder.build(slime.color, SLOT_SLIME_WIDTH_STUDS)
+	model.Name = slime.name
+
+	-- FACE INWARD ACROSS THE CENTRAL PATH, NOT OUT OF THE BASE (see the
+	-- written report -- this replaces the previous "-Z, out of the base"
+	-- facing, which used the mesh's real face axis correctly but aimed it at
+	-- the wrong target). The mesh's own FACE axis, verified from geometry
+	-- (see SlimeBuilder's own MESH_FACE_AXIS comment): -Z, in the template's
+	-- own unrotated local space -- CFrame.lookAt always aims a CFrame's local
+	-- -Z at its target, so that's exactly what these calls need to do to
+	-- actually point the mesh's face at `target`, not some axis 90 degrees
+	-- away from it.
+	--
+	-- COLUMN DERIVED FROM MEASURED X, NOT SLOT NUMBER (see the written
+	-- report): the two-column grid happens to put odd slots in the left
+	-- column and even slots in the right (see BaseGeometry.slotPosition),
+	-- but reading the SLOT NUMBER's parity would be assuming that layout
+	-- rather than measuring it. Comparing this pad's own X against the
+	-- base's own centre X (LaneConfig.baseLaneCenterX, the same baseX every
+	-- other per-lane position in this file is built from) works regardless
+	-- of how the grid itself is laid out. A pad LEFT of centre (lower X)
+	-- should look toward +X (in, across the path); a pad RIGHT of centre
+	-- (higher X) should look toward -X.
+	local baseCenterX = LaneConfig.baseLaneCenterX(profile.baseIndex)
+	local padCenterX, padCenterZ = pad.Position.X, pad.Position.Z
+	local towardCenterX = if padCenterX < baseCenterX then 1 else -1
+	local facing = CFrame.lookAt(
+		Vector3.new(padCenterX, 0, padCenterZ),
+		Vector3.new(padCenterX, 0, padCenterZ) + Vector3.new(towardCenterX, 0, 0)
+	)
+	model:PivotTo(facing)
+
+	-- Bottom-align against the pad's own TOP surface -- MEASURED, not a
+	-- hardcoded rest height (see SlimeBuilder.worldAABB's own comment: an
+	-- explicit world-axis AABB over every descendant's transformed corners,
+	-- never Model:GetBoundingBox). minCorner.Y is still the Y = 0 placeholder
+	-- pose's own bottom at this point -- shifting the whole model up by
+	-- (padTopY - minCorner.Y) lands that bottom exactly on the pad's top
+	-- face, whatever the mesh's own internal origin/pivot happens to be.
+	local minCorner, maxCorner = SlimeBuilder.worldAABB(model)
+	local deltaY = padTopY - minCorner.Y
+	model:PivotTo(model:GetPivot() + Vector3.new(0, deltaY, 0))
+
+	model.Parent = profile.baseFolder
+	profile.visualParts[slotNumber] = model
+
+	-- Two stacked lines -- name+level on top (tier-coloured, from
+	-- slime.tierColor), income per second below it (green, matching the money
+	-- readout's own colour so "this is money" reads instantly) -- a
+	-- UIListLayout stacks them so neither has to hardcode the other's height.
+	-- Tall/wide enough, and billboards always face the camera, to read
+	-- clearly from a player standing at their own base looking at their slots.
+	--
+	-- The name line was briefly cut in a previous pass on the theory that it
+	-- was feeding the grey haze; it was not (see buildBaseFolder -- the haze
+	-- was the BASE SIGN all along), so it is back as it was. The genuinely
+	-- useful parts of that same pass are kept: no stroke, no border, a finite
+	-- MaxDistance, and AlwaysOnTop off so tags sit behind what occludes them.
+	--
+	-- Re-parented to the model's PrimaryPart (the body MeshPart), not the
+	-- Model itself (see the written report): BillboardGui only auto-adorns
+	-- to a BasePart parent, not a Model, so this is the "equivalent" the
+	-- task allowed for -- same effective anchor point the old placeholder
+	-- cube gave it, since that cube WAS the whole visual before.
+	local primaryPart = model.PrimaryPart :: MeshPart
+	-- Height above the body's own CENTER (what StudsOffset is relative to)
+	-- that the WHOLE model's top actually reaches, post-placement -- the
+	-- face parts (eye_dark/eye_white/blush) sit within the body's own
+	-- silhouette, but this reads off the model's real measured top rather
+	-- than assuming that. maxCorner.Y is still the pre-shift measurement, so
+	-- it's offset by the same deltaY the model itself was just moved by.
+	local heightAboveCenter = (maxCorner.Y + deltaY) - primaryPart.Position.Y
+
+	-- Sized to its actual content (both label heights, not a fixed 60), and
+	-- on BOTH labels below: BackgroundTransparency = 1 (fill), BorderSizePixel
+	-- = 0 (edge -- a separate render pass, so a GuiObject's default 1px border
+	-- survives a transparent background) and TextStrokeTransparency = 1
+	-- (stroke -- a THIRD pass, painted around the TEXT rather than the
+	-- container, so neither of the other two suppresses it). All three off
+	-- means only the glyphs paint.
 	local nameTag = Instance.new("BillboardGui")
 	nameTag.Name = "NameTag"
-	nameTag.Size = UDim2.new(0, 180, 0, 60)
-	nameTag.StudsOffset = Vector3.new(0, BaseConfig.BASE_SLIME_PART_SIZE.Y / 2 + 1, 0)
-	nameTag.AlwaysOnTop = true
-	nameTag.Parent = part
+	nameTag.Size = UDim2.new(0, 180, 0, NAME_LABEL_HEIGHT_PIXELS + INCOME_LABEL_HEIGHT_PIXELS)
+	nameTag.StudsOffset = Vector3.new(0, heightAboveCenter + 1, 0)
+	nameTag.AlwaysOnTop = false
+	nameTag.MaxDistance = NAMETAG_MAX_DISTANCE_STUDS
+	nameTag.Parent = primaryPart
 
 	local layout = Instance.new("UIListLayout")
 	layout.FillDirection = Enum.FillDirection.Vertical
@@ -254,11 +375,12 @@ local function spawnSlimeVisual(profile: Profile, slotNumber: number, slime: Sli
 	nameLabel.Name = "Name"
 	nameLabel.LayoutOrder = 1
 	nameLabel.BackgroundTransparency = 1
-	nameLabel.Size = UDim2.new(1, 0, 0, 34)
+	nameLabel.BorderSizePixel = 0
+	nameLabel.Size = UDim2.new(1, 0, 0, NAME_LABEL_HEIGHT_PIXELS)
 	nameLabel.Font = Enum.Font.GothamBold
 	nameLabel.TextScaled = true
 	nameLabel.TextColor3 = slime.tierColor
-	nameLabel.TextStrokeTransparency = 0.3
+	nameLabel.TextStrokeTransparency = 1
 	nameLabel.Text = string.format("%s (Lv %d)", slime.name, level)
 	nameLabel.Parent = nameTag
 
@@ -266,11 +388,12 @@ local function spawnSlimeVisual(profile: Profile, slotNumber: number, slime: Sli
 	incomeLabel.Name = "Income"
 	incomeLabel.LayoutOrder = 2
 	incomeLabel.BackgroundTransparency = 1
-	incomeLabel.Size = UDim2.new(1, 0, 0, 24)
+	incomeLabel.BorderSizePixel = 0
+	incomeLabel.Size = UDim2.new(1, 0, 0, INCOME_LABEL_HEIGHT_PIXELS)
 	incomeLabel.Font = Enum.Font.GothamBold
 	incomeLabel.TextScaled = true
 	incomeLabel.TextColor3 = Color3.new(0.4, 1, 0.5)
-	incomeLabel.TextStrokeTransparency = 0.3
+	incomeLabel.TextStrokeTransparency = 1
 	incomeLabel.Text = formatIncomePerSecond(SlimeUpgrade.incomeForLevel(slime.incomePerSecond, level))
 	incomeLabel.Parent = nameTag
 end
@@ -282,9 +405,9 @@ end
 -- No-op if the slot's visual somehow doesn't exist (defensive only -- every
 -- occupied slot always has one, see spawnSlimeVisual's only two callers).
 local function refreshSlimeVisualLabel(profile: Profile, slotNumber: number)
-	local part = profile.visualParts[slotNumber]
+	local model = profile.visualParts[slotNumber]
 	local globalIndex = profile.slots[slotNumber]
-	if not part or not globalIndex then
+	if not model or not globalIndex then
 		return
 	end
 	local slime = SlimeData.SLIMES[globalIndex]
@@ -292,7 +415,11 @@ local function refreshSlimeVisualLabel(profile: Profile, slotNumber: number)
 		return
 	end
 	local level = profile.levels[slotNumber] or 1
-	local nameTag = part:FindFirstChild("NameTag")
+	-- NameTag now hangs off the model's PrimaryPart, not the model itself
+	-- (see spawnSlimeVisual's own comment -- BillboardGui only auto-adorns
+	-- to a BasePart parent).
+	local primaryPart = model.PrimaryPart
+	local nameTag = primaryPart and primaryPart:FindFirstChild("NameTag")
 	if not nameTag then
 		return
 	end
@@ -644,9 +771,9 @@ function PlayerProfile.removeToInventory(player: Player, slotNumber: number): (b
 	-- Level is discarded here, not carried into the inventory stack -- see
 	-- the `levels` field's own comment on the Profile type for why.
 	profile.levels[slotNumber] = nil
-	local part = profile.visualParts[slotNumber]
-	if part then
-		part:Destroy()
+	local model = profile.visualParts[slotNumber]
+	if model then
+		model:Destroy()
 		profile.visualParts[slotNumber] = nil
 	end
 	profile.inventory[globalIndex] = (profile.inventory[globalIndex] or 0) + 1
