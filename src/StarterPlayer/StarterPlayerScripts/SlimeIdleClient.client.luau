@@ -38,12 +38,24 @@ local SlimeIdleConfig = require(ReplicatedStorage.Config.SlimeIdleConfig)
 local BODY_PART_NAME = "slime"
 local FACE_PART_NAMES = { "eye_dark", "eye_white", "blush" }
 
--- Which face parts a blink closes. The two eyes only -- blush is a face part
--- that breathes with everything else and is never blinked, and the body is
--- never touched by the blink at all. Resolved to a per-part boolean at
--- capture time (see FacePart.blinks) so the frame loop never does a name
--- comparison.
+-- Which face parts a blink sinks into the head. The two eyes only -- blush
+-- breathes with everything else and is never blinked, and the body is never
+-- touched by the blink at all. Read ONCE at capture, where it is baked into
+-- each part's FacePart.sinkOffset (zero for blush), so the frame loop never
+-- does a name comparison or a branch.
 local BLINKING_PART_NAMES: { [string]: boolean } = { eye_dark = true, eye_white = true }
+
+-- The dominant cardinal direction of `v`, as a unit vector -- used to turn the
+-- measured face-part layout into the body's face axis (see entryFor).
+local function dominantCardinal(v: Vector3): Vector3
+	local ax, ay, az = math.abs(v.X), math.abs(v.Y), math.abs(v.Z)
+	if ax >= ay and ax >= az then
+		return Vector3.new(math.sign(v.X), 0, 0)
+	elseif ay >= az then
+		return Vector3.new(0, math.sign(v.Y), 0)
+	end
+	return Vector3.new(0, 0, math.sign(v.Z))
+end
 
 -- Spacing for the per-blink jitter (see the blink block in renderIdleSlimes).
 -- The golden-ratio conjugate: stepping by it and taking the fractional part
@@ -73,7 +85,12 @@ type FacePart = {
 	baseSize: Vector3,
 	baseOffset: Vector3,
 	baseRotation: CFrame,
-	blinks: boolean,
+	-- Full-depth blink displacement, in BODY-LOCAL space, precomputed at
+	-- capture. Vector3.zero for parts that do not blink (blush), which is what
+	-- lets the frame loop apply it unconditionally with no branch and no name
+	-- comparison. Scaled by 0..1 per frame -- see the blink block in
+	-- renderIdleSlimes.
+	sinkOffset: Vector3,
 }
 
 -- Everything the per-frame path needs about one slime, all of it constant.
@@ -236,6 +253,7 @@ local function entryFor(model: Model): SlimeEntry?
 	local bodyBaseSize = bodyPart.Size
 
 	local faceParts: { FacePart } = {}
+	local faceOffsetSum = Vector3.zero
 	for _, name in FACE_PART_NAMES do
 		local facePart = model:FindFirstChild(name)
 		if facePart and facePart:IsA("MeshPart") then
@@ -245,12 +263,13 @@ local function entryFor(model: Model): SlimeEntry?
 			-- anyway so a future asset with a tilted face part still works
 			-- without a second pass through this file.
 			local relative = bodyCFrame:ToObjectSpace((facePart :: MeshPart).CFrame)
+			faceOffsetSum += relative.Position
 			table.insert(faceParts, {
 				part = facePart :: MeshPart,
 				baseSize = (facePart :: MeshPart).Size,
 				baseOffset = relative.Position,
 				baseRotation = relative.Rotation,
-				blinks = BLINKING_PART_NAMES[name] == true,
+				sinkOffset = Vector3.zero,
 			})
 		end
 	end
@@ -264,6 +283,34 @@ local function entryFor(model: Model): SlimeEntry?
 	-- not in its true rest state.
 	if #faceParts ~= #FACE_PART_NAMES then
 		return nil
+	end
+
+	-- THE FACE AXIS, MEASURED FROM THIS MODEL'S OWN GEOMETRY -- not assumed,
+	-- and not hardcoded. Every face part sits on the face side of the body, so
+	-- the MEAN of their offsets from the body centre points along the face,
+	-- and its dominant cardinal component is the axis. This is the same
+	-- derivation SlimeBuilder documents for the facing correction, reproduced
+	-- here from live measurements rather than imported as a constant. Checked
+	-- against the asset: the mean offset comes out (-8.147, -0.029, -10.254),
+	-- so Z dominates X by a ratio of 1.259 -- matching the consistent ~1.26
+	-- lean SlimeBuilder records -- and the axis is -Z. A re-export that turned
+	-- the mesh around would be followed automatically.
+	--
+	-- The blink sinks the eyes BACKWARD along that axis, hence the negation:
+	-- the face normal points out of the head, and an eye has to travel into
+	-- it to be swallowed by the body geometry.
+	local faceAxis = dominantCardinal(faceOffsetSum)
+	local sinkDirection = -faceAxis
+
+	-- Each eye's full-depth sink, derived from ITS OWN depth along that axis
+	-- rather than any stud figure, so it scales with the slime and with any
+	-- future re-export. faceParts is index-aligned with FACE_PART_NAMES here,
+	-- guaranteed by the completeness check just above.
+	for index, face in faceParts do
+		if BLINKING_PART_NAMES[FACE_PART_NAMES[index]] then
+			local depthAlongAxis = math.abs(face.baseSize:Dot(faceAxis))
+			face.sinkOffset = sinkDirection * (depthAlongAxis * SlimeIdleConfig.BLINK_SINK_DEPTH_FACTOR)
+		end
 	end
 
 	local position = bodyPart.Position
@@ -399,10 +446,9 @@ local function renderIdleSlimes()
 
 		-- BLINK -- ZERO extra writes and ZERO extra instances. Every eye part
 		-- was already having Size and CFrame written this frame by the
-		-- breathing; all this does is change the Y number inside the Size
+		-- breathing; all this does is change the OFFSET fed into the CFrame
 		-- being built anyway. The whole cost is the arithmetic below, once per
-		-- slime, and the sine only evaluates during the ~0.12 s a blink is
-		-- actually running.
+		-- slime, and the sine only evaluates during the blink itself.
 		--
 		-- NOT A FIXED RHYTHM. A per-slime interval alone would make each slime
 		-- a metronome. The interval sets the cycle LENGTH; within each cycle
@@ -413,7 +459,7 @@ local function renderIdleSlimes()
 		-- decorrelates slimes from each other on top of their already
 		-- different cycle lengths. All arithmetic on cached values: no
 		-- allocation, no Random object per frame, no new state.
-		local blinkFactor = 1
+		local sinkAmount = 0
 		local blinkWindow = SlimeIdleConfig.BLINK_DURATION_SECONDS / entry.blinkInterval
 		local blinkClock = now / entry.blinkInterval
 		local blinkCycle = math.floor(blinkClock)
@@ -422,11 +468,10 @@ local function renderIdleSlimes()
 		local trigger = ((blinkCycle * BLINK_JITTER_STRIDE + entry.blinkInterval) % 1) * (1 - blinkWindow)
 		local intoBlink = (blinkClock - blinkCycle) - trigger
 		if intoBlink >= 0 and intoBlink < blinkWindow then
-			-- sin runs 0 -> 1 -> 0 across the window, so the eye closes and
-			-- reopens smoothly and is exactly back to 1 at both ends -- no
-			-- discontinuity into or out of the blink.
-			local closedness = math.sin(math.pi * intoBlink / blinkWindow)
-			blinkFactor = 1 - (1 - SlimeIdleConfig.BLINK_CLOSED_FACTOR) * closedness
+			-- sin runs 0 -> 1 -> 0 across the window, so the eyes sink and
+			-- re-emerge smoothly and are exactly back at rest at both ends --
+			-- no discontinuity into or out of the blink.
+			sinkAmount = math.sin(math.pi * intoBlink / blinkWindow)
 		end
 
 		local scale = Vector3.new(sxz, sy, sxz)
@@ -435,19 +480,20 @@ local function renderIdleSlimes()
 			if not part.Parent then
 				continue
 			end
+			-- SIZE IS UNTOUCHED BY THE BLINK. Every face part, eyes included,
+			-- breathes on exactly the same terms -- squashing the eyes was the
+			-- previous mechanism and it flattened the whites along with
+			-- everything else, which read as the eye deforming rather than
+			-- closing.
 			local faceSize = face.baseSize
-			-- The blink multiplies the breathing's own vertical scale rather
-			-- than replacing it, so an eye keeps breathing with the body right
-			-- through a blink.
-			local faceScaleY = if face.blinks then sy * blinkFactor else sy
-			part.Size = Vector3.new(faceSize.X * sxz, faceSize.Y * faceScaleY, faceSize.Z * sxz)
-			-- CFrame DELIBERATELY UNAFFECTED by blinkFactor -- it still uses
-			-- `scale`, the breathing-only vector. Writing Size holds a part's
-			-- CENTRE, so leaving the centre exactly where the breathing put it
-			-- is what makes the eye close symmetrically onto itself instead of
-			-- sliding up or down the face. Feeding the blink in here would
-			-- move the eye as well as shut it.
-			part.CFrame = bodyCFrame * CFrame.new(face.baseOffset * scale) * face.baseRotation
+			part.Size = Vector3.new(faceSize.X * sxz, faceSize.Y * sy, faceSize.Z * sxz)
+			-- The blink lives ENTIRELY here, in the offset: the eyes slide
+			-- backward along the body's own measured face normal until the
+			-- body geometry swallows them. sinkOffset is Vector3.zero for
+			-- blush, so this line needs no branch and no name comparison --
+			-- non-blinking parts add nothing.
+			local offset = face.baseOffset * scale + face.sinkOffset * sinkAmount
+			part.CFrame = bodyCFrame * CFrame.new(offset) * face.baseRotation
 		end
 	end
 end

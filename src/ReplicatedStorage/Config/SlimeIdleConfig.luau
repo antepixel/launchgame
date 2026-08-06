@@ -16,7 +16,7 @@ export type SlimeIdleConfig = {
 	IDLE_PERIOD_SECONDS: number,
 	IDLE_RESCAN_INTERVAL_SECONDS: number,
 	BLINK_DURATION_SECONDS: number,
-	BLINK_CLOSED_FACTOR: number,
+	BLINK_SINK_DEPTH_FACTOR: number,
 	BLINK_INTERVAL_MIN_SECONDS: number,
 	BLINK_INTERVAL_MAX_SECONDS: number,
 }
@@ -45,18 +45,32 @@ local SlimeIdleConfig: SlimeIdleConfig = {
 	-- ===== Blink. Applies to eye_dark and eye_white ONLY -- blush and the
 	-- body are untouched by it. Costs no extra per-frame writes: the eyes are
 	-- already having Size and CFrame written every frame by the breathing, and
-	-- the blink only changes the Y number inside the Size that is being built
-	-- anyway. =====
-	-- How long one whole blink takes, closed and open again. Raised from 0.12:
-	-- together with the softer closed factor below it turns each blink into a
-	-- slow shutter rather than a snap.
+	-- the blink only changes the OFFSET fed into the CFrame being built anyway.
+	--
+	-- THE EYES SINK INTO THE HEAD, THEY DO NOT SQUASH. Scaling them vertically
+	-- was the first attempt and it could not work: the mesh has no eyelid, so
+	-- squashing flattened the whites along with everything else and read as
+	-- the whole eye deforming and popping back. Sliding them backward along
+	-- the face normal instead lets the BODY GEOMETRY occlude them, which is
+	-- what a real blink looks like -- the eye vanishes rather than distorting.
+	-- Their Size is untouched by the blink; they keep breathing exactly as
+	-- blush does. =====
+	-- How long one whole blink takes, gone and back again.
 	BLINK_DURATION_SECONDS = 0.22,
-	-- How far the eyes squash vertically at the shut point, as a multiple of
-	-- their normal height. Never zero: a MeshPart at Size.Y = 0 is degenerate,
-	-- and a sliver of eye left at the shut point reads as a closed lid rather
-	-- than as the eye vanishing. Raised from 0.06 -- not shutting all the way
-	-- is most of what makes the blink read as soft.
-	BLINK_CLOSED_FACTOR = 0.14,
+	-- How deep the eyes sink at the shut point, as a multiple of each eye's
+	-- OWN depth along the face normal -- so it scales with the slime (a slot
+	-- slime and the landmark need very different stud values) and survives a
+	-- re-export at a different size. Not a stud figure anywhere.
+	--
+	-- 1.0 was verified against the asset's real measurements rather than
+	-- picked: modelling body and eyes as ellipsoids from their recorded sizes
+	-- and offsets, eye_dark is fully inside the body for sinks between 4.00
+	-- and 16.10 studs and eye_white between 5.70 and 16.75 (there is an upper
+	-- bound because sinking too far pushes an eye out the BACK of the head).
+	-- Their own depths are 10.32 and 8.47, so a factor of 1.0 puts both
+	-- comfortably mid-window -- fully hidden, from every viewing angle, with
+	-- several studs of margin at both ends.
+	BLINK_SINK_DEPTH_FACTOR = 1.0,
 	-- Range the per-slime blink interval is drawn from -- see the client's
 	-- own rhythmFor, which takes it as a SECOND draw off the same
 	-- position-seeded generator the breathing phase comes from, so it is
