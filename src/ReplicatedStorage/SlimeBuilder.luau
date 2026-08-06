@@ -130,9 +130,36 @@ function SlimeBuilder.build(color: Color3, widthStuds: number): Model
 	local model = template:Clone()
 	model:ScaleTo(widthStuds / UNIT_WIDTH_STUDS)
 
-	local body = model.PrimaryPart :: MeshPart
+	-- RESOLVED BY NAME, AND PrimaryPart SET FROM IT -- not read off the
+	-- PrimaryPart the clone inherited. assets/Slime.rbxmx does declare a
+	-- PrimaryPart (a <Ref> pointing at the body MeshPart), but a Ref is the
+	-- one property here that can silently fail to survive the trip from the
+	-- .rbxmx into a running DataModel, and when it does this line hands back
+	-- nil and every slime in the game stops building. A name lookup cannot
+	-- fail that way, and it is already how this module resolves the same part
+	-- at load (see templateBody, which uses BODY_PART_NAME) -- so this also
+	-- removes an inconsistency where one file found the body two different
+	-- ways.
+	--
+	-- Assigning PrimaryPart rather than only reading it is the other half:
+	-- callers depend on it downstream (PlayerProfile anchors the nametag to
+	-- model.PrimaryPart, and refreshSlimeVisualLabel looks the tag back up
+	-- through it), so build()'s contract is now "returns a model with
+	-- PrimaryPart set" by construction instead of by inheritance. Same shape
+	-- SignBuilder already uses -- it assigns model.PrimaryPart = board
+	-- explicitly, which is exactly why the sign never had this failure.
+	local body = model:FindFirstChild(BODY_PART_NAME) :: MeshPart
+	model.PrimaryPart = body
 	body.Color = color
 
+	-- DO NOT ADD RenderFidelity OR CollisionFidelity HERE. Both require the
+	-- Plugin capability and THROW when written from a server or client script
+	-- ("the current thread cannot write '<name>'") -- they do not fail
+	-- quietly, so an attempt takes every slime build down with it. Neither
+	-- needs setting anyway: the asset already ships RenderFidelity = Automatic
+	-- on all four parts. CollisionFidelity sits at Default, and the only way
+	-- to change it is to edit the parts in Studio and re-save
+	-- assets/Slime.rbxmx.
 	for _, part in eachBasePart(model) do
 		part.Anchored = true
 		part.CanCollide = false
