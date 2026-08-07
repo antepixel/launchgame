@@ -5,14 +5,21 @@
 -- afford something and the shop showing what it costs are two views of the
 -- SAME number, so this is the one place that formatting logic lives, rather
 -- than two copies that could quietly drift out of sync. That risk is real
--- here specifically because shop prices run all the way up past a
--- QUINTILLION (see ShopConfig.SWING_TIER_PRICES's tier 10/11) -- far beyond
--- what a short K/M/B-only formatter (like LuckCurve.formatLuck, which never
--- needs to exceed 120,000, or PlayerProfile's own per-slime income
--- formatter, which never exceeds a few thousand) has any reason to handle,
--- so it isn't duplicated as a fourth local copy the way those smaller ones
--- are -- see each of THEIR own comments for why staying local is fine at
--- their scale.
+-- here specifically because shop prices run well past what a short K/M/B-only
+-- formatter (like LuckCurve.formatLuck, which never needs to exceed 120,000,
+-- or PlayerProfile's own per-slime income formatter, which never exceeds a
+-- few thousand) has any reason to handle, so it isn't duplicated as a fourth
+-- local copy the way those smaller ones are -- see each of THEIR own comments
+-- for why staying local is fine at their scale.
+--
+-- The suffix table below reaches Qi (10^18). It USED to need to: the old
+-- price ladder topped out at 2.5e20 for tier 11. After the repricing (see
+-- ShopConfig) the highest price in the game is $800B, so the upper suffixes
+-- are now headroom rather than a requirement. They are kept because MONEY is
+-- not bounded by prices -- a long idle session at a maxed base can bank far
+-- more than the most expensive thing available -- and because a formatter
+-- that silently ran out of suffixes would be a worse failure than a few
+-- unused table entries.
 local MoneyFormat = {}
 
 -- Short-scale suffixes, checked high to low -- matches LuckCurve.formatLuck's
