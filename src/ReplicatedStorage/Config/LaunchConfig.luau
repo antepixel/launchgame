@@ -39,7 +39,38 @@ export type LaunchConfig = {
 	RUNWAY_BAND_LENGTH_STUDS: number,
 	RUNWAY_WIDTH_STUDS: number,
 	BOX_DOUBLE_CHANCE: number,
-	BOX_ROLL_DELAY_SECONDS: number,
+	BOX_PRESS_COOLDOWN_SECONDS: number,
+	BOX_SUPPRESSED_HUD_NAMES: { string },
+	BOX_WORLD_SIZE_STUDS: number,
+	BOX_WORLD_DISTANCE_STUDS: number,
+	BOX_WORLD_HEIGHT_OFFSET_STUDS: number,
+	BOX_WORLD_YAW_DEGREES: number,
+	BOX_WORLD_PITCH_DEGREES: number,
+	BOX_WORLD_COLOR: Color3,
+	BOX_WORLD_MATERIAL: Enum.Material,
+	BOX_WORLD_QUESTION_COLOR: Color3,
+	BOX_WORLD_QUESTION_PIXELS_PER_STUD: number,
+	BOX_WORLD_CLICK_DISTANCE_STUDS: number,
+	BOX_WORLD_LUCK_LABEL_HEIGHT_STUDS: number,
+	BOX_WORLD_LUCK_LABEL_WIDTH_PIXELS: number,
+	BOX_WORLD_LUCK_LABEL_HEIGHT_PIXELS: number,
+	BOX_CAMERA_DISTANCE_STUDS: number,
+	BOX_CAMERA_PITCH_DEGREES: number,
+	BOX_CAMERA_TRANSITION_SECONDS: number,
+	BOX_HOVER_AMPLITUDE_STUDS: number,
+	BOX_HOVER_PERIOD_SECONDS: number,
+	BOX_HOVER_SPIN_DEGREES_PER_SECOND: number,
+	BOX_SHAKE_FREQUENCY_HZ: number,
+	BOX_NUDGE_AMPLITUDE_STUDS: number,
+	BOX_NUDGE_ROTATION_DEGREES: number,
+	BOX_NUDGE_SECONDS: number,
+	BOX_THRASH_AMPLITUDE_STUDS: number,
+	BOX_THRASH_ROTATION_DEGREES: number,
+	BOX_THRASH_SECONDS: number,
+	BOX_THRASH_BUILD_EXPONENT: number,
+	BOX_OPEN_BURST_SCALE: number,
+	BOX_OPEN_BURST_SECONDS: number,
+	BOX_OPEN_BURST_SPIN_DEGREES: number,
 	SWING_TIER_DISTANCE_SCALE: { number },
 	REMOTE_LANE_RESCAN_INTERVAL_SECONDS: number,
 }
@@ -387,14 +418,352 @@ local LaunchConfig: LaunchConfig = {
 	-- (longer average chains, bigger typical payouts, more variance); lower
 	-- it and most boxes resolve in one or two presses.
 	BOX_DOUBLE_CHANCE = 0.55,
-	-- Seconds between a press being ACCEPTED and its result (open or double)
-	-- reaching the client. This one number does two jobs: it's the "beat"
-	-- that makes a press feel weighed rather than instant, and it IS the rate
-	-- limit -- the server does not even evaluate the next press until this
-	-- delay has fully elapsed (see onBoxPress's `pending` guard), so spamming
-	-- the button faster than a human can never yields more than one roll per
-	-- this many seconds, script or not.
-	BOX_ROLL_DELAY_SECONDS = 0.4,
+	-- ===== The rate limit, and ONLY the rate limit =====
+	-- This replaces BOX_ROLL_DELAY_SECONDS, which used to do two unrelated
+	-- jobs with one number: it delayed the RESULT (a deliberate "the box is
+	-- being decided" beat) and it was also the rate limit, because onBoxPress
+	-- would not evaluate the next press until the previous one's delayed
+	-- result had fired. Those are now split -- see LaunchServer's onBoxPress.
+	--
+	-- THE RESULT IS NOW IMMEDIATE. The roll happens synchronously inside the
+	-- press handler and BoxResult goes back on the same frame, so the box
+	-- reacts the instant it is pressed with no round-trip pause of the
+	-- server's own making.
+	--
+	-- THIS number is what survives of the rate limit, and it is still enforced
+	-- entirely server-side: onBoxPress sets box.pending on every accepted
+	-- press and clears it from a task.delay of exactly this length, refusing
+	-- every press that arrives in between. A modified client firing BoxPress
+	-- in a tight loop therefore still gets at most one roll per this many
+	-- seconds -- the guard never depended on the result's timing, only on the
+	-- flag, and the flag now has its own timer.
+	--
+	-- 0.25 is four presses a second: comfortably above any deliberate human
+	-- clicking rate (so a normal player never meets it), comfortably below
+	-- what a script could otherwise achieve. Shorter than the 0.4 it replaces,
+	-- which is affordable precisely because the press no longer has to wait
+	-- out a result. LaunchClient mirrors this same constant locally so a
+	-- normal player's presses are never silently dropped -- that mirror is
+	-- convenience only and is not what enforces anything.
+	BOX_PRESS_COOLDOWN_SECONDS = 0.25,
+
+	-- ScreenGui NAMES (children of PlayerGui) suppressed for the duration of
+	-- the box sequence -- see LaunchClient's acquire/release pair. These are
+	-- owned by OTHER client scripts and are the only persistently-visible UI
+	-- left on screen once LaunchClient has hidden its own: ShopClient's
+	-- "SWING SHOP" button and InventoryClient's "INVENTORY" button, both
+	-- top-right. Suppressed via ScreenGui.Enabled, which is orthogonal to
+	-- their children's own Visible flags -- so whatever state those panels are
+	-- in when the box appears is exactly the state they come back to, and
+	-- neither owning script needs to know this happens.
+	--
+	-- DELIBERATELY NOT A LIST OF EVERY HUD. BaseHud (BaseClient's money and
+	-- swing-tier readouts) stays up on purpose -- it is ambient information,
+	-- not an interaction, and the box does not compete with it. DevPanel stays
+	-- up too; it is dev-only and gated elsewhere.
+	--
+	-- A name that does not resolve is skipped silently: a client script that
+	-- failed its own startup gate never created its ScreenGui, and that is not
+	-- this list's problem to report.
+	BOX_SUPPRESSED_HUD_NAMES = { "ShopHud", "InventoryHud" },
+
+	-- ===== The box itself: a REAL PART IN THE WORLD, built client-side in
+	-- front of the frozen player at their landing spot (see LaunchClient's own
+	-- world-box block). It replaced a screen-space GUI panel entirely -- see
+	-- the written report. Nothing here reaches the server, changes a
+	-- probability, or adds a millisecond to the sequence; the BoxStarted /
+	-- BoxPress / BoxResult flow is byte-for-byte the same one the panel used.
+	-- =====
+	-- Edge length of the cube, in studs. The player is frozen roughly 20 studs
+	-- from their own chase camera at this point, where a 70-degree vertical
+	-- FOV spans ~28 studs -- so a 7-stud cube, seen corner-on at the tilt
+	-- below, spans ~9 studs of that: it fills the middle third of frame,
+	-- unmistakably the thing being looked at, without covering the landing
+	-- readout at the top of the screen. Sized together with
+	-- BOX_WORLD_HEIGHT_OFFSET_STUDS below -- see that constant for why a
+	-- bigger cube cannot simply be dropped in without also raising it.
+	BOX_WORLD_SIZE_STUDS = 7,
+	-- Studs IN FRONT of the character (along their own flattened LookVector,
+	-- never a world axis -- see LaunchClient's boxRestCFrameForCharacter) the
+	-- cube's centre sits. Close enough to dominate the view, far enough that
+	-- the default third-person camera -- which sits BEHIND the character --
+	-- never ends up inside it.
+	BOX_WORLD_DISTANCE_STUDS = 8,
+	-- Studs above the character's own HumanoidRootPart (pelvis height, itself
+	-- ~3 studs off the ground on R15) the cube's CENTRE sits. This is what
+	-- keeps the box clear of the road it is standing over, and it is not a
+	-- free number -- a cube this size cannot be centred anywhere near eye
+	-- height without burying its lower corners in the ground:
+	--
+	--   A 7-stud cube has a 3.5-stud half-extent, but it is TILTED (see
+	--   BOX_WORLD_YAW/PITCH_DEGREES), SPINNING (BOX_HOVER_SPIN_DEGREES_PER_
+	--   SECOND) and SHAKING (BOX_THRASH_ROTATION_DEGREES), and a rotated
+	--   cube's vertical reach is its half-extent times the sum of the absolute
+	--   values of its rotation matrix's world-Y row. Searched numerically over
+	--   the full hover spin and every combination of thrash tilt extremes,
+	--   that peaks at 1.70 -- a reach of 5.95 studs below centre -- plus 0.35
+	--   of hover travel and 0.42 of downward thrash jitter.
+	--
+	-- 5.0 puts the centre ~8 studs off the ground, leaving the lowest corner
+	-- the box can ever reach ~1.3 studs clear of the road bands at the very
+	-- peak of a thrash, and ~2.8 clear at rest. RAISED FROM 3.5 when the
+	-- thrash replaced the old rattle: at 3.5 the worst case was 0.2 studs
+	-- BELOW the road, i.e. a corner visibly sinking into it at the most
+	-- dramatic moment of the sequence.
+	--
+	-- Raising it costs nothing visually, which is why this was the lever
+	-- rather than shrinking the thrash: BOX_CAMERA_PITCH_DEGREES is 0, so the
+	-- camera sits at exactly the box's centre height and rises with it, and
+	-- the composition is identical -- a level camera puts the horizon at 50%
+	-- of frame regardless of how high it is, and 1.5 studs against the
+	-- landmark's ~3400 moves it by 0.03 degrees.
+	BOX_WORLD_HEIGHT_OFFSET_STUDS = 5.0,
+	-- Degrees the cube is turned about its own vertical/horizontal axes from
+	-- dead-square-on to the player. A cube viewed exactly face-on renders as a
+	-- flat square with no readable depth; this three-quarter tilt is what makes
+	-- it read as a BOX at a glance. Cosmetic only -- every face carries the
+	-- same "?", so no amount of tilt can hide the marking.
+	BOX_WORLD_YAW_DEGREES = 25,
+	-- NEGATIVE tips the cube's TOP toward the camera, showing its top face;
+	-- positive tips it away, showing its underside. Flipped from +12: leaning
+	-- toward the viewer reads as the box presenting itself, leaning away reads
+	-- as it turning its back.
+	--
+	-- GROUND CLEARANCE RE-VERIFIED FOR THE NEW SIGN, not assumed symmetric --
+	-- the whole reason BOX_WORLD_HEIGHT_OFFSET_STUDS above is 5.0 is a
+	-- numerical search over this rotation, and reversing the pitch changes
+	-- which corner hangs lowest. Re-running that search (full hover spin,
+	-- every combination of thrash tilt extremes) gives the SAME worst-case
+	-- abs-sum of 1.7009 -- 5.95 studs of reach, 1.28 studs of clearance -- but
+	-- reached at mirrored tilt combinations: (20,20,20) here where +12 peaked
+	-- at (-20,20,-20). That equality is not a coincidence and not luck: the
+	-- hover sweeps the yaw through a full 360 degrees and the thrash tilt
+	-- range is symmetric about zero, so the two signs reach the same SET of
+	-- rotations, just by different routes. It would NOT hold if the spin were
+	-- ever bounded to an arc.
+	BOX_WORLD_PITCH_DEGREES = -12,
+	-- Body colour. Deep violet: distinct from every other colour in the scene
+	-- at the landing spot (the rainbow road's bands, the grey/pebble plot
+	-- dressing) so the box never blends into whichever band it happens to be
+	-- standing on.
+	BOX_WORLD_COLOR = Color3.fromRGB(78, 48, 132),
+	-- SmoothPlastic, not Neon: a glowing box would wash out the "?" drawn on
+	-- its own faces, which is the one thing that has to stay legible.
+	BOX_WORLD_MATERIAL = Enum.Material.SmoothPlastic,
+	-- Colour of the "?" on all six faces -- gold, the same colour the luck
+	-- readout uses, so the box and the number it is holding read as one object.
+	BOX_WORLD_QUESTION_COLOR = Color3.fromRGB(255, 214, 60),
+	-- SurfaceGui resolution, in GUI pixels per stud of face. The "?" is
+	-- TextScaled to fill its face, so this only sets how crisply that single
+	-- glyph is rasterised -- 40 x the 8-stud face is a 320px canvas, ample for
+	-- one character and far cheaper than the default 50 at six faces.
+	BOX_WORLD_QUESTION_PIXELS_PER_STUD = 40,
+	-- ClickDetector.MaxActivationDistance, in studs -- measured from the
+	-- player's own character, which is frozen BOX_WORLD_DISTANCE_STUDS away
+	-- from the box for the entire time the box exists. Generous rather than
+	-- tight: this is not a gameplay range check (the box is the only thing to
+	-- interact with at the landing spot), just the engine's own cutoff, and it
+	-- must never be the reason a press fails to register.
+	BOX_WORLD_CLICK_DISTANCE_STUDS = 40,
+	-- Studs ABOVE the cube's centre the luck readout billboard floats. Must
+	-- clear the cube's own tilted vertical reach (~4.4 studs at rest, see
+	-- BOX_WORLD_HEIGHT_OFFSET_STUDS's arithmetic) or the number sits inside
+	-- the box -- 6 leaves a clean gap above the top corner. (The billboard is
+	-- AlwaysOnTop, so it stays readable through the open burst scaling past it
+	-- too.)
+	BOX_WORLD_LUCK_LABEL_HEIGHT_STUDS = 6,
+	-- The billboard's own screen size in pixels. Fixed pixels, not studs, so
+	-- the number stays equally readable regardless of how far the camera has
+	-- been pulled back -- same reasoning the on-slime upgrade tags use.
+	BOX_WORLD_LUCK_LABEL_WIDTH_PIXELS = 260,
+	BOX_WORLD_LUCK_LABEL_HEIGHT_PIXELS = 56,
+
+	-- ===== Box camera (CLIENT-SIDE ONLY -- see LaunchClient's own box camera
+	-- block). While the box is up the camera leaves the player's control
+	-- (CameraType Scriptable) and frames the box alone against open sky; it
+	-- eases back to exactly where it was, and back to Custom, the moment the
+	-- box is gone. Nothing here touches the server, the outcome, or the
+	-- sequence's timing. =====
+	-- Studs from the cube's centre to the camera, along the view ray.
+	--
+	-- THE SHOT LOOKS DOWN-ROAD AT THE LANDMARK. The camera sits BEHIND the
+	-- player (see LaunchClient's boxCameraCFrame) and looks past them, through
+	-- the box, out to the giant slime on the horizon -- the box in the near
+	-- ground, the rainbow road running away underneath it, the landmark
+	-- rising behind. The character is in that line and is made invisible for
+	-- the duration rather than framed around; the framing is chosen for the
+	-- backdrop, not bent to exclude them.
+	--
+	-- HOW THIS NUMBER WAS PICKED. The landmark is thousands of studs away, so
+	-- moving the camera does not change ITS apparent size at all -- it only
+	-- shrinks the box. Pulling back is therefore the single knob that trades
+	-- box dominance for backdrop, and with the aim now LEVEL (see
+	-- BOX_CAMERA_PITCH_DEGREES) there is a hard threshold in it: the landmark
+	-- is 17.4 degrees wide at the worst case (a tier-1 landing, ~3430 studs
+	-- out), and the box is wider than that at anything closer than ~31 studs.
+	-- Inside that the landmark is simply behind the box and invisible.
+	--
+	-- 34 clears it: the box is 15.6 degrees wide against the landmark's 17.4,
+	-- so even at tier 1 the landmark shows past BOTH sides as well as above,
+	-- and from tier 3 up it dwarfs the box entirely. The box still reads as
+	-- the subject at ~21% of frame height and ~13% of frame width, centred on
+	-- the horizon.
+	BOX_CAMERA_DISTANCE_STUDS = 34,
+	-- SIGNED tilt: positive tilts the camera UP at the box (camera below it),
+	-- negative tilts it DOWN (camera above it).
+	--
+	-- LEVEL. The camera looks straight down the road at the box, from the box's
+	-- own centre height (a level aim puts the camera at exactly boxCentre,
+	-- ~6.5 studs off the road -- a couple of studs above the player's eye
+	-- height, which is about as natural as this shot gets).
+	--
+	-- WHAT THE SIGN COSTS, since this used to be -9 and the trade is not
+	-- obvious. The landmark stands ON the road, so it always occupies a band
+	-- running UPWARD from the horizon; the aim is what decides where that
+	-- horizon falls relative to the box, which is centred in frame by
+	-- construction. Tilting DOWN lifts the horizon and everything standing on
+	-- it away from the box -- which is why -9 gave 11.5 degrees of clear
+	-- landmark above the box at tier 1. Level puts the horizon at exactly 50%
+	-- of frame, dead behind the box's own centre, and drops that to 4.3
+	-- degrees. Tilting UP would be worse still, not better: it pushes the
+	-- horizon DOWN the frame and buries more of the landmark behind the box
+	-- (+2 degrees leaves only ~2.2). Level is the best of the three for the
+	-- backdrop, which is why this is 0 rather than a small positive number.
+	--
+	-- The landmark still clears the box, but now mostly AROUND it rather than
+	-- above it -- see BOX_CAMERA_DISTANCE_STUDS, which was pulled back to 34
+	-- specifically to make the box narrower than the landmark so that works.
+	--
+	-- Not constrained by hiding the character -- that is
+	-- LocalTransparencyModifier's job (see LaunchClient's hidden-character
+	-- block), which is what freed this constant to be chosen for the backdrop
+	-- instead of for occlusion.
+	BOX_CAMERA_PITCH_DEGREES = 0,
+
+	-- ===== Box idle hover (CLIENT-SIDE MOTION ONLY) =====
+	-- The box is suspended in mid-air with nothing holding it up, and a
+	-- perfectly still object hanging there reads as a flat image pasted on the
+	-- screen rather than a thing in the world. This is the slow, continuous
+	-- "it is floating" motion underneath everything else.
+	--
+	-- COMPOSES WITH THE SHAKE, DOES NOT REPLACE IT. The hover is not a motion
+	-- PHASE -- it is the moving rest pose that every phase is built on top of
+	-- (see LaunchClient's boxHoverCFrame): at rest the box just hovers, a
+	-- press adds the rattle on top of the hover, a fail decays the rattle back
+	-- down onto it, and the burst launches from it. Like the shake, it is
+	-- driven by the ABSOLUTE clock rather than by time-since-this-phase-began,
+	-- which is what makes every one of those handoffs seamless -- the hover
+	-- never restarts, so there is no instant at which the two can disagree
+	-- about where the box is.
+	-- Peak vertical travel either side of the resting height, in studs. Small
+	-- next to the 7-stud cube and sitting between the two shake sizes -- three
+	-- times BOX_NUDGE_AMPLITUDE_STUDS, half BOX_THRASH_AMPLITUDE_STUDS -- so
+	-- it is a slow drift rather than a bounce and cannot be confused with
+	-- either of them, which are both far faster (see BOX_SHAKE_FREQUENCY_HZ).
+	BOX_HOVER_AMPLITUDE_STUDS = 0.35,
+	-- Seconds for one complete up-and-down cycle. Deliberately far slower than
+	-- anything else the box does (the whole thrash is 0.25s): the hover
+	-- has to read as ambient rather than as an event, and stay legible
+	-- underneath a rattle running ~60x faster.
+	BOX_HOVER_PERIOD_SECONDS = 3.2,
+	-- Degrees of yaw per second, applied continuously about the box's own
+	-- vertical axis. 10 is a full turn every 36 seconds -- slow enough that no
+	-- single glance catches it moving, fast enough that the face on screen has
+	-- visibly changed by the time a box resolves. Every face carries the same
+	-- "?" (see BOX_WORLD_QUESTION_COLOR), so this can rotate indefinitely
+	-- without ever showing an unmarked side.
+	BOX_HOVER_SPIN_DEGREES_PER_SECOND = 10,
+	-- Seconds for the move into that framing, and for the move back out of it
+	-- again. Smoothstep-eased at both ends (see LaunchClient's
+	-- updateBoxCamera), so it reads as a deliberate push-in rather than a cut
+	-- or a linear slide. Short enough not to delay the first press -- pressing
+	-- is live throughout, the transition is never an input gate -- and long
+	-- enough to read as a camera move rather than a teleport.
+	BOX_CAMERA_TRANSITION_SECONDS = 0.45,
+
+	-- ===== Box shake (CLIENT-SIDE MOTION ONLY -- see LaunchClient's own box
+	-- motion block). Nothing here reaches the server or changes a probability.
+	-- =====
+	--
+	-- THE SHAKE MOVED. It used to be one rattle that built through the whole
+	-- BOX_ROLL_DELAY_SECONDS wait and then resolved either way -- which spent
+	-- the game's most violent motion on a moment whose outcome was still
+	-- unknown, and made a fail (by far the common case at BOX_DOUBLE_CHANCE)
+	-- the loudest thing on screen. It is now TWO separate, differently-sized
+	-- events with different meanings:
+	--
+	--   NUDGE   -- every press. A small knock that decays out. This is the box
+	--              acknowledging the press and nothing else, and on a FAIL it
+	--              is the entire animation: the box was hit, it moved, it held.
+	--   THRASH  -- opens only, and only AFTER BoxResult says so. The box tears
+	--              itself apart in the last quarter-second before the burst.
+	--
+	-- The client cannot start the thrash early -- it learns the outcome only
+	-- when BoxResult arrives -- so the thrash necessarily sits BETWEEN that
+	-- event and the burst, which is what pushes the burst slightly later than
+	-- it used to be. Total open tail is BOX_THRASH_SECONDS +
+	-- BOX_OPEN_BURST_SECONDS = 0.55, inside
+	-- SlimeConfig.REVEAL_BOX_TO_SLIME_DELAY_SECONDS (0.6) with 0.05 to spare,
+	-- so the reveal still cannot overlap the box. Retuning either of those two
+	-- upward means checking that sum against that constant again.
+	--
+	-- Jitter oscillations per second, SHARED by both events -- they differ in
+	-- size and envelope, not in character, so a nudge reads as a small version
+	-- of the same physical rattle. High on purpose: below ~10 it reads as the
+	-- box sliding around, above ~25 it starts to alias against a 60 Hz frame
+	-- rate and reads as noise.
+	BOX_SHAKE_FREQUENCY_HZ = 18,
+	-- ===== NUDGE: every press, and the whole of a fail =====
+	-- Peak positional jitter in STUDS, at the instant of the press. Roughly a
+	-- fifth of the thrash below and about a third of the hover's own travel --
+	-- big enough to register as "that did something", far too small to be
+	-- mistaken for the open.
+	BOX_NUDGE_AMPLITUDE_STUDS = 0.12,
+	-- Peak tilt either side of rest, in degrees. Same reasoning -- a knock,
+	-- not a struggle.
+	BOX_NUDGE_ROTATION_DEGREES = 3,
+	-- Seconds for it to decay from full to nothing. Starts at full energy and
+	-- bleeds out (there is no ramp -- the knock IS the impact, and an impact
+	-- that fades in would read as the box starting to move on its own). Kept
+	-- under BOX_PRESS_COOLDOWN_SECONDS so the box is visibly back at rest by
+	-- the time the next press is allowed.
+	BOX_NUDGE_SECONDS = 0.18,
+	-- ===== THRASH: opens only, immediately before the burst =====
+	-- Peak positional jitter in STUDS. Larger than the old single rattle's
+	-- 0.55 -- it no longer has to be survivable-looking, because this only
+	-- ever plays on a box that is about to come apart.
+	BOX_THRASH_AMPLITUDE_STUDS = 0.7,
+	-- Peak tilt either side of rest, in degrees, on all three axes. 20 degrees
+	-- of thrashing reads as a box that is no longer holding together, which is
+	-- exactly what is about to happen to it.
+	BOX_THRASH_ROTATION_DEGREES = 20,
+	-- Seconds it runs for, between BoxResult(opened) and the burst starting.
+	-- Short: this is the inhale before the bang, not a scene of its own, and
+	-- every millisecond here delays the payoff.
+	BOX_THRASH_SECONDS = 0.25,
+	-- Shape of the thrash's ramp: energy = (elapsed / BOX_THRASH_SECONDS) ^
+	-- this. 1.0 would be a straight line, which spends most of the window
+	-- already at full violence and so has nowhere left to escalate. Above 1
+	-- pushes the growth late -- at 2.0 the box is at 4% amplitude a fifth of
+	-- the way through and 25% halfway, then climbs hard into the burst. Unlike
+	-- the old build curve this one IS a prediction, and legitimately so: by
+	-- the time it starts, BoxResult has already told this client the box is
+	-- opening.
+	BOX_THRASH_BUILD_EXPONENT = 2.0,
+	-- OPEN ONLY: the multiple of its own size the cube blows out to as it
+	-- vanishes (2.2 = it more than doubles). The open deliberately shares NO
+	-- motion vocabulary with the fail -- jitter stops dead, the box expands
+	-- through the camera while fading to nothing and is then destroyed, so "it
+	-- burst" and "it held" can never be confused at a glance. A single frame is
+	-- enough to tell them apart: on a fail the box is still there.
+	BOX_OPEN_BURST_SCALE = 2.2,
+	-- Seconds for that burst. Well inside
+	-- SlimeConfig.REVEAL_BOX_TO_SLIME_DELAY_SECONDS (0.6), so the box is fully
+	-- gone before the slime reveal takes the screen.
+	BOX_OPEN_BURST_SECONDS = 0.3,
+	-- Degrees of yaw the cube sweeps through across that burst -- the spin is
+	-- what stops the expansion reading as a slow, weightless swell.
+	BOX_OPEN_BURST_SPIN_DEGREES = 140,
 
 	-- ===== Swing tiers (scaling only -- see the written report). Which tier
 	-- is ACTIVE is per-player state now, owned by PlayerProfile.luau (see

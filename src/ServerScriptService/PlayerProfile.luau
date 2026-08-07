@@ -320,6 +320,21 @@ local function spawnSlimeVisual(profile: Profile, slotNumber: number, slime: Sli
 	local deltaY = padTopY - minCorner.Y
 	model:PivotTo(model:GetPivot() + Vector3.new(0, deltaY, 0))
 
+	-- WHICH SLOT THIS MODEL IS, for the client. Set BEFORE Parent (the same
+	-- "populate then reveal" ordering the Remotes folder and the base folder's
+	-- own attributes already use) so it is guaranteed present by the time any
+	-- client's ChildAdded fires -- a client that saw the Model first and the
+	-- attribute a frame later would have to poll for it.
+	--
+	-- The model's NAME cannot serve this purpose: it is the slime's display
+	-- name ("Secret Slime 20"), which is neither unique across slots nor
+	-- anything the client could map back to a slot number. Nothing
+	-- server-side reads this attribute -- it carries no authority, it is a
+	-- label. SlimeUpgradeTagClient.client.luau is its only consumer, and the
+	-- upgrade it ultimately requests is still validated entirely by
+	-- upgradeSlime below, from server-held state.
+	model:SetAttribute("SlotNumber", slotNumber)
+
 	model.Parent = profile.baseFolder
 	profile.visualParts[slotNumber] = model
 

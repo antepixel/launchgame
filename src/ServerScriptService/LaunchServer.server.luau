@@ -1114,46 +1114,15 @@ local function clearActiveRider(player: Player)
 	-- remote) because its own OnClientEvent handler already does exactly
 	-- "return to neutral: not releasing, not flying, HUD hidden," which is
 	-- correct here regardless of what this player was doing when they died.
-	-- Guarded on player.Parent, the same guard scheduleReset's own delayed
-	-- fire already uses -- necessary here because clearActiveRider also runs
-	-- from PlayerRemoving, by which point firing to a gone player would
-	-- error.
+	-- Guarded on player.Parent, the same guard scheduleLucklessReturn's own
+	-- delayed fire already uses -- necessary here because clearActiveRider
+	-- also runs from PlayerRemoving, by which point firing to a gone player
+	-- would error.
 	if player.Parent then
 		resetReadyRemote:FireClient(player)
 	end
 end
 
--- Shared by both the 0-luck landing path (no box) and the box's own "opened"
--- path -- identical reset behaviour either way, just reached from two places
--- now instead of one inline block. Six-lane pass 2: this closure writes
--- states[landedPlayer], never a shared module-level variable -- two
--- different players' own reset timers can fire at any two overlapping
--- instants and never stomp each other, since each one only ever touches its
--- own captured landedPlayer's own table entry.
---
--- THE RETURN IS NOW PLAYER-TRIGGERED, NOT AUTOMATIC (see the written
--- report): this function no longer moves the character, and no longer
--- unanchors it either. The landing itself -- where the flight ends, where
--- the band is scored, where the mystery box opens -- was already, and
--- remains, untouched by any of this; it stays exactly where
--- trajectoryPosition/bandLuckForLandingZ put it, up to ~2,900 studs down the
--- road at tier 11. The character STAYS anchored (AutoRotate stays off) the
--- whole time this function is waiting -- see the Heartbeat landing handler's
--- own "FROZEN AT LANDING" comment -- so "grounded" here means "eligible to
--- return," not "free to walk": there is nothing at the landing spot to walk
--- to, so nothing is freed until the player actually asks to leave. See
--- onReturnToSwing below for the actual teleport + unanchor, fired at the
--- PLAYER's own choosing (a click/tap while grounded, see LaunchClient.
--- client.luau) instead of on this timer. This function's only remaining job
--- is the state flip and the client-facing "you can release again" signal.
-local function scheduleReset(landedPlayer: Player, _landedCharacter: Model)
-	task.delay(LaunchConfig.RESET_DELAY, function()
-		states[landedPlayer] = "grounded"
-		if landedPlayer.Parent then
-			resetReadyRemote:FireClient(landedPlayer)
-		end
-	end)
-end
 
 -- ===== Player-triggered return to swing (see the written report) =====
 -- Computes THIS player's own return position -- their lane's swing X
@@ -1236,6 +1205,60 @@ local function moveToLaneReturn(character: Model, humanoid: Humanoid, rootPart: 
 	end
 end
 
+-- ===== THE TWO LANDINGS END DIFFERENTLY (see the written report) =====
+--
+-- There used to be ONE scheduleReset shared by both landing outcomes, which
+-- flipped states to "grounded" on a timer and left the player anchored,
+-- waiting for a click, on both. That is right for exactly one of them:
+--
+--   LUCKLESS (0 luck, no box, no reveal) -- there is nothing on screen to
+--       click, so requiring a click would strand the player on an empty road
+--       staring at nothing. This path RETURNS THEM AUTOMATICALLY after
+--       RESET_DELAY, and is the whole reason scheduleLucklessReturn below
+--       exists as its own function rather than a flag on a shared one.
+--
+--   REWARD (box opened, slime revealed) -- the reveal panel IS the thing they
+--       click, and it stays up until they do (see LaunchClient's
+--       SlimeRevealed handler). Nothing on a timer returns them; the server
+--       only arms the click by flipping states to "grounded" at the moment
+--       the reveal is sent, and onReturnToSwing does the rest whenever it
+--       arrives. See onBoxPress.
+--
+-- Six-lane pass 2: this closure writes states[landedPlayer] and reads that
+-- player's own captured character, never a shared module-level variable --
+-- two different players' timers can fire at any two overlapping instants and
+-- never stomp each other.
+local function scheduleLucklessReturn(landedPlayer: Player, landedCharacter: Model)
+	task.delay(LaunchConfig.RESET_DELAY, function()
+		-- STILL THE SAME LANDING? A death, disconnect or dismount in the
+		-- meantime has already reset this player through clearActiveRider (see
+		-- its own comment), which sets states to "grounded" -- so anything
+		-- other than "cooldown" here means this timer is stale and must not
+		-- move a character that has since been respawned or freed.
+		if states[landedPlayer] ~= "cooldown" then
+			return
+		end
+		states[landedPlayer] = "grounded"
+
+		-- Same move + unanchor + AutoRotate restore the click-driven path
+		-- uses -- one function, so the two paths cannot drift apart on where
+		-- a player ends up or on what gets un-frozen. Skipped gracefully if
+		-- the rig is gone from under us; the state flip above has already
+		-- happened either way, so a missing character can never leave this
+		-- player stuck in "cooldown" forever.
+		local humanoid = landedCharacter:FindFirstChildOfClass("Humanoid") :: Humanoid?
+		local rootPart = humanoid and humanoid.RootPart
+		local laneIndex = PlayerProfile.getBaseIndex(landedPlayer)
+		if humanoid and rootPart and laneIndex then
+			moveToLaneReturn(landedCharacter, humanoid, rootPart, laneIndex, playerSwingPivots[landedPlayer])
+		end
+
+		if landedPlayer.Parent then
+			resetReadyRemote:FireClient(landedPlayer)
+		end
+	end)
+end
+
 -- Fired by a GROUNDED player's own click-anywhere/tap listener once the
 -- reward sequence has left them standing, still FROZEN (anchored, AutoRotate
 -- off -- see the Heartbeat landing handler's own "FROZEN AT LANDING"
@@ -1274,6 +1297,22 @@ local function onReturnToSwing(player: Player)
 		return
 	end
 	moveToLaneReturn(character, humanoid, rootPart, laneIndex, playerSwingPivots[player])
+
+	-- FIRES RESETREADY ITSELF NOW, where a timer used to fire it BEFORE the
+	-- click (see scheduleLucklessReturn's header). On the reward path there is
+	-- no such timer any more -- the reveal panel waits indefinitely -- so this
+	-- is the only thing that tells the client the sequence is over: re-arm
+	-- release, clear the flight readouts, drop back to "grounded". Ordered
+	-- after moveToLaneReturn so the client's own setGrounded(true) (which
+	-- tears down the reveal panel and every other reward-sequence element)
+	-- runs against a character that has already been moved and unanchored,
+	-- not one still frozen on the road.
+	--
+	-- The LUCKLESS path fires its own from its timer instead, because nothing
+	-- there ever calls this function.
+	if player.Parent then
+		resetReadyRemote:FireClient(player)
+	end
 end
 
 returnToSwingRemote.OnServerEvent:Connect(onReturnToSwing)
@@ -1895,6 +1934,19 @@ RunService.Heartbeat:Connect(function()
 		-- own onReturnToSwing, the only other place that ever unanchors /
 		-- restores AutoRotate).
 		activeFlights[player] = nil
+
+		-- BOTH MOVED ABOVE THE CHARACTER GUARD (see the written report --
+		-- flight pose sticking). Neither needs `character`: poseJoints is a map
+		-- of Motor6D -> neutral C0 captured at release, and trailRig holds its
+		-- own instances. They used to sit below the `if not character then
+		-- continue end` bail, which meant the one path that takes that bail
+		-- left a flight's pose applied and its trail attached forever. That
+		-- path is documented as unreachable and I could not find a way to
+		-- reach it either -- but "unreachable" is not a reason to leave the
+		-- cleanup behind a guard it never needed.
+		restoreFlightPose(flight.poseJoints)
+		destroyFlightTrail(flight.trailRig)
+
 		local character = activeCharacters[player]
 		if not character then
 			-- Defensive only: activeFlights[player] is never set without
@@ -1905,10 +1957,59 @@ RunService.Heartbeat:Connect(function()
 			continue
 		end
 
+		-- BUG FIX (see the written report -- character sunk into the road on
+		-- landing): trajectoryPosition's u = 1 Y is RunwayGeometry.RUNWAY_TOP_Y,
+		-- the road's own TOP SURFACE -- and PivotTo places the character ROOT at
+		-- the Y it is given, not the character's feet. Placing the root AT the
+		-- surface therefore buried the whole rig from the pelvis down in the band
+		-- it landed on, which is exactly the bug moveToLaneReturn/moveToLaneSpawn
+		-- already solve for the return/spawn positions (see their own comments).
+		-- Same derivation, read live off THIS character's own rig rather than a
+		-- hardcoded guess, so it is correct for whatever body type/HipHeight a
+		-- given player's avatar has: HipHeight is the gap the legs span between
+		-- root and feet, plus half the root part's own height so the root's
+		-- BOTTOM face is what lands on the surface.
+		--
+		-- STRICTLY VERTICAL. X and Z come out of trajectoryPosition untouched, so
+		-- the landing Z -- and therefore bandLuckForLandingZ, which takes nothing
+		-- but a Z and was already evaluated at release time from this same
+		-- trajectoryPosition(u = 1) call (see onRelease) -- cannot be affected by
+		-- this in any way. The band awarded and the band stood on are the same
+		-- band before and after this fix.
+		local landingHumanoid = character:FindFirstChildOfClass("Humanoid")
+		local landingRootPart = landingHumanoid and landingHumanoid.RootPart
+		local standingHeight = if landingHumanoid and landingRootPart
+			then landingHumanoid.HipHeight + landingRootPart.Size.Y / 2
+			else 0
 		local landingPosition = trajectoryPosition(flight.startPosition, flight.distance, flight.archHeight, 1)
+			+ Vector3.new(0, standingHeight, 0)
 		character:PivotTo(CFrame.lookAt(landingPosition, landingPosition + Vector3.new(0, 0, -1)))
-		restoreFlightPose(flight.poseJoints)
-		destroyFlightTrail(flight.trailRig)
+
+		-- THE ACTUAL FIX for the pose sticking (see the written report). The
+		-- C0 restore above is not what was leaving arms out and legs trailing
+		-- -- that pairing is symmetric on every path -- the HUMANOID'S OWN
+		-- FREEFALL ANIMATION was. Nothing in this project has ever touched the
+		-- Humanoid state machine, and a character whose root is Anchored (see
+		-- onRelease) generates no physics contacts, so the Humanoid latches
+		-- into Freefall for the flight and the default Animate script plays the
+		-- falling animation: arms out, legs trailing, driven through
+		-- Motor6D.Transform, which is a completely separate channel from the C0
+		-- that restoreFlightPose writes. Restoring C0 therefore could not clear
+		-- it, and nothing else was going to either -- the character stays
+		-- anchored deliberately all the way through the box and the reveal, so
+		-- the state machine never gets a chance to notice it has landed.
+		--
+		-- Intermittent for exactly the reason the state is a race: whether the
+		-- Humanoid had latched Freefall by the time the anchor went on depends
+		-- on physics/floor-detection timing at that instant, which is why the
+		-- same flight sometimes lands clean and sometimes does not.
+		--
+		-- Telling it explicitly costs nothing and is the only thing that talks
+		-- to that channel at all. Landed drops the fall animation and settles
+		-- to idle.
+		if landingHumanoid then
+			landingHumanoid:ChangeState(Enum.HumanoidStateType.Landed)
+		end
 
 		-- Replicated occupant state (see the written report -- frozen remote
 		-- players): tells every OTHER client's own render loop to stop
@@ -1941,7 +2042,12 @@ RunService.Heartbeat:Connect(function()
 			-- before this pass. See the written report for why a box here
 			-- (doubling zero forever) would just be a dead interaction.
 			states[player] = "cooldown"
-			scheduleReset(player, character)
+			-- AUTOMATIC, and only on this path: a luckless landing puts
+			-- nothing on screen to click, so the player is moved back to their
+			-- swing on RESET_DELAY without being asked. The reward path
+			-- deliberately does the opposite -- see scheduleLucklessReturn's
+			-- own header.
+			scheduleLucklessReturn(player, character)
 		end
 	end
 end)
@@ -1958,79 +2064,141 @@ local function onBoxPress(player: Player)
 	if states[player] ~= "box" or not box then
 		return
 	end
-	-- RATE LIMIT + THE BEAT, same mechanism: a press is only even ACCEPTED
-	-- (box.pending flips true) once, and ignored on every repeat until its
-	-- own delayed result has fired. A script mashing BoxPress as fast as it
-	-- can therefore gets exactly one roll every BOX_ROLL_DELAY_SECONDS --
-	-- the server never evaluates faster than that, no matter how many
-	-- Presses arrive in between. Reading activeBoxes[player] (six-lane pass
-	-- 2) rather than a single shared activeBox is what makes this safe to
-	-- run for several different players' boxes at once: each call only ever
-	-- reads/writes the CALLING player's own entry.
+	-- THE RATE LIMIT, AND NOTHING ELSE (see the written report -- splitting
+	-- BOX_ROLL_DELAY_SECONDS). box.pending used to do two jobs at once: it
+	-- was the rate limit AND it was implicitly cleared by the delayed result
+	-- firing, which meant the pacing of the RESULT and the ceiling on ROLLS
+	-- PER SECOND were the same number and could not be tuned apart. The
+	-- result is now immediate (below); this flag keeps the ceiling.
+	--
+	-- STILL FULLY SERVER-SIDE. Every press that arrives while pending is set
+	-- returns right here, before math.random is ever reached -- so a modified
+	-- client firing BoxPress in a tight loop still gets at most one roll per
+	-- BOX_PRESS_COOLDOWN_SECONDS. Nothing about that guarantee depended on
+	-- the result being delayed; it only ever depended on this flag, and the
+	-- flag now has its own timer instead of borrowing the result's.
+	--
+	-- Reading activeBoxes[player] (six-lane pass 2) rather than a single
+	-- shared activeBox is what makes this safe to run for several different
+	-- players' boxes at once: each call only ever reads/writes the CALLING
+	-- player's own entry.
 	if box.pending then
 		return
 	end
 	box.pending = true
 
-	task.delay(LaunchConfig.BOX_ROLL_DELAY_SECONDS, function()
-		-- THIS player's box (they left/died, see clearActiveRider) or their
-		-- rider state may have been torn down while this was pending. Bail
-		-- without touching anything if this delayed roll is no longer the
-		-- current one for `player` -- another player's own activeBoxes entry
-		-- is a completely different table slot and was never at risk here.
-		if activeBoxes[player] ~= box or states[player] ~= "box" then
-			return
-		end
-
-		-- THE ONLY THING A BOX ROLL IS EVER DERIVED FROM: math.random(),
-		-- called here, server-side, the instant this delay elapses. The
-		-- client sent nothing but a bare press signal, so there is no number
-		-- in this path for a modified client to influence, let alone force a
-		-- double or fake a luck value.
-		local doubled = math.random() < LaunchConfig.BOX_DOUBLE_CHANCE
-		if not doubled then
-			local finalLuck = box.luck
-			local landedCharacter = box.character
-			activeBoxes[player] = nil
-			states[player] = "cooldown"
-			boxResultRemote:FireClient(player, true, finalLuck)
-
-			-- THE SLIME: rolled immediately, server-side, from this box's own
-			-- final luck -- see SlimeRoll.rollSlime. Nothing about WHICH
-			-- slime is ever sent to or influenced by the client; only its
-			-- globalIndex goes over the wire (see slimeRevealedRemote above),
-			-- and the client looks up name/tier/colour/income from the same
-			-- shared SlimeData table this rolled from. The roll itself lives
-			-- in a ServerScriptService module a client cannot even require,
-			-- let alone call.
-			local slime = SlimeRoll.rollSlime(finalLuck)
-			local isNew = PlayerProfile.recordSeen(player, slime.globalIndex)
-
-			-- THE SECOND BEAT: the box's own "OPENED!" is already the first
-			-- (see BOX_ROLL_DELAY_SECONDS) -- this is a SEPARATE delay before
-			-- the slime itself appears, so the two don't land in the same
-			-- instant (see the written report for why). scheduleReset moves
-			-- HERE too, not before -- RESET_DELAY should count down from the
-			-- LATEST thing the player needs to read (the slime), not the
-			-- box's own open moment.
-			task.delay(SlimeConfig.REVEAL_BOX_TO_SLIME_DELAY_SECONDS, function()
-				if player.Parent then
-					slimeRevealedRemote:FireClient(player, slime.globalIndex, isNew)
-				end
-				-- THE BASE: handed off at the exact moment of the reveal, not
-				-- before -- see PlayerProfile.receiveSlime. Auto-placed if a
-				-- slot is free, otherwise added to that player's inventory
-				-- (never discarded -- see PlayerProfile.luau and the written
-				-- report); nothing here needs the return value.
-				PlayerProfile.receiveSlime(player, slime)
-				scheduleReset(player, landedCharacter)
-			end)
-		else
-			box.luck *= 2
+	-- THE CLEAR, on its own timer. Guarded on identity, not just presence:
+	-- if this player left, died, or resolved this box and started another
+	-- one (see clearActiveRider and the landing handler), activeBoxes[player]
+	-- is either nil or a DIFFERENT table, and clearing pending on it would
+	-- hand a fresh box a free extra roll. Comparing the captured `box`
+	-- against the live entry makes that impossible. On the open branch below
+	-- the entry is nil'd immediately, so this simply no-ops -- pending is
+	-- irrelevant once the box is gone.
+	task.delay(LaunchConfig.BOX_PRESS_COOLDOWN_SECONDS, function()
+		if activeBoxes[player] == box then
 			box.pending = false
-			boxResultRemote:FireClient(player, false, box.luck)
 		end
 	end)
+
+	-- THE ONLY THING A BOX ROLL IS EVER DERIVED FROM: math.random(), called
+	-- here, server-side, synchronously inside the press that asked for it.
+	-- The client sent nothing but a bare press signal, so there is no number
+	-- in this path for a modified client to influence, let alone force a
+	-- double or fake a luck value.
+	--
+	-- SYNCHRONOUS NOW, where this used to sit inside a task.delay. The state
+	-- re-checks that delay needed (activeBoxes[player] ~= box, states[player]
+	-- ~= "box") are gone with it -- nothing can have changed between the
+	-- guard at the top of this function and here, because there is no longer
+	-- a yield in between.
+	local doubled = math.random() < LaunchConfig.BOX_DOUBLE_CHANCE
+	if not doubled then
+		local finalLuck = box.luck
+		-- box.character is deliberately NOT captured here any more: this path
+		-- no longer schedules anything that moves the player (see the reveal
+		-- delay below -- the click does that, through onReturnToSwing, which
+		-- reads activeCharacters fresh at the moment it fires rather than a
+		-- reference captured seconds earlier and possibly since respawned).
+		activeBoxes[player] = nil
+		states[player] = "cooldown"
+		boxResultRemote:FireClient(player, true, finalLuck)
+
+		-- THE SLIME: rolled immediately, server-side, from this box's own
+		-- final luck -- see SlimeRoll.rollSlime. Nothing about WHICH slime is
+		-- ever sent to or influenced by the client; only its globalIndex goes
+		-- over the wire (see slimeRevealedRemote above), and the client looks
+		-- up name/tier/colour/income from the same shared SlimeData table this
+		-- rolled from. The roll itself lives in a ServerScriptService module a
+		-- client cannot even require, let alone call.
+		local slime = SlimeRoll.rollSlime(finalLuck)
+		local isNew = PlayerProfile.recordSeen(player, slime.globalIndex)
+
+		-- THE SECOND BEAT: the box's own open is the first -- and on the
+		-- client that open now occupies real time of its own (a thrash into a
+		-- burst, see LaunchClient's box motion block), which this delay has to
+		-- stay longer than or the slime would land on top of a box still
+		-- coming apart. It currently is, with room to spare; see that block's
+		-- own budget note.
+		task.delay(SlimeConfig.REVEAL_BOX_TO_SLIME_DELAY_SECONDS, function()
+			-- THE BASE: handed off at the exact moment of the reveal, not
+			-- before -- see PlayerProfile.receiveSlime. Auto-placed if a slot
+			-- is free, otherwise added to that player's inventory (never
+			-- discarded -- see PlayerProfile.luau and the written report).
+			--
+			-- UNCONDITIONAL, and deliberately ahead of the guard below: the
+			-- slime was rolled and recordSeen'd the instant the box opened, so
+			-- it is already theirs. Dying during the 0.6s before it appears
+			-- must not cost them the prize -- receiveSlime is a no-op for a
+			-- player with no profile left, so this is safe on the disconnect
+			-- case too.
+			PlayerProfile.receiveSlime(player, slime)
+
+			-- BUT ONLY SHOW IT IF THIS LANDING IS STILL LIVE. clearActiveRider
+			-- (death, disconnect) resets states away from "cooldown" and has
+			-- already fired its own ResetReady, so anything else here means
+			-- this reveal belongs to a sequence that was cancelled. Sending it
+			-- anyway would pop a panel onto a freshly respawned player -- and
+			-- since the panel no longer has a timer, it would sit there until
+			-- they clicked it, then teleport them for a landing they no longer
+			-- remember. Bail instead: the prize is banked above, the client was
+			-- already reset, nothing is owed.
+			if states[player] ~= "cooldown" then
+				return
+			end
+
+			-- ARMING THE CLICK, and that is ALL this does -- no timer, no
+			-- move, no ResetReady. The reveal panel stays up until the player
+			-- dismisses it (see LaunchClient's SlimeRevealed handler), and
+			-- dismissing it IS the return -- so all the server owes them here
+			-- is a state that onReturnToSwing will accept. Everything else
+			-- happens in that handler, whenever the click actually comes.
+			--
+			-- Set as the reveal is SENT rather than when the client reports
+			-- itself dismissable, so the click can never race ahead of the
+			-- guard: by the time the panel is on screen, let alone past its
+			-- REVEAL_DISMISS_LOCKOUT_SECONDS, this is already done.
+			--
+			-- "grounded" while still anchored means "eligible to return", not
+			-- "free to walk" -- unchanged in meaning from the shared reset
+			-- this replaced. moveToLaneReturn is the only thing that unanchors.
+			-- Verified safe to hold indefinitely: checkProximityMounts also
+			-- runs on "grounded" players, but the closest a REWARD landing can
+			-- be to the swing pivot is RUNWAY_START_Z to SWING_PIVOT_Z, 34.26
+			-- studs, against a SWING_MOUNT_RADIUS_STUDS of 18 -- so a player
+			-- reading this panel can never be auto-mounted out from under it.
+			states[player] = "grounded"
+			if player.Parent then
+				slimeRevealedRemote:FireClient(player, slime.globalIndex, isNew)
+			end
+		end)
+	else
+		-- pending is deliberately NOT cleared here any more -- that is the
+		-- cooldown timer's job above, and clearing it now would restore the
+		-- old behaviour where a double could be re-pressed instantly.
+		box.luck *= 2
+		boxResultRemote:FireClient(player, false, box.luck)
+	end
 end
 
 boxPressRemote.OnServerEvent:Connect(onBoxPress)

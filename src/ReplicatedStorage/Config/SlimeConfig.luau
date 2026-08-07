@@ -27,6 +27,13 @@ export type SlimeConfig = {
 	SLIME_EXTRAPOLATION_T_MIN: number,
 	SLIME_EXTRAPOLATION_T_MAX: number,
 	REVEAL_BOX_TO_SLIME_DELAY_SECONDS: number,
+	REVEAL_DISMISS_LOCKOUT_SECONDS: number,
+	SLIME_REVEAL_WIDTH_STUDS: number,
+	SLIME_REVEAL_ENTRANCE_SECONDS: number,
+	SLIME_REVEAL_RISE_STUDS: number,
+	SLIME_REVEAL_LABEL_HEIGHT_STUDS: number,
+	SLIME_REVEAL_LABEL_WIDTH_PIXELS: number,
+	SLIME_REVEAL_LABEL_HEIGHT_PIXELS: number,
 	SLIME_TIER_TEXT_SIZE_BASE: number,
 	SLIME_TIER_TEXT_SIZE_STEP: number,
 }
@@ -280,11 +287,90 @@ local SlimeConfig: SlimeConfig = {
 
 	-- ===== The reveal (see LaunchServer's onBoxPress and LaunchClient's
 	-- SlimeRevealed handler) =====
-	-- Seconds between the box showing "OPENED!" and the slime itself
-	-- appearing -- THE SECOND beat, distinct from BOX_ROLL_DELAY_SECONDS
-	-- (the first, before the open/double result). Long enough to read as a
-	-- separate moment, not a continuation of the same instant.
+	-- Seconds between the server sending BoxResult(opened) and the slime
+	-- itself appearing -- THE SECOND beat, long enough to read as a separate
+	-- moment rather than a continuation of the same instant.
+	--
+	-- ALSO A BUDGET, not just a pause: the client's whole open animation runs
+	-- inside this window -- a thrash into a burst, LaunchConfig's
+	-- BOX_THRASH_SECONDS + BOX_OPEN_BURST_SECONDS = 0.55 -- so the box has
+	-- destroyed itself before the reveal takes the screen. Lowering this, or
+	-- raising either of those two, means re-checking that sum against it or
+	-- the two beats start to overlap.
 	REVEAL_BOX_TO_SLIME_DELAY_SECONDS = 0.6,
+	-- Seconds the reveal panel REFUSES to be dismissed after it appears.
+	--
+	-- THE PANEL HAS NO LIFETIME OF ITS OWN ANY MORE. It used to auto-hide on a
+	-- timer (this constant was that timer, 0.6), which dropped the player back
+	-- onto an empty road still needing a second, separate click to return.
+	-- Now it stays up indefinitely and ONE click dismisses it and returns them
+	-- in the same action -- so the only thing left to time is the short window
+	-- at the start where that click must NOT count.
+	--
+	-- WHAT THE LOCKOUT IS FOR: the player has just been clicking to press the
+	-- box, possibly repeatedly. The reveal lands 0.6s after the box opens
+	-- (REVEAL_BOX_TO_SLIME_DELAY_SECONDS above), which is well inside the
+	-- window where another click may already be on its way down. Without this
+	-- the reveal could be skipped before it was ever read -- the one thing the
+	-- whole sequence exists to show. 0.5 is comfortably longer than the gap
+	-- between two deliberate clicks and short enough that a player who wants
+	-- to move on never notices it.
+	--
+	-- The in-panel "click to continue" prompt appears on exactly this timer
+	-- too (see LaunchClient's SlimeRevealed handler), so the prompt is never
+	-- on screen while the click it describes would be ignored.
+	REVEAL_DISMISS_LOCKOUT_SECONDS = 0.5,
+
+	-- ===== The reveal is a SLIME IN THE WORLD now, not a screen panel =====
+	-- It is built with SlimeBuilder at the box's own position as the burst
+	-- finishes, and the camera does not move for it -- see LaunchClient's
+	-- reveal-slime block. These are its numbers.
+	--
+	-- Body width in studs, and THE lever for how big the reveal reads -- see
+	-- the written report for why this was raised rather than the camera being
+	-- pulled in.
+	--
+	-- The camera cannot come closer. It sits at 34 studs so the 7-stud box
+	-- subtends 15.6 degrees of width, just inside the 17.4 the giant slime
+	-- landmark subtends from a tier-1 landing -- which is the only reason the
+	-- landmark shows past the box at all. Inside ~31 studs the box swallows it.
+	-- And the camera may not move BETWEEN the box and the slime, so any
+	-- distance chosen is a distance both have to live with. Growing the slime
+	-- instead leaves the box's framing (and its backdrop) untouched and fixes
+	-- the only thing that was wrong.
+	--
+	-- The mesh is ~0.677 as tall as it is wide, so 16 studs is ~10.8 tall:
+	-- 22.7% of frame height against the box's 18.4%, up from 9 studs' 12.8%.
+	-- The reward now reads bigger than the container it came out of, which is
+	-- the right way round, and its hover spin is large enough on screen to be
+	-- worth watching.
+	--
+	-- BOUNDED BY THE ROAD, not by taste, at the top end: the slime is centred
+	-- where the box was, 8 studs up, so half its height plus the hover's own
+	-- travel has to stay under that. 16 leaves 2.2 studs of clearance; 21
+	-- would leave 0.5 and start clipping on the down-beat of the hover.
+	SLIME_REVEAL_WIDTH_STUDS = 16,
+	-- Seconds for the entrance: the slime rises through
+	-- SLIME_REVEAL_RISE_STUDS while scaling up from nothing to full size.
+	-- Short -- this is the punctuation on the burst, not a scene of its own,
+	-- and the player is waiting to see WHICH slime they got.
+	SLIME_REVEAL_ENTRANCE_SECONDS = 0.35,
+	-- Studs below its resting height the slime starts the entrance at, so it
+	-- travels UP into place rather than simply inflating. Roughly a third of
+	-- its own height: enough to read as emerging, not so much that it appears
+	-- to be climbing out of the road. Scaled up with the body above.
+	SLIME_REVEAL_RISE_STUDS = 3.5,
+	-- Studs above the slime's centre its name/tier billboard floats. Must clear
+	-- the body's own half-height -- 5.4 studs at the width above -- or the text
+	-- sits inside the mesh. 7.5 leaves a clean 2-stud gap above the crown, and
+	-- has to be raised again if SLIME_REVEAL_WIDTH_STUDS ever is.
+	SLIME_REVEAL_LABEL_HEIGHT_STUDS = 7.5,
+	-- Billboard size in pixels. Fixed pixels rather than studs, same reasoning
+	-- as the box's own luck readout: the text stays equally readable whatever
+	-- the camera is doing. Tall enough for three stacked lines (tier, name,
+	-- NEW/Duplicate).
+	SLIME_REVEAL_LABEL_WIDTH_PIXELS = 300,
+	SLIME_REVEAL_LABEL_HEIGHT_PIXELS = 108,
 	-- Tier name text size (pixels): BASE at tier 1 (Common), +STEP per tier
 	-- above it -- so Divine (tier 8) renders at BASE + 7*STEP. This, plus the
 	-- tier's own colour, is what makes a Divine reveal "obviously a bigger
