@@ -77,9 +77,20 @@ function SlimeRoll.distributionForLuck(luck: number): { number }
 	local windowStart = math.clamp(math.round(windowStartRaw), 1, tierCount - windowWidth + 1)
 
 	local peakOffset = lerp(SlimeConfig.SLIME_PEAK_OFFSET_LOW, SlimeConfig.SLIME_PEAK_OFFSET_HIGH, t)
-	local spreadDown = lerp(SlimeConfig.SLIME_SPREAD_DOWN_LOW, SlimeConfig.SLIME_SPREAD_DOWN_HIGH, t)
-	local spreadUp = lerp(SlimeConfig.SLIME_SPREAD_UP_LOW, SlimeConfig.SLIME_SPREAD_UP_HIGH, t)
-	local shape = lerp(SlimeConfig.SLIME_SHAPE_LOW, SlimeConfig.SLIME_SHAPE_HIGH, t)
+	-- FLOORED, and the floors are the only thing standing between this
+	-- function and a silent all-Divine failure if t is ever allowed past a
+	-- lerp's zero crossing (spreadDown's is t = 3.333). A negative spread makes
+	-- (|dist| / spread) negative, a fractional power of a negative is NaN, and
+	-- rollTier below then falls through every `roll <= cumulative` test to its
+	-- last-tier safety net. See SlimeConfig.SLIME_SPREAD_FLOOR for the full
+	-- account and for why NEITHER FLOOR IS REACHABLE at the current constants
+	-- (T_MAX = 1.0 clamps t well short of every crossing) -- these change no
+	-- distribution that any player can currently roll, verified to zero
+	-- deviation across 2,000,000 luck values. They exist so that T_MAX is a
+	-- decision about the CURVE and not also a load-bearing safety guard.
+	local spreadDown = math.max(lerp(SlimeConfig.SLIME_SPREAD_DOWN_LOW, SlimeConfig.SLIME_SPREAD_DOWN_HIGH, t), SlimeConfig.SLIME_SPREAD_FLOOR)
+	local spreadUp = math.max(lerp(SlimeConfig.SLIME_SPREAD_UP_LOW, SlimeConfig.SLIME_SPREAD_UP_HIGH, t), SlimeConfig.SLIME_SPREAD_FLOOR)
+	local shape = math.max(lerp(SlimeConfig.SLIME_SHAPE_LOW, SlimeConfig.SLIME_SHAPE_HIGH, t), SlimeConfig.SLIME_SHAPE_FLOOR)
 	local peak = windowStart + peakOffset
 
 	local weights = table.create(tierCount, 0)

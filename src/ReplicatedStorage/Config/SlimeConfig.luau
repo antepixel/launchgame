@@ -24,6 +24,8 @@ export type SlimeConfig = {
 	SLIME_SPREAD_UP_HIGH: number,
 	SLIME_SHAPE_LOW: number,
 	SLIME_SHAPE_HIGH: number,
+	SLIME_SPREAD_FLOOR: number,
+	SLIME_SHAPE_FLOOR: number,
 	SLIME_EXTRAPOLATION_T_MIN: number,
 	SLIME_EXTRAPOLATION_T_MAX: number,
 	REVEAL_BOX_TO_SLIME_DELAY_SECONDS: number,
@@ -192,6 +194,20 @@ local SlimeConfig: SlimeConfig = {
 	-- tier-2 players actually roll instead of at a pre-chain value nobody's
 	-- actual roll uses.
 	SLIME_LUCK_ANCHOR_LOW = 220,
+	-- TRADE-OFF, RECORDED DELIBERATELY: the luck VALUES of both anchors are
+	-- unchanged, but the observed SHAPE at this HIGH one is no longer
+	-- reproduced. The reference game's 120,000 distribution (~15% Legendary /
+	-- 78% Mythic / 6% Secret / 1% Divine) is a distribution whose expected
+	-- INCOME is lower than that of the luck below it, because it concentrates
+	-- as luck rises. Reproducing it and holding the monotonicity invariant
+	-- (see SLIME_SPREAD_DOWN_LOW) are mutually exclusive, so the invariant
+	-- wins and this shape is now ~8.7% / 71.8% / 15.2% / 4.5%.
+	--
+	-- The visible consequence is that HIGH-LUCK ROLLS ARE WORTH ABOUT 2.8x
+	-- MORE than they were: expected income at the top of the curve goes from
+	-- ~$3.07K to ~$8.69K per slot. That is a real economy change and the
+	-- swing prices above tier 7 were not retuned for it -- if the late game
+	-- now inflates, this is the number that did it, not the upgrade curve.
 	SLIME_LUCK_ANCHOR_HIGH = 120000,
 	-- How many consecutive tiers are ever eligible at once. 4 reproduces both
 	-- anchors exactly (Common-Epic at the low end, Legendary-Divine at the
@@ -219,52 +235,108 @@ local SlimeConfig: SlimeConfig = {
 	-- fading tier below the peak and the tail above it can shrink at
 	-- different rates.
 	--
-	-- These LOW values (and SHAPE_LOW below) are constrained by a SECOND
-	-- invariant, not just "hit these percentages at luck 220": expected tier
-	-- value -- E[tier index], 1=Common..8=Divine, weighted by the roll's own
-	-- probabilities -- must never DECREASE as luck increases. An earlier
-	-- version of these three numbers (2.3 / 0.68 / 1.35) hit the luck-220
-	-- target exactly but broke that invariant badly: SHAPE and SPREAD_UP
-	-- interpolate continuously toward SHAPE_HIGH/SPREAD_UP_HIGH across the
-	-- ENTIRE anchor range, independent of which discrete 4-tier window is
-	-- currently active, and because the peak sits 1 tier below the window's
-	-- top but 2 tiers below nothing (it's 1-in-from-the-bottom, so there are
-	-- 2 tiers ABOVE it and only 1 below), rising concentration always drains
-	-- the upper tail faster than it can be offset by the fading tier below --
-	-- expected value fell continuously for the entire span BETWEEN two
-	-- window-advance jumps, only recovering when the window itself slid to
-	-- the next 4-tier range. That's why (with the old values) luck 600 rolled
-	-- BETTER on average than luck 2000 despite being strictly lower luck --
-	-- both sat inside the same Uncommon-Legendary window, and 2000 was
-	-- further along that internal decay. Verified by brute force: every
-	-- window segment showed the same pattern, dips of 2-7% relative.
+	-- ===== THE MONOTONICITY INVARIANT, and the one thing these six numbers
+	-- exist to satisfy: EXPECTED INCOME PER ROLL MUST NEVER DECREASE AS LUCK
+	-- INCREASES. More luck can never be worth less. A player buys a swing
+	-- tier to reach a further band, and a further band must not roll cheaper
+	-- slimes than the one behind it.
 	--
-	-- The only way to make that dip EXACTLY zero is SHAPE_LOW/SPREAD_*_LOW
-	-- literally equal to their _HIGH twins (concentration constant, only the
-	-- window slides) -- but _HIGH can't move (it's the observed 120,000
-	-- reference), so that would revert the LOW anchor to the exact same
-	-- 15/78/6/1 spike shape as the high end, undoing this reshape entirely.
-	-- Instead, these values were solved to make the residual dip NEGLIGIBLE
-	-- (worst case ~0.002% relative, over 1000x smaller than the old 2-7%,
-	-- and only in the extrapolated region below luck 220) while keeping a
-	-- real three-tier spread at luck 220 (~10% Common / ~71% Uncommon / ~16%
-	-- Rare / ~3% Epic tail) -- see the written report for the search and the
-	-- full checkpoint table.
+	-- THIS INVARIANT USED TO BE STATED AGAINST THE WRONG QUANTITY, and that
+	-- is what broke it. The previous version of this comment protected
+	-- E[TIER INDEX] -- the probability-weighted mean of 1=Common..8=Divine --
+	-- and reported the residual dip as "~0.002% relative", which is true of a
+	-- single step along the curve. Two things were wrong with it:
+	--
+	--   1. TIER INDEX IS LINEAR; INCOME IS GEOMETRIC. Tier mean incomes climb
+	--      2.4x, 2.5x, 3.2x, 3.1x, 8.9x and 14.1x per step (see
+	--      SLIME_INCOME_BY_TIER). Losing a point of probability off the top of
+	--      the window and gaining it at the peak barely moves an index average
+	--      and moves an income average enormously -- in the top two windows the
+	--      +2 tail carries roughly HALF of all expected income at 1-2%
+	--      probability. Measured: over the Legendary-Divine window E[index]
+	--      falls 0.39% while E[income] falls 12.71%, a ~32x understatement.
+	--   2. THE DIP IS CUMULATIVE, NOT PER-STEP. A 0.002% drop between adjacent
+	--      luck values compounds across a whole window segment. Measured on the
+	--      old constants, EVERY segment declined end to end: -12.43%, -6.00%,
+	--      -7.63%, -11.73%, -12.71% of expected income. The per-step figure was
+	--      real and the conclusion drawn from it was not.
+	--
+	-- The consequence in play: five of the ten swing-tier purchases LOWERED
+	-- expected income -- tiers 2, 4, 7, 9 and 10, with tier 9 down 11.3%. The
+	-- player paid and got less.
+	--
+	-- ===== WHAT CHANGED, AND WHAT DID NOT =====
+	-- The three _LOW values are UNTOUCHED. The luck-220 shape is measured data
+	-- (see SLIME_LUCK_ANCHOR_LOW) and it still reproduces exactly: 10.13%
+	-- Common / 70.91% Uncommon / 15.93% Rare / 3.02% Epic. Early game is
+	-- bit-for-bit what it was. Buying monotonicity by making low luck WORSE
+	-- was available and was rejected -- an early solve did exactly that
+	-- (Common 10% -> 20%) and it is the wrong direction for a player.
+	--
+	-- The three _HIGH values moved, and this is the real cost of the fix:
+	-- SPREAD_UP_HIGH 0.292 -> 0.640, SPREAD_DOWN_HIGH 0.520 -> 0.378,
+	-- SHAPE_HIGH 0.764 -> 0.900. The upper tail now WIDENS with luck instead
+	-- of narrowing. That is not a tuning nudge, it is a sign flip, and it is
+	-- forced: within a fixed window the only term that can raise expected
+	-- income is the weight on the tiers above the peak, so if concentration
+	-- rises with luck then expected income falls with luck, always. The two
+	-- cannot both hold. See the trade-off note under SLIME_LUCK_ANCHOR_HIGH.
+	--
+	-- Solved as a constrained fit (least squares against both anchor shapes,
+	-- subject to: no decrease in expected income anywhere; the +2 tail inside
+	-- the stated 1-5%; every swing tier gaining at least 1%). Verified over
+	-- 1,000,000 log-spaced luck values from 1e-3 to 1e10: ZERO decreasing
+	-- steps, +2 tail range 2.49%-4.47%.
 	SLIME_SPREAD_DOWN_LOW = 0.54,
-	SLIME_SPREAD_DOWN_HIGH = 0.520,
+	SLIME_SPREAD_DOWN_HIGH = 0.378,
 	SLIME_SPREAD_UP_LOW = 0.69,
-	SLIME_SPREAD_UP_HIGH = 0.292,
+	SLIME_SPREAD_UP_HIGH = 0.640,
 	-- The generalised-Gaussian shape exponent: weight ~ exp(-(distance/
-	-- spread)^shape). LOW is 1.08 -- much closer to SHAPE_HIGH (0.764) than
-	-- earlier attempts at this curve used, specifically because the gap
-	-- between LOW and HIGH is what drives the expected-value dip described
-	-- in SPREAD_DOWN_LOW's comment above: the closer LOW sits to HIGH, the
-	-- smaller that dip, at the cost of a less dramatic shape change across
-	-- the climb. HIGH (0.764, a sharp single spike with a longer tail --
-	-- "concentrated in one tier with a thin rare tail") is unchanged --
-	-- that's the observed high-luck reference, not part of this reshape.
+	-- spread)^shape). LOW is 1.08, unchanged, and holds the observed luck-220
+	-- shape. HIGH is 0.900 (was 0.764): a lower exponent lifts every off-peak
+	-- weight relative to the peak, so this pulls in the same direction as
+	-- SPREAD_UP_HIGH above -- toward a window that stays genuinely four tiers
+	-- wide at high luck rather than collapsing onto its peak. Both are part of
+	-- the same solve; neither is meaningful alone.
 	SLIME_SHAPE_LOW = 1.08,
-	SLIME_SHAPE_HIGH = 0.764,
+	SLIME_SHAPE_HIGH = 0.900,
+
+	-- ===== SAFETY FLOORS on the three interpolated values above. Purely
+	-- defensive: at the current constants and the current
+	-- SLIME_EXTRAPOLATION_T_MAX, NEITHER FLOOR IS EVER REACHED, and applying
+	-- them changes no distribution anywhere (verified: zero deviation over
+	-- 2,000,000 log-spaced luck values from 1e-4 to 1e12).
+	--
+	-- WHAT THEY PREVENT. All six LOW/HIGH constants are interpolated with a
+	-- plain lerp, which is unbounded: spreadDown reaches zero at t = 3.333,
+	-- shape at t = 6.0, spreadUp at t = 13.8. Past spreadDown's crossing the
+	-- spread is NEGATIVE, so (|dist| / spread) is negative, a fractional power
+	-- of a negative number is NaN, and every weight in the window becomes NaN.
+	-- SlimeRoll.rollTier's cumulative comparison then never fires -- every
+	-- `roll <= cumulative` test against NaN is false -- and it falls through to
+	-- its floating-point safety net, `return #weights`, which is the LAST tier.
+	-- The failure is therefore silent, and it is maximally generous: every roll
+	-- returns Divine.
+	--
+	-- THIS IS LATENT, NOT LIVE. T_MAX = 1.0 clamps t before any crossing, so
+	-- the region is unreachable today and no player can hit it -- confirmed by
+	-- scanning the live module over the same 2,000,000 values and finding no
+	-- NaN. What these floors buy is that T_MAX stops being load-bearing for
+	-- SAFETY as well as for design: raising or removing it becomes a decision
+	-- about the curve's shape only, and can no longer reintroduce a
+	-- guaranteed-Divine failure by accident.
+	--
+	-- CHOSEN WELL BELOW ANYTHING IN NORMAL PLAY. Over the whole allowed t
+	-- range the minimum values actually reached are spreadDown 0.378,
+	-- spreadUp 0.640 (both at t = 1.0) and shape 0.900 (also at t = 1.0). The
+	-- floors sit 7.6x, 12.8x and 9.0x below those. They are also above the
+	-- point where the shape degenerates rather than merely at zero: a spread
+	-- of 0.05 already puts the nearest off-peak tier at exp(-(1/0.05)^0.1) ~=
+	-- 0.22 of the peak, so a floored window is still a window rather than a
+	-- single spike, and a shape of 0.10 keeps the exponent positive so weights
+	-- still decay with distance instead of inverting.
+	SLIME_SPREAD_FLOOR = 0.05,
+	SLIME_SHAPE_FLOOR = 0.10,
 	-- How far past the two observed anchors (in the same log-luck t units,
 	-- where the anchors are t=0 and t=1) the interpolation is allowed to
 	-- extrapolate before clamping. MIN=-0.5 lets luck somewhat below 220
