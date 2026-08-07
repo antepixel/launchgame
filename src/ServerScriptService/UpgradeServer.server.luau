@@ -18,8 +18,10 @@ remotesFolder.Name = "UpgradeRemotes"
 remotesFolder.Parent = ReplicatedStorage
 
 -- Client -> server: (slotNumber: number, count: number) -- upgrade the
--- slime in this slot by up to `count` levels (1, 10, or 100 -- see
--- InventoryClient.client.luau's three buy buttons). There is no "price"
+-- slime in this slot by up to `count` levels (1, 5, or MAX_LEVEL -- see
+-- InventoryClient.client.luau's three buy buttons; the MAX button sends the
+-- cap and lets the server work out how many levels are actually left, so
+-- "buy everything remaining" needs no separate message). There is no "price"
 -- argument -- PlayerProfile.upgradeSlime always computes the charge itself
 -- from this player's own server-held level/money, never from anything the
 -- client claims.

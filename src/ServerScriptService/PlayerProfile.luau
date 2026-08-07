@@ -899,8 +899,8 @@ end
 -- or-nothing), this deliberately buys as many of the requested `count` levels
 -- as the player can actually afford, rather than failing the whole purchase
 -- because the LAST of, say, 100 requested levels was one dollar short. Same
--- reasoning as the MAX_LEVEL cap below: a client showing "+100" already knows
--- the cost of exactly 100, but money keeps changing underneath (income ticks
+-- reasoning as the MAX_LEVEL cap below: a client showing "MAX +12" already
+-- knows the cost of exactly 12, but money keeps changing underneath (income ticks
 -- every second) -- refusing a purchase entirely over a stale price the UI
 -- computed a moment ago would be a worse experience than simply buying what's
 -- affordable right now. Returns the actual number of levels bought so the
@@ -941,7 +941,10 @@ function PlayerProfile.upgradeSlime(player: Player, slotNumber: number, count: n
 		-- Binary search the largest affordable count in [0, requestedCount] --
 		-- cost is monotonically increasing in count (every individual level's
 		-- cost is positive), so this always converges to the exact affordable
-		-- maximum in a handful of steps, never a loop over up to 1000 levels.
+		-- maximum in a handful of steps. Kept as a search rather than a plain
+		-- loop even though MAX_LEVEL is only 25 now: totalUpgradeCost is a
+		-- closed form either way, and this stays correct whatever the cap is
+		-- retuned to.
 		local low, high = 0, requestedCount
 		while low < high do
 			local mid = (low + high + 1) // 2

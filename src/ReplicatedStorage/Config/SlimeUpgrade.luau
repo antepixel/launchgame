@@ -4,116 +4,88 @@
 -- SlimeRoll (the module that turns it into a roll). SHARED (ReplicatedStorage,
 -- not ServerScriptService) because both sides need the SAME numbers: the
 -- server (PlayerProfile.upgradeSlime) as the sole authority on what a
--- purchase actually costs, and the client (InventoryClient's upgrade buttons)
--- to show a cost preview BEFORE clicking, exactly the same way the inventory
--- panel's sell-value preview already reads InventoryConfig directly rather
--- than asking the server first. The server is still the only one who ever
--- actually charges money -- see PlayerProfile.upgradeSlime.
+-- purchase actually costs, and the client (InventoryClient's upgrade buttons,
+-- SlimeUpgradeTagClient's on-slime strip) to show a cost preview BEFORE
+-- clicking, exactly the same way the inventory panel's sell-value preview
+-- already reads InventoryConfig directly rather than asking the server first.
+-- The server is still the only one who ever actually charges money -- see
+-- PlayerProfile.upgradeSlime, which recomputes every cost here from its own
+-- state and never trusts a number the client sends.
+--
+-- ===== REBUILT (see SlimeUpgradeConfig's own header and REPORT.md). This
+-- module used to carry a per-tier max-multiplier table generated from
+-- INCOME_MAX_MULTIPLIER_BASE/RATIO, a normalisation constant for a quadratic
+-- income shape, and a reverse lookup from base income back to tier so that
+-- callers holding only an income could find their tier's multiplier. ALL OF
+-- THAT IS GONE. Growth is now the same for every tier, so there is no tier to
+-- look up, nothing to normalise, and no table to generate. This module no
+-- longer reads SlimeConfig or SlimeData at all.
+--
+-- The fragile part that went with it is worth naming: the tier reverse lookup
+-- depended on all 65 slimes having DISTINCT base incomes, and silently picked
+-- whichever was inserted first if two ever collided. That failure mode no
+-- longer exists because nothing here needs to know a slime's tier. =====
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local SlimeConfig = require(ReplicatedStorage.Config.SlimeConfig)
-local SlimeData = require(ReplicatedStorage.Config.SlimeData)
 local SlimeUpgradeConfig = require(ReplicatedStorage.Config.SlimeUpgradeConfig)
 
 local SlimeUpgrade = {}
 
--- ===== Per-tier max multiplier -- GENERATED (not hand-authored), same
--- philosophy as SlimeData.luau/LuckCurve.luau: a repeated, formulaic list is
--- a loop's job. Tier 1 (Common) anchors at INCOME_MAX_MULTIPLIER_BASE; each
--- tier above multiplies by INCOME_MAX_MULTIPLIER_RATIO again -- see that
--- config's own written report for the fit this reproduces.
-local maxMultiplierByTier: { number } = {}
-for tier = 1, #SlimeConfig.SLIME_TIER_NAMES do
-	maxMultiplierByTier[tier] = SlimeUpgradeConfig.INCOME_MAX_MULTIPLIER_BASE * SlimeUpgradeConfig.INCOME_MAX_MULTIPLIER_RATIO ^ (tier - 1)
-end
-
--- Every external caller (PlayerProfile.luau, InventoryClient.client.luau)
--- only ever has a slime's BASE income/s on hand, not its tier index -- so
--- rather than thread a tier argument through every one of those call sites,
--- this reverse-maps base income back to its tier from EVERY one of the 65
--- individual slimes in SlimeData (not a flat per-tier value -- each slime
--- now has its own MEASURED income, see SlimeConfig.SLIME_INCOME_BY_TIER).
--- Relies on every one of the 65 slimes having a DISTINCT income/s -- true
--- today by inspection (each tier's own values are listed worst-to-best with
--- no repeats, and no two tiers' ranges overlap: Common tops out at $10/s,
--- Uncommon starts at $15/s, ... Secret tops out at $20K/s, Divine starts at
--- $50K/s) -- if a future data update ever gives two slimes (in the same or
--- different tiers) the SAME income, this lookup becomes ambiguous and
--- silently picks whichever was inserted first; worth revisiting (properly,
--- by passing tier explicitly) if that ever stops being true.
-local tierByBaseIncome: { [number]: number } = {}
-for _, slime in SlimeData.SLIMES do
-	if not tierByBaseIncome[slime.incomePerSecond] then
-		tierByBaseIncome[slime.incomePerSecond] = slime.tier
-	end
-end
-
--- The shared curve SHAPE's own raw value at MAX_LEVEL -- a fixed constant,
--- computed once, used purely to NORMALIZE that shape below so it can be
--- rescaled to land exactly on each tier's own max multiplier instead of one
--- flat number shared by every tier.
-local SHAPE_VALUE_AT_MAX_LEVEL = SlimeUpgradeConfig.INCOME_LEVEL_LINEAR_COEFF * (SlimeUpgradeConfig.MAX_LEVEL - 1)
-	+ SlimeUpgradeConfig.INCOME_LEVEL_QUADRATIC_COEFF * (SlimeUpgradeConfig.MAX_LEVEL - 1) ^ 2
+-- The per-level income factor, named once so the formulas below read as the
+-- compounding they are.
+local GROWTH = 1 + SlimeUpgradeConfig.UPGRADE_GROWTH_RATE
 
 -- Floors and clamps to [1, MAX_LEVEL] -- the ONE place a level value is ever
 -- forced into range, so a hand-edited save, a dev-panel typo, or a client-
 -- supplied number can never leave a slime above the cap or below 1.
+--
+-- THIS IS ALSO THE SAVE MIGRATION. Profiles written before the rebuild hold
+-- levels up to 1000; PlayerProfile.applyLoadedData runs every loaded level
+-- through here, so anything above MAX_LEVEL lands on MAX_LEVEL the first time
+-- that profile is read. See REPORT.md for what that costs a player who had
+-- one.
 function SlimeUpgrade.clampLevel(level: number): number
 	return math.clamp(math.floor(level), 1, SlimeUpgradeConfig.MAX_LEVEL)
 end
 
--- income(level) = base * multiplier(level). multiplier(1) = 1 exactly (a
--- fresh, never-upgraded slime earns exactly its base income), and
--- multiplier(MAX_LEVEL) = exactly this slime's OWN tier's max multiplier --
--- see the written report. The curve's SHAPE (the relative growth between
--- any two levels) is identical for every tier; only the amplitude it's
--- scaled to differs, via `scale` below.
-function SlimeUpgrade.incomeMultiplier(baseIncomePerSecond: number, level: number): number
-	local x = level - 1
-	local shape = SlimeUpgradeConfig.INCOME_LEVEL_LINEAR_COEFF * x + SlimeUpgradeConfig.INCOME_LEVEL_QUADRATIC_COEFF * x * x
-
-	local tier = tierByBaseIncome[baseIncomePerSecond]
-	local maxMultiplier = maxMultiplierByTier[tier] or SlimeUpgradeConfig.INCOME_MAX_MULTIPLIER_BASE
-	local scale = (maxMultiplier - 1) / SHAPE_VALUE_AT_MAX_LEVEL
-
-	return 1 + scale * shape
+-- multiplier(level) = GROWTH^(level - 1). multiplier(1) = 1 exactly (a fresh,
+-- never-upgraded slime earns exactly its base income) and
+-- multiplier(MAX_LEVEL) = GROWTH^(MAX_LEVEL - 1) = 28.63x at the current
+-- constants -- THE SAME FOR EVERY TIER. The base income argument is not
+-- needed to compute this and is not taken.
+function SlimeUpgrade.incomeMultiplier(level: number): number
+	return GROWTH ^ (level - 1)
 end
 
 function SlimeUpgrade.incomeForLevel(baseIncomePerSecond: number, level: number): number
-	return baseIncomePerSecond * SlimeUpgrade.incomeMultiplier(baseIncomePerSecond, level)
-end
-
--- Cost (in seconds of the slime's OWN base income) to upgrade FROM `level`
--- TO `level + 1` -- linear in level, per SlimeUpgradeConfig's written report.
--- Undefined at level >= MAX_LEVEL (there is no next level to price) --
--- callers never reach that case because totalUpgradeCost below always caps
--- the count of levels bought to what's actually available.
-local function upgradeCostSeconds(level: number): number
-	return SlimeUpgradeConfig.UPGRADE_COST_SECONDS_AT_LEVEL_1 + SlimeUpgradeConfig.UPGRADE_COST_SECONDS_SLOPE_PER_LEVEL * (level - 1)
+	return baseIncomePerSecond * SlimeUpgrade.incomeMultiplier(level)
 end
 
 -- The total price to buy UP TO `count` consecutive levels starting from
--- `fromLevel` -- the SUM of each individual level's own cost (never count *
--- the first level's cost), per the task's requirement that buying 10 or 100
--- charges the sum of the individual level costs. Automatically capped at
--- MAX_LEVEL: asking for more levels than remain (e.g. count=100 at level 950)
--- buys only what's left (50 levels here) rather than failing outright --
--- returns the ACTUAL count bought alongside the cost, so a caller (the +100
--- button near the cap) can show "this button will only buy 50 more" instead
--- of silently disabling itself long before the slime is actually maxed.
--- Closed-form (an arithmetic series), not a loop -- upgradeCostSeconds(L) is
--- linear in L, so summing `n` consecutive values from `fromLevel` is exactly
--- n*first + slope*(0+1+...+(n-1)).
+-- `fromLevel`. Automatically capped at MAX_LEVEL: asking for more levels than
+-- remain (which the MAX button deliberately does -- it sends MAX_LEVEL and
+-- lets this cap it) buys only what's left rather than failing outright, and
+-- returns the ACTUAL count alongside the cost so a caller can label the
+-- button with what it will really buy.
+--
+-- CLOSED FORM, not a loop. One level from income I costs
+-- PAYBACK * GROWTH_RATE * I, and each level multiplies I by GROWTH, so the
+-- cost of n consecutive levels is a geometric series:
+--     sum = PAYBACK * RATE * I * (1 + G + G^2 + ... + G^(n-1))
+--         = PAYBACK * RATE * I * (G^n - 1) / (G - 1)
+-- and since G - 1 IS RATE, the RATE cancels outright:
+--     sum = PAYBACK * I * (G^n - 1)
+-- which is what's computed below. That cancellation is why the payback
+-- identity holds for a multi-level purchase too, not just for single levels:
+-- n levels cost PAYBACK * I * (G^n - 1) and buy an income gain of exactly
+-- I * (G^n - 1), so the ratio is PAYBACK for every n.
 function SlimeUpgrade.totalUpgradeCost(baseIncomePerSecond: number, fromLevel: number, count: number): (number, number)
-	local maxLevel = SlimeUpgradeConfig.MAX_LEVEL
-	local actualCount = math.max(0, math.min(count, maxLevel - fromLevel))
+	local actualCount = math.max(0, math.min(count, SlimeUpgradeConfig.MAX_LEVEL - fromLevel))
 	if actualCount <= 0 then
 		return 0, 0
 	end
-
-	local firstSeconds = upgradeCostSeconds(fromLevel)
-	local slope = SlimeUpgradeConfig.UPGRADE_COST_SECONDS_SLOPE_PER_LEVEL
-	local totalSeconds = actualCount * firstSeconds + slope * (actualCount * (actualCount - 1) / 2)
-	return baseIncomePerSecond * totalSeconds, actualCount
+	local currentIncome = SlimeUpgrade.incomeForLevel(baseIncomePerSecond, fromLevel)
+	local cost = SlimeUpgradeConfig.UPGRADE_PAYBACK_SECONDS * currentIncome * (GROWTH ^ actualCount - 1)
+	return cost, actualCount
 end
 
 return SlimeUpgrade

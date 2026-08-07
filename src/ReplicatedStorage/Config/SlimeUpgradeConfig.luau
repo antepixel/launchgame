@@ -4,67 +4,88 @@
 -- (income multiplier, upgrade cost) live in SlimeUpgrade.luau, right next to
 -- this file -- same split as SlimeConfig (data) / SlimeRoll (the module that
 -- turns it into a roll), just for the leveling system instead of the reveal.
+--
+-- ===== REBUILT (see REPORT.md). The previous curve was 1000 levels, a
+-- quadratic income shape normalised to a PER-TIER maximum multiplier
+-- (1,700x for Common up to 1,479,582x for Divine, a geometric ladder at
+-- ratio 2.63), and a cost that was a linear-in-level multiple of the slime's
+-- BASE income fitted against one reference Secret slime. Three things were
+-- wrong with it and all three are gone:
+--
+--   1. THE COST WAS FITTED TO ONE TIER AND ONLY WORKED THERE. Cost scaled
+--      with BASE income while the multiplier that repaid it scaled per tier,
+--      so the same nominal upgrade cost a Common 200 seconds of its own
+--      income at level 901 and a Secret 0.61 -- a 330x spread for the same
+--      action.
+--   2. PAYBACK GOT MONOTONICALLY WORSE WITH LEVEL. A Common's single level
+--      paid back in 1.5 hours at level 1 and 26 hours at level 900, rising
+--      the whole way and converging to a floor from below. Levelling was
+--      always least bad the moment you started and never improved.
+--   3. THE PER-TIER MULTIPLIER LADDER DOUBLE-COUNTED TIER. Tier already
+--      determines base income; scaling the growth by tier as well meant a
+--      Divine's level was worth 871x a Common's ON TOP of already earning
+--      more per second, so levelling a low-tier slime was never worth doing
+--      at any level.
+--
+-- The replacement is deliberately boring: flat compounding growth, identical
+-- for every tier, with a cost pinned to a constant payback time. Tier
+-- difference comes from base income alone, which is where it belongs. =====
 
 export type SlimeUpgradeConfig = {
 	MAX_LEVEL: number,
-	INCOME_LEVEL_LINEAR_COEFF: number,
-	INCOME_LEVEL_QUADRATIC_COEFF: number,
-	INCOME_MAX_MULTIPLIER_BASE: number,
-	INCOME_MAX_MULTIPLIER_RATIO: number,
-	UPGRADE_COST_SECONDS_AT_LEVEL_1: number,
-	UPGRADE_COST_SECONDS_SLOPE_PER_LEVEL: number,
+	UPGRADE_GROWTH_RATE: number,
+	UPGRADE_PAYBACK_SECONDS: number,
 }
 
 local SlimeUpgradeConfig: SlimeUpgradeConfig = {
 	-- Every slime can be leveled from 1 (fresh, unleveled -- income exactly
 	-- equals base) up to this cap. See SlimeUpgrade.clampLevel, the only
 	-- place a level value is ever clamped.
-	MAX_LEVEL = 1000,
+	--
+	-- 25, down from 1000. A thousand levels was never 1000 decisions: with a
+	-- fixed payback per level, every level is the same decision, so 1000 of
+	-- them is one decision presented 1000 times. 25 is short enough that
+	-- maxing a slime is a visible goal a player can hold in their head and
+	-- reach, and short enough that "+1 / +5 / MAX" covers the whole range --
+	-- see the button strips in InventoryClient and SlimeUpgradeTagClient.
+	MAX_LEVEL = 25,
 
-	-- ===== Income curve SHAPE: multiplier(level) is proportional to
-	-- 1 + LINEAR*(level-1) + QUADRATIC*(level-1)^2 -- see SlimeUpgrade.
-	-- incomeMultiplier. This is the SAME normalized curve for every tier
-	-- (rescaled per tier by INCOME_MAX_MULTIPLIER_BASE/RATIO below, never
-	-- reshaped) -- originally fitted (least squares, weighted by relative
-	-- error so the small early-level values aren't swamped by the huge
-	-- late-level ones) against the reference Secret slime table in the
-	-- written report: base $12.5K/s, max relative error ~5.6% across the 10
-	-- sampled levels. Change these two numbers to retune the curve's SHAPE
-	-- (how front-loaded vs. back-loaded the growth is); change the max-
-	-- multiplier numbers below to retune WHERE each tier's curve ends up.
-	INCOME_LEVEL_LINEAR_COEFF = 39.0,
-	INCOME_LEVEL_QUADRATIC_COEFF = 0.486,
+	-- ===== THE INCOME CURVE. income(level) = base * (1 + this)^(level - 1).
+	-- Plain compounding, IDENTICAL FOR EVERY TIER -- there is no per-tier
+	-- multiplier any more and no ratio to scale one. A Common and a Divine
+	-- both reach exactly (1.15)^24 = 28.63x their own base at level 25.
+	--
+	-- Chosen against MAX_LEVEL so that a fully maxed slime is worth roughly
+	-- one and a half tiers of base income, not five: tier base incomes step
+	-- 2.4x-3.2x apart through the mid ladder, so 28.63x is about three tier
+	-- steps. That is the intended reading -- maxing a slime should beat
+	-- holding a slightly better one and lose to holding a much better one, so
+	-- both levelling and rolling stay worth doing. See REPORT.md for the
+	-- maxed-Common-against-every-tier table.
+	UPGRADE_GROWTH_RATE = 0.15,
 
-	-- ===== Income curve ENDPOINT, per tier: a maxed (level MAX_LEVEL) slime
-	-- earns base * multiplier, where multiplier is generated per tier as
-	-- INCOME_MAX_MULTIPLIER_BASE * INCOME_MAX_MULTIPLIER_RATIO^(tier-1) --
-	-- tier 1 (Common) anchors at the base value, each tier above multiplies
-	-- by the ratio again. Fitted (log-linear regression) against three
-	-- independent reference points in the written report -- Common ~1,700x,
-	-- Secret ~500,000x (smoothed by the fit to 562,600x), Divine ~1,415,000x
-	-- (smoothed to 1,479,700x) -- which line up on a near-perfect geometric
-	-- progression at ratio ~2.630. Retuning the WHOLE per-tier ladder (how
-	-- much more generous leveling gets per tier) is moving these two
-	-- numbers; SlimeUpgrade.luau generates the actual 8-entry table from
-	-- them at load time, indexed by SlimeConfig's own tier order (Common..
-	-- Divine) -- never hand-authored, so it can't silently drift out of
-	-- sync with a tier count/order change there.
-	INCOME_MAX_MULTIPLIER_BASE = 1700.0,
-	INCOME_MAX_MULTIPLIER_RATIO = 2.63,
-
-	-- ===== Upgrade cost: the price to go from `level` to `level+1` is
-	-- base * (AT_LEVEL_1 + SLOPE_PER_LEVEL*(level-1)) -- linear in level, see
-	-- SlimeUpgrade.upgradeCostForLevel. AT_LEVEL_1 = 693 is the deliberate
-	-- anchor: a fresh slime's FIRST upgrade costs 693 seconds of its own
-	-- base income (a Common at $5/s costs ~$3,465; a Divine at $350K/s costs
-	-- ~$242.55M -- see the written report). SLOPE_PER_LEVEL is chosen so that
-	-- level 901's upgrade costs ~0.65 seconds of ITS OWN (level-901, already
-	-- leveled) income against the reference table -- the same inversion the
-	-- task describes: cost keeps growing in raw dollars, but income grows
-	-- faster (quadratically), so the SECONDS-of-income price of an upgrade
-	-- collapses from 693 down to a fraction of a second by the far end.
-	UPGRADE_COST_SECONDS_AT_LEVEL_1 = 693.0,
-	UPGRADE_COST_SECONDS_SLOPE_PER_LEVEL = 309.0,
+	-- ===== THE COST CURVE, and it is defined by its PAYBACK rather than by a
+	-- shape. The price of the next level is
+	--     UPGRADE_PAYBACK_SECONDS * UPGRADE_GROWTH_RATE * current income/s
+	-- (note CURRENT income, not base -- that is the whole trick), which at
+	-- these values is 90x current income.
+	--
+	-- WHY THIS IS EXACTLY 600 SECONDS OF PAYBACK, ALWAYS. One level buys an
+	-- income gain of GROWTH * I, where I is the slime's current income. It
+	-- costs PAYBACK * GROWTH * I. So
+	--     cost / gain = (PAYBACK * GROWTH * I) / (GROWTH * I) = PAYBACK
+	-- and both I and GROWTH cancel. The payback time is therefore the same at
+	-- every level, for every tier, for every slime in the game, by
+	-- construction rather than by fitting -- there is nothing left for a
+	-- future retune to accidentally break. It also means this number is
+	-- directly meaningful: it IS how long an upgrade takes to pay for itself,
+	-- in seconds, and it is the only lever on how expensive levelling feels.
+	--
+	-- 600 = ten minutes of that slime's own production. Long enough that
+	-- levelling is a real commitment against buying a swing tier; short
+	-- enough that a slime you have parked for a session has earned its next
+	-- level several times over.
+	UPGRADE_PAYBACK_SECONDS = 600,
 }
 
 return SlimeUpgradeConfig

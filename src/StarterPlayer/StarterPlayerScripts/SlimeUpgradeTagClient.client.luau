@@ -1,6 +1,6 @@
 --!strict
 -- Upgrade controls attached to the placed slimes in THIS player's own base --
--- +1/+10/+100 with live prices, so a slime can be levelled by walking up to it
+-- +1/+5/MAX with live prices, so a slime can be levelled by walking up to it
 -- instead of opening the inventory panel.
 --
 -- NOT A SECOND UPGRADE PATH. Every button here fires the SAME
@@ -40,6 +40,7 @@ local HttpService = game:GetService("HttpService")
 local MoneyFormat = require(ReplicatedStorage.Config.MoneyFormat)
 local SlimeData = require(ReplicatedStorage.Config.SlimeData)
 local SlimeUpgrade = require(ReplicatedStorage.Config.SlimeUpgrade)
+local SlimeUpgradeConfig = require(ReplicatedStorage.Config.SlimeUpgradeConfig)
 
 local player = Players.LocalPlayer
 
@@ -87,12 +88,19 @@ local upgradeSlimeRemote = upgradeSlimeRemoteMaybe :: RemoteEvent
 -- the same slime.
 local BODY_PART_NAME = "slime"
 
--- The same three counts InventoryClient's own upgrade buttons send, in the
+-- The same three buttons InventoryClient's own upgrade strip sends, in the
 -- same order -- deliberately the same interaction, not a second one invented
--- for a different surface. The server caps whatever arrives against MAX_LEVEL
--- regardless (see SlimeUpgrade.totalUpgradeCost's own capping and
--- PlayerProfile.upgradeSlime), so this is only ever "which button is this."
-local UPGRADE_BUTTON_COUNTS = { 1, 10, 100 }
+-- for a different surface. +1 / +5 / MAX, sized for a 25-level cap (the old
+-- +1/+10/+100 was built for MAX_LEVEL = 1000). MAX sends MAX_LEVEL and lets
+-- the server cap it to what is actually left; the server caps whatever
+-- arrives regardless (see SlimeUpgrade.totalUpgradeCost's own capping and
+-- PlayerProfile.upgradeSlime, which re-derives the price from its own state),
+-- so this is only ever "which button is this."
+local UPGRADE_BUTTONS = {
+	{ count = 1, label = "+1" },
+	{ count = 5, label = "+5" },
+	{ count = SlimeUpgradeConfig.MAX_LEVEL, label = "MAX" },
+}
 
 -- ===== Placement and reach =====
 -- How far from the CAMERA the button strip still draws -- MUCH shorter than
@@ -141,7 +149,7 @@ local UPGRADE_TAG_MAX_DISTANCE_STUDS = 22
 -- whole range it is visible in.
 --
 -- The buttons keep their 0.32 share, so they go 76.8 px -> 57.6 px wide.
--- TextScaled still fits "+100" over "$12.3K" in that; it simply picks a
+-- TextScaled still fits "MAX +24" over "$12.3K" in that; it simply picks a
 -- slightly smaller size for the price line.
 local UPGRADE_TAG_WIDTH_PIXELS = 180
 local UPGRADE_TAG_HEIGHT_PIXELS = 36
@@ -259,17 +267,24 @@ local function refreshTag(tag: SlotTag, slotsByNumber: { [number]: number }, lev
 	end
 
 	local level = levelsByNumber[tag.slotNumber] or 1
-	for index, requestedCount in UPGRADE_BUTTON_COUNTS do
-		local cost, actualCount = SlimeUpgrade.totalUpgradeCost(slime.incomePerSecond, level, requestedCount)
+	for index, spec in UPGRADE_BUTTONS do
+		local cost, actualCount = SlimeUpgrade.totalUpgradeCost(slime.incomePerSecond, level, spec.count)
 		local atMax = actualCount <= 0
 		local affordable = not atMax and money >= cost
 
 		local button = tag.buttons[index]
 		button.Visible = true
-		-- actualCount, not requestedCount: near MAX_LEVEL the +100 button
-		-- honestly reads "+50" for what it will actually buy, exactly as the
-		-- inventory panel's does.
-		button.Text = if atMax then "MAX" else string.format("+%d\n%s", actualCount, MoneyFormat.format(cost))
+		-- actualCount, not the requested count: near the cap the +5 button
+		-- honestly reads "+2" for what it will actually buy, and MAX always
+		-- names the number of levels it is about to hand over -- exactly as
+		-- the inventory panel's own strip does.
+		if atMax then
+			button.Text = "MAXED"
+		elseif spec.label == "MAX" then
+			button.Text = string.format("MAX +%d\n%s", actualCount, MoneyFormat.format(cost))
+		else
+			button.Text = string.format("+%d\n%s", actualCount, MoneyFormat.format(cost))
+		end
 		button.BackgroundColor3 = if atMax
 			then BUTTON_MAXED_COLOR
 			elseif affordable then BUTTON_AFFORDABLE_COLOR
@@ -321,9 +336,9 @@ local function buildTag(model: Model, body: MeshPart, slotNumber: number): SlotT
 	layout.Parent = gui
 
 	local buttons: { TextButton } = {}
-	for index, requestedCount in UPGRADE_BUTTON_COUNTS do
+	for index, spec in UPGRADE_BUTTONS do
 		local button = Instance.new("TextButton")
-		button.Name = string.format("Upgrade%d", requestedCount)
+		button.Name = "Upgrade" .. spec.label
 		button.LayoutOrder = index
 		button.Size = UDim2.new(UPGRADE_TAG_BUTTON_WIDTH_SCALE, 0, 1, 0)
 		button.BackgroundColor3 = BUTTON_DISABLED_COLOR
@@ -345,7 +360,7 @@ local function buildTag(model: Model, body: MeshPart, slotNumber: number): SlotT
 			-- there is nothing here for a modified client to inflate, and
 			-- PlayerProfile.upgradeSlime recomputes all three from its own
 			-- state regardless.
-			upgradeSlimeRemote:FireServer(slotNumber, requestedCount)
+			upgradeSlimeRemote:FireServer(slotNumber, spec.count)
 		end)
 
 		buttons[index] = button

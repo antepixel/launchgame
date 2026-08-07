@@ -18,6 +18,7 @@ local InventoryConfig = require(ReplicatedStorage.Config.InventoryConfig)
 local MoneyFormat = require(ReplicatedStorage.Config.MoneyFormat)
 local SlimeData = require(ReplicatedStorage.Config.SlimeData)
 local SlimeUpgrade = require(ReplicatedStorage.Config.SlimeUpgrade)
+local SlimeUpgradeConfig = require(ReplicatedStorage.Config.SlimeUpgradeConfig)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -109,11 +110,22 @@ local function sellValue(perSecond: number, quantity: number): number
 	return perSecond * InventoryConfig.SELL_VALUE_INCOME_MULTIPLIER * quantity
 end
 
--- The three buy buttons' nominal level counts -- capped further per-button
--- below (near MAX_LEVEL, an actual purchase buys fewer) but this is what
--- gets sent to the server; PlayerProfile.upgradeSlime does its own capping
--- regardless of what's sent, so this is purely "which button is this."
-local UPGRADE_BUTTON_COUNTS = { 1, 10, 100 }
+-- The three buy buttons. +1 / +5 / MAX, sized for a 25-level cap -- the old
+-- +1/+10/+100 was built for MAX_LEVEL = 1000 and +100 would have bought the
+-- entire remaining ladder four times over.
+--
+-- MAX sends MAX_LEVEL as its count and lets the SERVER cap it. That is not
+-- laziness: SlimeUpgrade.totalUpgradeCost already caps any count at the
+-- levels actually remaining and returns the real number, so "buy everything
+-- left" needs no separate remote, no separate code path, and no client-side
+-- arithmetic that could disagree with the server's. PlayerProfile.upgradeSlime
+-- re-derives the level and the price from its own state regardless of what
+-- arrives here -- see its own comment.
+local UPGRADE_BUTTONS = {
+	{ count = 1, label = "+1" },
+	{ count = 5, label = "+5" },
+	{ count = SlimeUpgradeConfig.MAX_LEVEL, label = "MAX" },
+}
 
 -- ===== UI shell =====
 local screenGui = Instance.new("ScreenGui")
@@ -295,7 +307,7 @@ local function makeSmallButton(parent: Instance, size: UDim2, position: UDim2, t
 end
 
 -- One of the base's 10 slots -- level, current income, and the three
--- upgrade buttons (+1/+10/+100), each showing the TOTAL cost of however many
+-- upgrade buttons (+1/+5/MAX), each showing the TOTAL cost of however many
 -- levels it will actually buy (capped at MAX_LEVEL -- see SlimeUpgrade.
 -- totalUpgradeCost) and greyed out if that cost exceeds `money` or the slime
 -- is already maxed. `money` is passed in (read once per refresh(), not per
@@ -338,18 +350,28 @@ local function buildBaseRow(slotNumber: number, globalIndex: number?, level: num
 			removeSlimeRemote:FireServer(slotNumber)
 		end)
 
-		-- Three buy buttons, right-to-left: +100, +10, +1 -- same nominal
+		-- Three buy buttons, right-to-left: MAX, +5, +1 -- same nominal
 		-- count/cost/enabled logic for all three, just a different requested
 		-- count and X position.
 		local buttonPositions = { 0.79, 0.55, 0.31 }
-		for i, requestedCount in UPGRADE_BUTTON_COUNTS do
-			local cost, actualCount = SlimeUpgrade.totalUpgradeCost(slime.incomePerSecond, level, requestedCount)
+		for i, spec in UPGRADE_BUTTONS do
+			local cost, actualCount = SlimeUpgrade.totalUpgradeCost(slime.incomePerSecond, level, spec.count)
 			local atMax = actualCount <= 0
 			local affordable = not atMax and money >= cost
-			local text = if atMax then "MAX" else string.format("+%d\n(%s)", actualCount, MoneyFormat.format(cost))
+			-- actualCount, not the requested count: near the cap the +5 button
+			-- honestly reads "+2" for what it will really buy, and MAX always
+			-- names the number of levels it is about to hand over.
+			local text
+			if atMax then
+				text = "MAXED"
+			elseif spec.label == "MAX" then
+				text = string.format("MAX +%d\n(%s)", actualCount, MoneyFormat.format(cost))
+			else
+				text = string.format("+%d\n(%s)", actualCount, MoneyFormat.format(cost))
+			end
 			local color = if atMax then Color3.new(0.35, 0.35, 0.38) else Color3.new(0.15, 0.55, 0.25)
 			makeSmallButton(row, UDim2.new(0.22, 0, 0.42, 0), UDim2.new(buttonPositions[i], 0, 0.8, 0), text, color, function()
-				upgradeSlimeRemote:FireServer(slotNumber, requestedCount)
+				upgradeSlimeRemote:FireServer(slotNumber, spec.count)
 			end, affordable)
 		end
 	else
