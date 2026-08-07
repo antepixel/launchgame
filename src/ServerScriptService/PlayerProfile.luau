@@ -259,14 +259,20 @@ local INCOME_LABEL_HEIGHT_PIXELS = 24
 
 -- How far from the CAMERA (not the character -- BillboardGui.MaxDistance is
 -- measured camera-side) a slot's tag still draws. The ten pads span Z 117 to
--- 173 (five rows 14 studs apart, see BaseConfig) across two columns 22 studs
--- apart, so the whole grid's own diagonal is ~60 studs. Standing at one slot,
--- the neighbouring slots sit ~14 (next row, same column) to ~26 studs away
--- (next row, other column); the far end of the plot is 56+. 40 covers the
--- near cluster once the default third-person camera's own ~12-stud pullback
--- is added on top (~26 + ~12), while staying comfortably under the 56-stud
--- row span -- so a player at the front of their base draws the front slots'
--- tags and not all ten at once.
+-- 173 (five rows 14 studs apart, see BaseConfig) across two columns 30 studs
+-- apart, so the whole grid's own diagonal is ~64 studs. Standing at one slot,
+-- the neighbouring slots sit ~14 away (next row, same column) and the
+-- diagonal one ~33 (was ~26, before the columns moved out from +-11 to +-15
+-- to open the collect-pad channel); the far end of the plot is 56+. 40 covers
+-- the near cluster once the default third-person camera's own ~12-stud
+-- pullback is added on top (~14 + ~12), while staying comfortably under the
+-- 56-stud row span -- so a player at the front of their base draws the front
+-- slots' tags and not all ten at once.
+--
+-- The widening did narrow what this admits: a diagonal neighbour is now ~33 +
+-- ~12 = ~45 away and falls outside it, where it used to land just inside at
+-- ~38. That is a small tightening in the direction this clamp exists for
+-- (fewer tags at once, never more), so the value is left alone.
 local NAMETAG_MAX_DISTANCE_STUDS = 40
 
 local function spawnSlimeVisual(profile: Profile, slotNumber: number, slime: SlimeData.Slime, level: number)
@@ -337,6 +343,47 @@ local function spawnSlimeVisual(profile: Profile, slotNumber: number, slime: Sli
 
 	model.Parent = profile.baseFolder
 	profile.visualParts[slotNumber] = model
+
+	-- ===== THE COLLECT PAD -- a green pad on the ground in front of this
+	-- slime, toward the central path it faces. Geometry only this pass: no
+	-- collection logic, no accumulated-money system, nothing reads it yet.
+	-- Position and size are DERIVED from the slot pad's own geometry in
+	-- BaseGeometry.collectPadPlacement (see BaseConfig's collect-pad block);
+	-- nothing about them is written here.
+	--
+	-- PARENTED INTO THE SLIME MODEL, not alongside it in the base folder, and
+	-- that is the whole teardown story: a pad that is a DESCENDANT of the
+	-- model cannot outlive it, so every path that already destroys a slot
+	-- visual destroys its pad too without any of them having to know the pad
+	-- exists. Both of them do -- removeToInventory's `model:Destroy()` and
+	-- onPlayerRemoving's `profile.baseFolder:Destroy()` -- and so would any
+	-- third one added later, which is the point of doing it structurally
+	-- rather than with a second registry to keep in step.
+	--
+	-- Safe to carry inside the Model: the two client scripts that walk these
+	-- models both select parts BY NAME (SlimeIdleClient's slime/eye_dark/
+	-- eye_white/blush, SlimeUpgradeTagClient's `slime`), and SlimeBuilder's
+	-- own every-part pass has already finished by the time this is added.
+	--
+	-- ANCHORED, and CanCollide FALSE. Anchored because it is scenery -- there
+	-- is no physics here to want. Non-colliding because a player has to be
+	-- able to STAND on it, and at 0.4 studs proud of the mat, standing on a
+	-- non-colliding pad puts them on the mat at essentially the same height,
+	-- reading as on it -- while a colliding one adds a lip to catch on right
+	-- beside the walk-in path. CanTouch is left at its default true so the
+	-- eventual collection trigger needs no change here.
+	local collectPosition, collectSize = BaseGeometry.collectPadPlacement(profile.baseIndex, slotNumber)
+	local collectPad = Instance.new("Part")
+	collectPad.Name = "CollectPad"
+	collectPad.Anchored = true
+	collectPad.CanCollide = false
+	collectPad.Size = collectSize
+	collectPad.Position = collectPosition
+	collectPad.Material = BaseConfig.BASE_COLLECT_PAD_MATERIAL
+	collectPad.Color = BaseConfig.BASE_COLLECT_PAD_COLOR
+	collectPad.TopSurface = Enum.SurfaceType.Smooth
+	collectPad.BottomSurface = Enum.SurfaceType.Smooth
+	collectPad.Parent = model
 
 	-- Two stacked lines -- name+level on top (tier-coloured, from
 	-- slime.tierColor), income per second below it (green, matching the money

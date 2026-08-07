@@ -90,7 +90,7 @@ type SlimeEntry = {
 -- available.)
 --
 -- A SEEDED PRNG, NOT AN ARITHMETIC HASH -- this was measured, not guessed.
--- The slots sit on a strictly REGULAR grid (22 studs across, 14 along, 80
+-- The slots sit on a strictly REGULAR grid (30 studs across, 14 along, 80
 -- between lanes -- see BaseGeometry.slotPosition), and a regular grid is
 -- exactly what arithmetic hashes handle worst. Both obvious candidates were
 -- tried against the real 61 positions and both failed: the classic
@@ -100,6 +100,17 @@ type SlimeEntry = {
 -- output into the range 0.24-0.35. Seeding Roblox's own PRNG from the
 -- position spreads properly: measured 0.0001 to 0.9999 across all 61 slimes,
 -- with the ten in any one base covering the whole cycle.
+--
+-- That measurement was taken on the previous 22-stud column pitch, and has
+-- NOT been re-run since the columns moved to 30 (see BaseConfig's
+-- SLOT_COLUMN_HALF_WIDTH). Not re-running it is the point of the choice
+-- rather than an omission: what failed before was two hashes whose output
+-- depended on the grid's own arithmetic regularities, which is exactly why
+-- the pitch mattered to them. A PRNG seeded from an injective packing of the
+-- position does not care what the pitch is -- any change of position gives a
+-- different seed and an independent draw. Re-measure if the pitch is ever
+-- retuned to something that could collide under the quarter-stud
+-- quantisation below (it would have to bring two slots within 0.25 studs).
 --
 -- Determinism is what makes this a valid phase source: the same position
 -- always yields the same number, so the phase is identical on every rescan --

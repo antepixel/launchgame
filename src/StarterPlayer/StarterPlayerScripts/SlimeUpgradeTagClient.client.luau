@@ -99,12 +99,20 @@ local UPGRADE_BUTTON_COUNTS = { 1, 10, 100 }
 -- the NameTag's own 40 (see PlayerProfile.NAMETAG_MAX_DISTANCE_STUDS), and
 -- that gap is the whole design.
 --
--- The ten pads are a 2x5 grid, columns 22 studs apart and rows 14 apart (see
+-- The ten pads are a 2x5 grid, columns 30 studs apart and rows 14 apart (see
 -- BaseGeometry.slotPosition), and the default third-person camera sits ~12
 -- studs back. So standing AT a slot puts its own camera distance at ~12, its
--- nearest neighbour at ~26 (14 + 12), and the diagonal one at ~38. 22 admits
--- the slime you are standing at and excludes every other one -- one strip on
--- screen, occasionally two if you stand between two pads.
+-- nearest neighbour at ~26 (14 + 12), the diagonal one at ~45 and the one
+-- straight across the path at ~42. 22 admits the slime you are standing at
+-- and excludes every other one -- one strip on screen, occasionally two if
+-- you stand between two pads.
+--
+-- The columns moved out from +-11 to +-15 to open up the collect-pad channel
+-- (see BaseConfig's SLOT_COLUMN_HALF_WIDTH), which only strengthens this: the
+-- binding neighbour was always the NEXT ROW at 14 studs, and that is
+-- unchanged, while everything in the other column moved further away. The 22
+-- matching the old column spacing exactly was a coincidence, not a
+-- derivation -- this number comes from 14 + 12, not from the column pitch.
 --
 -- That is what keeps the readability promise: names and income still read from
 -- 40 studs exactly as before (that tag is untouched), while the button strips
@@ -113,33 +121,67 @@ local UPGRADE_BUTTON_COUNTS = { 1, 10, 100 }
 -- is not reintroduced; it is applied a second time, harder.
 --
 -- Note this bounds CLUTTER, not legibility or reach: a BillboardGui's
--- pixel-Offset Size is screen space, so the strip is the same 240x36 px and
--- the same click target at 22 studs as at 2.
+-- pixel-Offset Size is screen space, so the strip is the same
+-- UPGRADE_TAG_WIDTH_PIXELS x UPGRADE_TAG_HEIGHT_PIXELS and the same click
+-- target at 22 studs as at 2.
 local UPGRADE_TAG_MAX_DISTANCE_STUDS = 22
 
-local UPGRADE_TAG_WIDTH_PIXELS = 240
+-- 180, MATCHING THE NAMETAG'S OWN WIDTH above it (see PlayerProfile.
+-- spawnSlimeVisual's `nameTag.Size = UDim2.new(0, 180, ...)`) -- was 240,
+-- and that mismatch was itself a misalignment cue: the strip was a third
+-- wider than the label it hangs under, so the two billboards over one slime
+-- read as two unrelated widths rather than one stacked column.
+--
+-- It is also what stops the strip overhanging the pad. A BillboardGui's
+-- Offset size is SCREEN PIXELS, so its width in STUDS shrinks with distance:
+-- at UPGRADE_TAG_MAX_DISTANCE_STUDS (22, the furthest it ever draws) 240 px
+-- covers very nearly the whole 8-stud pad, and any further and it would
+-- spill past the edges -- which is exactly where it reads as belonging to
+-- the floor rather than to the slime. 180 keeps it inside the pad across the
+-- whole range it is visible in.
+--
+-- The buttons keep their 0.32 share, so they go 76.8 px -> 57.6 px wide.
+-- TextScaled still fits "+100" over "$12.3K" in that; it simply picks a
+-- slightly smaller size for the price line.
+local UPGRADE_TAG_WIDTH_PIXELS = 180
 local UPGRADE_TAG_HEIGHT_PIXELS = 36
 local UPGRADE_TAG_BUTTON_GAP_PIXELS = 3
 -- Each button's share of the strip's width. Three at 0.32 leaves 4% for the
--- two gaps above and the edges -- so the buttons stay ~76 px wide, which fits
--- "+100" over "$12.3K" at a readable size once TextScaled fills the 36 px
--- height with two lines.
+-- two gaps above and the edges -- at the current 180 px strip that is 57.6 px
+-- per button plus 6 px of gaps = 178.2 of 180, so the UIListLayout's own
+-- Center alignment has 0.9 px of slack to distribute either side and the row
+-- is centred on the slime to within a pixel.
 local UPGRADE_TAG_BUTTON_WIDTH_SCALE = 0.32
 
--- Where the strip sits, as a multiple of the body's own height, BELOW the
--- body's centre -- so it lands around the slime's base, on the pad, rather
--- than over its face. The NameTag sits roughly +half-a-height ABOVE centre, so
--- the two are about a full model height apart: at the 12-22 stud range this
--- tag is visible in, that is several hundred pixels of separation, and the
--- name lines and the buttons cannot overlap at any distance or camera angle.
+-- How far ABOVE THE SLIME'S OWN FEET the strip's centre sits.
 --
--- Reading the body's LIVE Size here means the measurement can be taken while
--- SlimeIdleClient has that body mid-breath, so this offset can be up to
--- IDLE_AMPLITUDE (8%) of a half-height out -- about a quarter stud on a
--- 7-stud slime, tens of pixels at this range, against a gap of hundreds.
--- Measuring it exactly would mean coupling this file to that one's baseline
--- registry to buy nothing visible.
-local UPGRADE_TAG_DROP_FACTOR = 0.75
+-- THIS IS THE MISALIGNMENT FIX. The offset used to be "0.75 x the body's
+-- FULL height, below the body's CENTRE", on the stated theory that it would
+-- land around the slime's base, on the pad. It does not, and the arithmetic
+-- is not close: a slot slime is 7 studs wide and so 7 * 0.677 = 4.741 studs
+-- tall, its centre sits 2.371 studs above the pad's top face (it is
+-- bottom-aligned onto it, see spawnSlimeVisual), and 0.75 * 4.741 = 3.556.
+-- 2.371 - 3.556 = -1.185: the strip was anchored 1.185 studs BELOW the pad's
+-- top surface -- 0.185 studs below ground level, buried in the mat. Drawn
+-- AlwaysOnTop it stayed visible, but it was hanging off a point under the
+-- floor, which is why it read as sitting past the pad's edge and belonging
+-- to the ground rather than to the slime standing on it.
+--
+-- Measuring from the body's own BOTTOM (its live centre minus half its live
+-- height) instead of guessing a fraction of its height fixes that, and
+-- brings a second property with it: it is EXACTLY STEADY under the idle
+-- breathing. SlimeIdleClient pins a breathing slime's base to the pad by
+-- writing the centre as restY + (baseHeight * sy) / 2 while the height is
+-- baseHeight * sy -- so centre minus half-height is identically restY at
+-- every phase, and the sy terms cancel. The old fraction did not cancel: it
+-- multiplied the breath, so the strip bobbed up and down by 0.25 x the
+-- amplitude all by itself. This one cannot move at all.
+--
+-- 1.0 stud of lift puts the strip at the slime's ankles: clear of the pad
+-- face beneath it, and still a full model height below the NameTag above
+-- (which sits ~1 stud above the model's measured top, ~4.7 studs up), so the
+-- name lines and the buttons still cannot overlap at any distance or angle.
+local UPGRADE_TAG_LIFT_STUDS = 1.0
 
 local BUTTON_AFFORDABLE_COLOR = Color3.new(0.15, 0.55, 0.25)
 local BUTTON_DISABLED_COLOR = Color3.new(0.22, 0.22, 0.25)
@@ -254,7 +296,12 @@ local function buildTag(model: Model, body: MeshPart, slotNumber: number): SlotT
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "UpgradeTag"
 	gui.Size = UDim2.fromOffset(UPGRADE_TAG_WIDTH_PIXELS, UPGRADE_TAG_HEIGHT_PIXELS)
-	gui.StudsOffset = Vector3.new(0, -body.Size.Y * UPGRADE_TAG_DROP_FACTOR, 0)
+	-- Body BOTTOM (centre - half height) + lift. StudsOffset is measured from
+	-- the adornee's own centre, and the facing correction is a pure yaw, so
+	-- the body's local Y is world up and this is straight down in world space
+	-- -- and, crucially, it is the same straight down whatever the breathing
+	-- is doing (see UPGRADE_TAG_LIFT_STUDS).
+	gui.StudsOffset = Vector3.new(0, -body.Size.Y / 2 + UPGRADE_TAG_LIFT_STUDS, 0)
 	-- ON TOP, unlike the NameTag right above it -- and the difference is
 	-- deliberate. A name that hides behind the scenery it is standing among is
 	-- correct; a BUTTON you can see the edge of but cannot reliably click is

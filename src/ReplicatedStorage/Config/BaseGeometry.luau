@@ -39,7 +39,7 @@ local BaseGeometry = {}
 local groundY = baseplate.Position.Y + baseplate.Size.Y / 2
 
 -- ===== Slot grid: TEN pads, a real 2-column x 5-row grid (see BaseConfig.
--- BASE_GRID_COLUMNS) -- X = baseX +-11 (half of BASE_SLOT_COLUMN_SPACING_
+-- BASE_GRID_COLUMNS) -- X = baseX +-15 (half of BASE_SLOT_COLUMN_SPACING_
 -- STUDS), Z = BASE_SLOT_Z_START + row*BASE_SLOT_ROW_SPACING_STUDS (117, 131,
 -- 145, 159, 173). The world position of slot i (1-indexed) within the given
 -- lane's base -- Y already includes BASE_SLOT_PAD_Y_OFFSET, same "the
@@ -69,6 +69,77 @@ function BaseGeometry.slotPositions(baseIndex: number): { Vector3 }
 		positions[i] = BaseGeometry.slotPosition(baseIndex, i)
 	end
 	return positions
+end
+
+-- The mat's own TOP surface -- what anything laid ON the mat (the slot pads,
+-- the collect pads) has to sit flush against. BASE_SLOT_PAD_Y_OFFSET (0.7)
+-- is this same number plus that pad's own half-height, hand-computed once in
+-- BaseConfig; the collect pad computes it instead, so retuning the mat can
+-- never leave it half-buried.
+local matTopY = groundY + BaseConfig.BASE_MAT_Y_OFFSET + BaseConfig.BASE_MAT_SIZE.Y / 2
+
+-- ===== The COLLECT PAD for one slot: where it goes and how big it is, both
+-- DERIVED from the slot pad's own geometry and the central path's own width
+-- -- no literal position, no literal size (see BaseConfig's own collect-pad
+-- block for the tuning fractions and for why the channel is the binding
+-- constraint). Returns (position, size), position being the part's CENTRE
+-- with its Y offset already baked in, the same shape every other function
+-- here returns.
+--
+-- IN FRONT = TOWARD baseX, by the SAME rule PlayerProfile.spawnSlimeVisual
+-- uses to decide which way the slime faces: a pad LEFT of the base's centre
+-- (lower X) has its slime looking toward +X, one RIGHT of centre toward -X.
+-- Deriving the side from the pad's MEASURED X rather than from the slot
+-- number's parity keeps this correct whatever the grid is retuned to --
+-- exactly the reasoning spawnSlimeVisual already gives for its own copy of
+-- this test.
+--
+-- X AND Z ARE INDEPENDENT, and answer to different constraints.
+--
+-- X (across the channel) is BASE_COLLECT_PAD_WIDTH_STUDS, CENTRED in the
+-- CHANNEL between the slot pad's inner edge and the path's near edge, with
+-- whatever the channel has left over becoming clearance split evenly on both
+-- sides. It cannot overlap the walk-in path or the slot pad: the column
+-- spacing is derived from this width plus that clearance in the first place
+-- (see BaseConfig's SLOT_COLUMN_HALF_WIDTH), and the math.min below is the
+-- backstop for the case where the plot's own side limit clamps the columns
+-- short of what the pad asked for -- the pad narrows to the channel it
+-- actually got rather than spilling onto the path. That clamp is INACTIVE at
+-- current values (4-stud width, 6-stud channel).
+--
+-- Z (along the channel) is BASE_COLLECT_PAD_DEPTH_STUDS, the slot pad's own
+-- depth, so the two line up end to end. The channel does not constrain it at
+-- all -- it runs ALONG the channel, not across it -- so NO clearance in X is
+-- a function of it. What bounds it is the ROW PITCH: at the slot pad's own
+-- 8-stud depth against a 14-stud pitch, adjacent rows' pads keep 6 studs of
+-- bare mat between them.
+--
+-- The two columns' collect pads are separated by the full width of the path
+-- plus both clearances; adjacent rows by the row pitch less this depth.
+function BaseGeometry.collectPadPlacement(baseIndex: number, slotNumber: number): (Vector3, Vector3)
+	local baseX = LaneConfig.baseLaneCenterX(baseIndex)
+	local slotPos = BaseGeometry.slotPosition(baseIndex, slotNumber)
+	local towardCenterX = if slotPos.X < baseX then 1 else -1
+
+	-- The two walls of the channel: the slot pad's edge facing the path, and
+	-- the path's edge facing this column.
+	local slotInnerEdgeX = slotPos.X + towardCenterX * BaseConfig.BASE_SLOT_PAD_SIZE.X / 2
+	local pathEdgeX = baseX - towardCenterX * BaseConfig.BASE_PATH_SIZE.X / 2
+	local channelWidth = math.abs(pathEdgeX - slotInnerEdgeX)
+
+	local size = Vector3.new(
+		math.min(BaseConfig.BASE_COLLECT_PAD_WIDTH_STUDS, channelWidth),
+		BaseConfig.BASE_COLLECT_PAD_HEIGHT_STUDS,
+		BaseConfig.BASE_COLLECT_PAD_DEPTH_STUDS
+	)
+	local position = Vector3.new(
+		(slotInnerEdgeX + pathEdgeX) / 2,
+		matTopY + size.Y / 2,
+		-- Same row as its own slime, so the pad sits squarely in front of it
+		-- rather than in front of the gap between two slimes.
+		slotPos.Z
+	)
+	return position, size
 end
 
 -- ===== Plot dressing: the mat, its central path, and the raised edges
