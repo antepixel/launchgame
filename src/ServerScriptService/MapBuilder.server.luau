@@ -49,6 +49,7 @@ local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
 local GiantSlimeConfig = require(ReplicatedStorage.Config.GiantSlimeConfig)
 local TreasureConfig = require(ReplicatedStorage.Config.TreasureConfig)
 local SlimeBuilder = require(ReplicatedStorage.SlimeBuilder)
+local ChestBuilder = require(ReplicatedStorage.ChestBuilder)
 
 local baseplate = Workspace:WaitForChild("Baseplate") :: BasePart
 local groundY = baseplate.Position.Y + baseplate.Size.Y / 2
@@ -427,48 +428,29 @@ do
 	local clearStripDepth = platformNearZ - bodyNearZ
 	local chestZ = bodyNearZ + clearStripDepth * TreasureConfig.CHEST_SETBACK_FRACTION
 
-	local chestSize = TreasureConfig.CHEST_SIZE
-	local lidHeight = TreasureConfig.CHEST_LID_HEIGHT_STUDS
-	local baseHeight = chestSize.Y - lidHeight
-
-	local chest = Instance.new("Model")
+	-- THE MESH CHEST (see ChestBuilder.luau and REPORT.md). Was two hand-built
+	-- boxes; is now the imported model, assembled and scaled by the builder and
+	-- placed here. Only the PLACEMENT is this file's business, and the
+	-- derivation of chestZ above is untouched.
+	--
+	-- ChestBuilder guarantees the front faces +Z, which is the direction the
+	-- player walks in from, so no rotation is applied here.
+	local chest = ChestBuilder.build()
 	chest.Name = "TreasureChest"
 
-	local chestBase = Instance.new("Part")
-	chestBase.Name = "Base"
-	chestBase.Anchored = true
-	chestBase.CanCollide = true
-	chestBase.Size = Vector3.new(chestSize.X, baseHeight, chestSize.Z)
-	chestBase.Position = Vector3.new(LaneConfig.ROAD_CENTER_X, slimeGroundY + baseHeight / 2, chestZ)
-	chestBase.Color = TreasureConfig.CHEST_COLOR
-	chestBase.Material = TreasureConfig.CHEST_MATERIAL
-	chestBase.TopSurface = Enum.SurfaceType.Smooth
-	chestBase.BottomSurface = Enum.SurfaceType.Smooth
-	chestBase.Parent = chest
-	chest.PrimaryPart = chestBase
-
-	-- The lid sits on the base. Its HINGE is the back edge (the -Z side, away
-	-- from the incoming player), so opening swings it away and never occludes
-	-- what is inside. LaunchServer rotates it about that edge on open; the
-	-- closed pose is authored here so there is one place that knows the shape.
-	local lid = Instance.new("Part")
-	lid.Name = "Lid"
-	lid.Anchored = true
-	lid.CanCollide = true
-	lid.Size = Vector3.new(chestSize.X, lidHeight, chestSize.Z)
-	lid.Position = Vector3.new(LaneConfig.ROAD_CENTER_X, slimeGroundY + baseHeight + lidHeight / 2, chestZ)
-	lid.Color = TreasureConfig.CHEST_TRIM_COLOR
-	lid.Material = TreasureConfig.CHEST_MATERIAL
-	lid.TopSurface = Enum.SurfaceType.Smooth
-	lid.BottomSurface = Enum.SurfaceType.Smooth
-	lid.Parent = chest
-
-	-- The hinge point, stored as an attribute rather than recomputed later:
-	-- the lid's own back-bottom edge, in world space. LaunchServer reads it to
-	-- swing the lid without needing to know anything about how the chest was
-	-- assembled.
-	lid:SetAttribute("HingeZ", chestZ - chestSize.Z / 2)
-	lid:SetAttribute("HingeY", slimeGroundY + baseHeight)
+	-- BOTTOM-ALIGNED AND CENTRED OFF ITS OWN MEASURED BOUNDS, exactly as the
+	-- landmark body above is: the mesh's internal origin is wherever the
+	-- importer left it (nowhere near the chest's centre or its base), so the
+	-- only safe way to put a given face on a given plane is to measure the
+	-- model and translate by the difference. X to the road's centreline, Z to
+	-- the derived chestZ, and the bottom to the platform surface.
+	local chestMin, chestMax = ChestBuilder.worldAABB(chest)
+	local chestCentre = (chestMin + chestMax) / 2
+	chest:PivotTo(chest:GetPivot() + Vector3.new(
+		LaneConfig.ROAD_CENTER_X - chestCentre.X,
+		slimeGroundY - chestMin.Y,
+		chestZ - chestCentre.Z
+	))
 
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.Name = "OpenPrompt"
@@ -480,7 +462,10 @@ do
 	-- front of it -- a line-of-sight test would flicker against geometry that
 	-- cannot actually block anything.
 	prompt.RequiresLineOfSight = false
-	prompt.Parent = chestBase
+	-- A ProximityPrompt needs a BasePart (or Attachment) parent, and "Base" is a
+	-- Model now -- so it hangs on the chest's own PrimaryPart, which ChestBuilder
+	-- resolves to the base's outer shell. Every property above is unchanged.
+	prompt.Parent = chest.PrimaryPart
 
 	chest.Parent = slimeModel
 	slimeModel.Parent = Workspace

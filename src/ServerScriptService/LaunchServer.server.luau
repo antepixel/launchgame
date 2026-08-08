@@ -36,6 +36,7 @@ local SwingGeometry = require(ReplicatedStorage.Config.SwingGeometry)
 local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
 -- Server-only siblings (see each module's own header for why these live in
 -- ServerScriptService, not ReplicatedStorage, specifically).
+local ChestBuilder = require(ReplicatedStorage.ChestBuilder)
 local SlimeRoll = require(ServerScriptService.SlimeRoll)
 local SwingBuilder = require(ServerScriptService.SwingBuilder)
 -- Per-player base + income + collection + persistence + swing tier (see
@@ -543,10 +544,48 @@ Players.PlayerRemoving:Connect(destroyPlayerSwing)
 -- changes, never the shape or width of the cycle itself. LaunchClient's own
 -- copy of this function is byte-for-byte identical, fed the SAME laneIndex
 -- (see the written report for how that's guaranteed).
-local function swingPhase(laneIndex: number): number
-	local t = Workspace:GetServerTimeNow()
+-- SPLIT IN TWO so onRelease can ask for the phase at a time OTHER than now --
+-- see releasePingCompensationSeconds below. swingPhase(laneIndex) is unchanged
+-- in behaviour and is still what every other caller uses; it is now a one-line
+-- wrapper that passes the current server time to the same formula. The formula
+-- itself is byte-for-byte what it always was.
+local function swingPhaseAtTime(t: number, laneIndex: number): number
 	local offset = laneIndex * (LaunchConfig.SWING_PERIOD_SECONDS / LaneConfig.LANE_COUNT)
 	return ((t + offset) % LaunchConfig.SWING_PERIOD_SECONDS) / LaunchConfig.SWING_PERIOD_SECONDS
+end
+
+local function swingPhase(laneIndex: number): number
+	return swingPhaseAtTime(Workspace:GetServerTimeNow(), laneIndex)
+end
+
+-- HOW FAR BACK onRelease REWINDS THE CLOCK BEFORE GRADING (see
+-- LaunchConfig.RELEASE_PING_COMPENSATION_MAX_SECONDS for the constant's own
+-- reasoning, and REPORT.md for the measurement that made this necessary).
+--
+-- The problem it solves: the phase this server reads when it PROCESSES a
+-- Release is one network hop later than the phase the player was looking at
+-- when they clicked. That error is one-directional -- the server is always
+-- later, never earlier -- so it is a bias, not noise, and it scales with the
+-- player's connection. At tier 11 the whole snap window is +-36ms, which put
+-- the chest out of reach by SKILL for anyone above about 36ms one-way and left
+-- it reachable only by clicking early enough to guess their own latency.
+--
+-- SERVER-MEASURED, AND THAT IS THE WHOLE POINT. Player:GetNetworkPing() is the
+-- engine's own figure for this connection. Nothing the client sends influences
+-- it, so this changes no trust boundary: Release still carries no data at all.
+--
+-- DEFENSIVE ON THE READING ITSELF. Clamped to [0, MAX]: the ceiling stops a
+-- spike from rewinding the phase somewhere arbitrary, and the floor stops a
+-- negative or NaN reading from pushing it FORWARD (NaN fails both comparisons
+-- in math.clamp's own ordering, so it is rejected explicitly rather than left
+-- to propagate into the phase -- same NaN-safety rule the roll distribution
+-- already follows).
+local function releasePingCompensationSeconds(player: Player): number
+	local ping = player:GetNetworkPing()
+	if typeof(ping) ~= "number" or ping ~= ping then
+		return 0
+	end
+	return math.clamp(ping, 0, LaunchConfig.RELEASE_PING_COMPENSATION_MAX_SECONDS)
 end
 
 local function swingTheta(phase: number): number
@@ -1797,9 +1836,32 @@ local function onRelease(player: Player)
 	-- distance the instant it computes the multiplier. The client's copy of the
 	-- flight (camera, live counter) is downstream, cosmetic, and can't feed
 	-- anything back into this number.
-	local phase = swingPhase(laneIndex)
+	--
+	-- TWO PHASES NOW, AND THE SPLIT IS DELIBERATE (see REPORT.md):
+	--
+	--   phase       -- the LIVE phase, right now. Drives the launch ORIGIN only.
+	--                  The character is sitting on the seat at this exact phase
+	--                  (the client has been PivotTo-ing it there every frame), so
+	--                  launching from anywhere else would pop it backwards at the
+	--                  instant of release. The origin is unchanged by this pass.
+	--   gradedPhase -- the live phase rewound by this player's own measured
+	--                  latency. Drives the MULTIPLIER only. This is the phase the
+	--                  player was actually looking at when they clicked.
+	--
+	-- They used to be the same value, which is exactly why a well-timed release
+	-- on a 60ms connection was graded as a mistimed one. Rewinding BOTH would fix
+	-- the grade and break the origin; rewinding neither is what we had.
+	--
+	-- Nothing downstream of the multiplier changes: distance is still
+	-- DISTANCE_PER_MULTIPLIER * multiplier * tierScale, unchanged, so the
+	-- multiplier-to-distance mapping the economy is calibrated on is untouched.
+	-- What changes is WHICH multiplier a given click earns -- closer to the one
+	-- the player aimed at, at every tier.
+	local now = Workspace:GetServerTimeNow()
+	local phase = swingPhaseAtTime(now, laneIndex)
+	local gradedPhase = swingPhaseAtTime(now - releasePingCompensationSeconds(player), laneIndex)
 	local riderTierForMultiplier = PlayerProfile.getSwingTier(player)
-	local multiplier = launchMultiplier(phase, riderTierForMultiplier)
+	local multiplier = launchMultiplier(gradedPhase, riderTierForMultiplier)
 	-- Swing tier scaling: a plain multiplier on top of the usual timing-based
 	-- distance, read once here from THIS PLAYER's OWN tier (see
 	-- PlayerProfile.getSwingTier/buyNextTier -- the old server-wide,
@@ -1921,7 +1983,19 @@ local function onRelease(player: Player)
 	pivot:SetAttribute("FlightDuration", duration)
 	pivot:SetAttribute("RiderState", "flying")
 
-	flightStartedRemote:FireClient(player, distance, archHeight, duration, startPosition, startTime, luck)
+	-- THE MULTIPLIER RIDES ALONG NOW (see REPORT.md). The client used to grade its
+	-- own release locally and paint the outcome word from that -- a prediction
+	-- taken at the click, one hop before this server graded the real one, which
+	-- is how a launch this server scored at 1.93 could be announced to the player
+	-- as "Perfect!  2.00x". The outcome readout reads THIS number instead now.
+	--
+	-- SENT RATHER THAN DERIVED FROM `distance`. The client could divide it back
+	-- out (distance / (DISTANCE_PER_MULTIPLIER * scale[tier])), but only by
+	-- reading its own copy of the tier -- and "the client's copy of the tier
+	-- disagreed with the server's" is the precise shape of the bug this whole
+	-- readout has already been fixed for once. One number on a remote that
+	-- already carries six removes that dependency entirely.
+	flightStartedRemote:FireClient(player, distance, archHeight, duration, startPosition, startTime, luck, multiplier)
 end
 
 releaseRemote.OnServerEvent:Connect(onRelease)
@@ -2381,33 +2455,44 @@ boxPressRemote.OnServerEvent:Connect(onBoxPress)
 task.spawn(function()
 	local landmark = Workspace:WaitForChild("GiantSlimeLandmark", 30)
 	local chest = landmark and landmark:WaitForChild("TreasureChest", 30)
-	local chestBase = chest and chest:FindFirstChild("Base")
-	local prompt = chestBase and chestBase:FindFirstChild("OpenPrompt")
+	-- BOTH ARE MODELS NOW, not Parts (see ChestBuilder): "Lid" is the six lid
+	-- MeshParts grouped so they pivot as one unit, and the prompt hangs on the
+	-- chest's PrimaryPart rather than on a "Base" Part that no longer exists --
+	-- hence the recursive lookup. Everything the prompt itself carries is
+	-- unchanged; only where it is parented moved.
+	local prompt = chest and chest:FindFirstChild("OpenPrompt", true)
 	local lid = chest and chest:FindFirstChild("Lid")
-	if not (prompt and prompt:IsA("ProximityPrompt") and lid and lid:IsA("BasePart")) then
+	-- The hinge and the top face are MEASURED off the lid's own bounds, once,
+	-- now that the chest is built and placed -- see ChestBuilder.lidHinge. Both
+	-- join the same existing guard: a chest that cannot be measured is a chest
+	-- that cannot be opened, which is the same outcome, the same warning and the
+	-- same early return this path already had.
+	local hinge = if chest then ChestBuilder.lidHinge(chest :: Model) else nil
+	local lidTopCentre = if chest then ChestBuilder.lidTopCentre(chest :: Model) else nil
+	if not (prompt and prompt:IsA("ProximityPrompt") and lid and lid:IsA("Model") and hinge and lidTopCentre) then
 		warn("[LaunchServer] treasure chest never appeared -- the tier-11 platform landing will still work, but the chest cannot be opened this session.")
 		return
 	end
 
-	local lidClosedCFrame = lid.CFrame
-	local hingeZ = lid:GetAttribute("HingeZ")
-	local hingeY = lid:GetAttribute("HingeY")
+	local lidModel = lid :: Model
+	local lidClosedPivot = lidModel:GetPivot()
+	local hingeCFrame = CFrame.new(hinge :: Vector3)
 
-	-- Swings the lid up about its own back-bottom edge, so it opens AWAY from
-	-- the approaching player. Rotate-about-a-point, expressed as the standard
-	-- move-to-origin / rotate / move-back, using the hinge MapBuilder recorded
-	-- rather than re-deriving the chest's assembly here.
+	-- Swings the lid up about its own REAR-BOTTOM edge, so it opens AWAY from
+	-- the approaching player. The same rotate-about-a-point this always did --
+	-- move-to-hinge / rotate / move-back -- with two things changed: it pivots a
+	-- MODEL rather than setting one Part's CFrame, and the hinge is derived from
+	-- the lid's measured geometry instead of read back from attributes the
+	-- builder stamped. The angle and its sign are untouched:
+	-- CHEST_LID_OPEN_DEGREES, negated about X, which lifts the +Z (front) edge
+	-- and drops nothing toward the player.
 	local function setLidOpen(open: boolean)
-		if not (typeof(hingeZ) == "number" and typeof(hingeY) == "number") then
-			return
-		end
 		if not open then
-			lid.CFrame = lidClosedCFrame
+			lidModel:PivotTo(lidClosedPivot)
 			return
 		end
-		local hinge = CFrame.new(lid.Position.X, hingeY, hingeZ)
-		local toHinge = hinge:ToObjectSpace(lidClosedCFrame)
-		lid.CFrame = hinge * CFrame.Angles(-math.rad(TreasureConfig.CHEST_LID_OPEN_DEGREES), 0, 0) * toHinge
+		local toHinge = hingeCFrame:ToObjectSpace(lidClosedPivot)
+		lidModel:PivotTo(hingeCFrame * CFrame.Angles(-math.rad(TreasureConfig.CHEST_LID_OPEN_DEGREES), 0, 0) * toHinge)
 	end
 
 	prompt.Triggered:Connect(function(player: Player)
@@ -2456,13 +2541,15 @@ task.spawn(function()
 			-- which Roblox delivers in send order, so this is guaranteed
 			-- rather than merely likely.
 			--
-			-- The slime rises out of the chest's TOP FACE -- the lid's own
-			-- world position plus half its height, so the anchor tracks the
-			-- chest wherever MapBuilder put it. `toward` points back down the
-			-- road (+Z), the direction the player walked in from, so the
+			-- The slime rises out of the chest's TOP FACE -- unchanged in intent,
+			-- and now the MEASURED centre of the lid's top rather than a part's
+			-- position plus half its height, because the lid is a group of
+			-- MeshParts with no single height to halve. Measured once above, off
+			-- the CLOSED lid, so a reveal that lands while the lid is still open
+			-- still rises from where the chest actually is. `toward` points back
+			-- down the road (+Z), the direction the player walked in from, so the
 			-- mesh's face meets them (see SlimeBuilder's MESH_FACE_AXIS).
-			local topY = lidClosedCFrame.Position.Y + lid.Size.Y / 2
-			local anchor = CFrame.new(lidClosedCFrame.Position.X, topY, lidClosedCFrame.Position.Z)
+			local anchor = CFrame.new(lidTopCentre :: Vector3)
 			chestRevealRemote:FireClient(player, anchor, Vector3.new(0, 0, 1))
 			slimeRevealedRemote:FireClient(player, slime.globalIndex, isNew)
 		end

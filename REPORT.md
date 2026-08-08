@@ -1,198 +1,161 @@
-# Chest reveal: built
+# Distance readout: back on the HUD, whole studs, "???" past the road
 
-The slime now rises out of the chest, on the platform, in front of a player who keeps control
-of their camera the whole time. Four files changed.
+Three changes, all in the client's display layer. **No server file touched, and nothing about what
+the distance IS changed** — only how it is written.
 
-**Both things you asked me to be careful about came back clean, and one of them was the
-diagnosis I was least sure of.** §1 and §2.
+**One formatter now serves all three display sites.** They were two `string.format("%.1f studs", …)`
+calls and a hand-written `"0.0 studs"` literal — three places to keep in step, and the reason a
+"no decimals" change could otherwise have left one behind. §2.
 
-**Verification:** static analysis and reading only. All files parse. No playtest was run.
+**Rounded, not truncated**, and the reason is agreement between two labels the player sees one after
+the other, not just accuracy. §2.
+
+**"???" is gated on the zone**, the same `"past"` the headline above it already branches on — not on
+a distance threshold, which would be a second hand-maintained copy of the road's length. §3.
+
+**The Studio diagnostic survives exactly where it was useful:** on screen, appended in brackets, on
+the one landing that hides it from players. §3.
+
+**Verified:** all five client files parse; `math.round` confirmed present and the formatter's output
+checked against the boundary values.
 
 ---
 
-## 1. Box-neutrality — provable, not argued
+## 1. Back on the normal HUD
 
-The concern was right to raise, and the answer turned out better than I expected when I read
-the code properly.
-
-**`showSlimeReveal` was the *only* place the box leaked into the reveal.** Everything
-downstream — `entranceCFrame`, `updateSlimeReveal`, the hover — already reads a dedicated
-`slimeRevealRestCFrame`, not `boxRestCFrame`. So there was exactly one derivation to redirect,
-and it is this:
+The `RunService:IsStudio()` gate at `distanceSubLabel`'s construction is gone. The label keeps its
+default `Visible` and shows for everyone, on every landing, as it did before that pass.
 
 ```lua
--- before
-local centre = boxRestCFrame.Position
-slimeRevealRestCFrame = CFrame.lookAt(centre, centre + boxRestTowardPlayer)
-
--- after
-local centre = if revealAnchorCFrame then revealAnchorCFrame.Position else boxRestCFrame.Position
-local toward = revealAnchorToward or boxRestTowardPlayer
-slimeRevealRestCFrame = CFrame.lookAt(centre, centre + toward)
+-- was
+distanceSubLabel.Visible = RunService:IsStudio()
+distanceSubLabel.Parent = flightHudFrame
+-- now
+distanceSubLabel.Parent = flightHudFrame
 ```
 
-**When `revealAnchorCFrame` is nil, those two lines evaluate to the literal expressions they
-replaced.** Not "equivalent" — the same operands, the same call, the same result.
+The comment block that justified the gate is replaced with a short note recording that the gate
+existed and where the diagnostic value went instead. `RunService` stays required — §3 still uses it.
 
-Every difference on the chest path is behind the same nil check:
+Nothing else about the label moved: same position, size, font, colour, stroke, and the same parent,
+so it is still hidden and shown with the rest of `flightHudFrame`.
 
-| what | box path (anchor nil) | chest path |
-|---|---|---|
-| rest position | `boxRestCFrame.Position` — unchanged | chest top face + lift |
-| facing | `boxRestTowardPlayer` — unchanged | +Z, back down the road |
-| build width | `SlimeConfig.SLIME_REVEAL_WIDTH_STUDS` — unchanged | `CHEST_REVEAL_WIDTH_STUDS` |
-| rise / entrance | `SlimeConfig.SLIME_REVEAL_*` — unchanged | `CHEST_REVEAL_*` |
-| `PointLight` | not created | Divine only |
-| camera, character hiding, HUD suppression, dismissal | **not touched at all** | not taken |
+## 2. No decimals — rounded
 
-### Why the anchor can never be set on a box landing
+**Every distance on screen now goes through one function:**
 
-Not by inspection — structurally. `showWorldBox` calls `endRewardScene()` as its **first**
-statement, and `endRewardScene` now clears the anchor. So any box landing wipes a leftover chest
-anchor before it can be read, on the same line that already wipes a leftover box and a leftover
-reveal slime. There is no ordering in which a box reveal sees a chest anchor.
-
-**Same position, same camera, same dismissal.** The camera code, `releaseBoxCamera`,
-`releaseHiddenCharacter`, `releaseSuppressedHuds`, `dismissRevealAndReturn` and the `InputBegan`
-branches were not edited at all — verified by diff, not by memory.
-
----
-
-## 2. The 180s abandon path — traced, and it is covered
-
-You were right to make me check, and the answer is **it reaches `setGrounded`**:
-
-```
-server: abandon timer → moveToLaneReturn → resetReadyRemote:FireClient
-client: resetReadyRemote.OnClientEvent  (line 2668)
-          → canRelease = true
-          → resetFlightState()
-          → setGrounded(true)            ← line 2681
-              → hideFlightBoxRevealUI()
-                  → endRewardScene()
-                      → destroySlimeReveal()   ← the model dies
-                      → revealAnchorCFrame = nil
+```lua
+local function distanceText(distance: number): string
+	return string.format("%d studs", math.round(distance))
+end
 ```
 
-So a player who opens the chest and then idles out gets the reveal torn down correctly. **No
-leak, and no fix needed** — the concern I flagged as unconfirmed was unfounded. The handler's
-own comment says exactly why it works: `setGrounded(true)` was deliberately made the central
-teardown so "every OTHER path back to grounded gets the exact same guarantee, not just this
-one." The abandon path benefits from a decision made before it existed.
+### The three places changed
 
-### Every teardown path, re-checked against the built reveal
-
-| path | route | model destroyed | anchor cleared |
+| # | site | before | after |
 |---|---|---|---|
-| dismiss (MB1/touch) | `dismissRevealAndReturn` → `endRewardScene` | yes | yes |
-| death / respawn | `CharacterAdded` → `setGrounded` → `hideFlightBoxRevealUI` | yes | yes |
-| **abandon timeout (180s)** | `ResetReady` → `setGrounded(true)` → … | **yes** | **yes** |
-| disconnect | client session ends; the model is client-only | yes | n/a |
-| a later box landing | `showWorldBox` → `endRewardScene` first | yes | yes |
-| mount / dismount | `setGrounded(false)` → `hideFlightBoxRevealUI` | yes | yes |
+| 1 | `LaunchHud.setLiveDistance` — the live in-flight countup, every frame, on the headline | `string.format("%.1f studs", distance)` | `distanceText(distance)` |
+| 2 | `LaunchHud.showLandingResult` — the final sub-line | `string.format("%.1f studs", distance)` | `distanceText(distance)` (or `???`, §3) |
+| 3 | `LaunchClient.doRelease` — the zero written at the instant of release | `Hud.setDistanceText("0.0 studs")` | `Hud.setLiveDistance(0)` |
 
-**Single acquire, single release, unchanged in structure.** The anchor is set in one place (the
-`ChestRevealStarted` handler) and cleared in one place (`endRewardScene`), alongside the camera
-and character hiding that already worked that way. The Divine `PointLight` is parented to the
-reveal **model**, so `destroySlimeReveal` takes it with everything else — no second registry, no
-seventh row in this table.
+The third was the one that made this worth centralising: it was a **string literal**, so it would
+have kept saying `0.0 studs` after both format calls were fixed, and nothing would have caught it.
+Routing it through `setLiveDistance(0)` makes it impossible for that to happen again.
+`Hud.setDistanceText` had no other caller and is deleted, along with its export-table entry.
 
----
+`resetFlightHudText` blanks the sub-line to `""` and is unaffected.
 
-## 3. What was built
+### Rounded, and why
 
-**A new remote, `ChestRevealStarted`**, fired immediately before `SlimeRevealed` and only on a
-chest open. It carries the anchor CFrame and the facing vector. Order is guaranteed rather than
-hoped for: both are RemoteEvents to the same client, which Roblox delivers in send order.
+`math.round`, verified present and checked at the boundaries:
 
-It carries the CFrame rather than having the client look up
-`Workspace.GiantSlimeLandmark.TreasureChest`, so the client never learns the landmark's
-structure — the same "send what the receiver needs, not where to find it" shape every other
-remote here uses.
+```
+0.0000     -> 0 studs        2963.6000  -> 2964 studs
+0.4000     -> 0 studs        2964.4000  -> 2964 studs
+0.5000     -> 1 studs        3071.0400  -> 3071 studs
+3070.9998  -> 3071 studs     1535.5200  -> 1536 studs
+```
 
-**The anchor** is the chest's own top face, derived from the lid's closed CFrame plus half its
-height, so it tracks the chest wherever `MapBuilder` put it. `toward` is +Z — back down the
-road, the direction the player walked in from — so the mesh's face (−Z, per `SlimeBuilder`'s
-measured `MESH_FACE_AXIS`) meets them without correction.
+Two reasons, and the second is the real one:
 
-**Reused, not duplicated:** `SlimeBuilder` for the model, the existing name/tier/NEW billboard
-verbatim (tier colour, per-tier `TextSize`, asterisk flourish all carry over), the existing
-entrance/hover/scale animation, and the existing dismissal with its `REVEAL_DISMISS_LOCKOUT_SECONDS`
-— so a click already in flight from the 1.0s prompt hold cannot skip it, which was the specific
-failure the lockout exists for and applies here unchanged.
+1. **The sub-line is a measurement of a finished flight**, so rounding is simply the smaller error —
+   at most half a stud out, against a whole stud for truncation.
+2. **The countup and the final readout are different labels the player sees in sequence**, so they
+   have to agree at the boundary. One rule in one function guarantees that. The old arrangement — a
+   formatted countup and a separate literal reset — is exactly the shape that lets two readouts
+   disagree.
 
-**Its own numbers, in `TreasureConfig`:** 26 studs wide against the box reveal's 16, rising 9,
-settling 14 above the chest's top face, over 0.9s against the box's 0.35s. The box's constants
-are tuned for a slime at arm's length on a framed camera; this one is seen from wherever a
-walking player happens to be standing under a 1,050-stud landmark. Bigger and slower is the
-whole difference.
+The usual argument for truncating a *counter* — never claim distance the player has not yet
+travelled — is real but costs at most half a stud in 3,071, for a fraction of the final frame. Not
+visible, and not worth a second rounding rule that would reintroduce (2).
 
-### Divine
+## 3. "???" past the road
 
-Two changes, both to the **shape** of the moment rather than its decoration:
+```lua
+if zone == "past" then
+	distanceSubLabel.Text = if RunService:IsStudio()
+		then string.format("??? (%s)", distanceText(distance))
+		else "???"
+else
+	distanceSubLabel.Text = distanceText(distance)
+end
+```
 
-1. **It takes twice as long and settles higher** — 1.8s against 0.9s, 8 studs higher. Time is
-   the strongest signal available in a game where everything else resolves fast.
-2. **A `PointLight` in the slime's own tier colour** on the model, 90-stud range. Under a giant
-   slime on an open platform this reads instantly and costs one instance.
+**Hooked in `LaunchHud.showLandingResult`, on the `zone` parameter** — the same value the headline
+three lines above already branches on, which arrives from `LaunchClient`'s `landingBandZone` and is
+the client's mirror of `bandLuckForLandingZ`'s own `"short" | "road" | "past"` enum.
 
-**Deliberately no screen effect** — no flash, no shake, no full-screen anything. That is the
-mystery box's idiom, and reusing it would blur exactly the distinction that makes walking to
-this reward different from being played at. At a 20% rate roughly one chest in five is Divine,
-which also rules out anything expensive or long on repetition grounds.
+Gating on the zone rather than on a distance threshold matters for a specific reason: a threshold
+would be a **second copy of the road's total length** (`#LuckCurve.VALUES × RUNWAY_BAND_LENGTH_STUDS`,
+plus the launch origin's offset), maintained by hand, free to drift from the one the server actually
+scores against. The zone is that decision, already made, by the function that owns it. It also means
+the headline and the sub-line can never describe different landings — one branch, one condition.
 
-`DIVINE_TIER_INDEX` is derived as `#SLIME_TIER_NAMES`, not written as 8, so it keeps meaning
-"the top tier" if that list grows.
+It reads as **off the map rather than as a bigger number**, which is what the landing is: past the
+last band, where the road's measurement stops and there is nothing left to count against.
 
-### The camera: not taken
+### The Studio number: on screen, in brackets
 
-As specified and for the reason given last pass — `beginChestLanding` unanchors precisely so the
-player can walk, and taking the camera at the moment they arrive would undo the one thing that
-makes this reward different. There is a mechanical argument too: `releaseBoxCamera` only eases
-its return when there is still a frozen character to frame, so on an unfrozen chest player it
-would snap rather than ease. The `ChestRevealStarted` handler touches the camera, character
-visibility and HUD suppression **not at all**.
+In Studio the same line reads `??? (3071 studs)`; in a published server it reads `???`.
 
-### Also fixed in passing
+**On screen rather than printed or behind the dev panel, deliberately.** The value's whole worth is
+that it is the SERVER's own authoritative distance, arriving on `FlightStarted` — and it is what
+made the ping bug findable: the client/server phase gap was caught by *reading the number off the
+screen mid-session and noticing it was not 3071*. A log line is only found by someone already
+looking for it, and a dev-panel field is only read by someone who opened the panel. Neither would
+have caught that bug.
 
-The lid's re-close timer was borrowing `CHEST_ABANDON_SECONDS` — two unrelated concerns sharing
-one number, which I flagged as a shortcut last pass. Split into `CHEST_LID_RECLOSE_SECONDS`
-(45s): long enough that the opener never sees it shut in front of them, short enough that the
-next visitor finds a closed chest.
+And the `"past"` landing is precisely the case worth watching — it is the tier-11 chest landing, the
+one whose distance is most likely to be wrong and hardest to eyeball from the world. Hiding the
+number there and nowhere else would have removed it from the one place it earns its keep.
 
----
-
-## 4. Files
+## 4. Files changed
 
 | file | change |
 |---|---|
-| `Config/TreasureConfig.luau` | reveal size/rise/height/entrance, Divine entrance/height/light, lid re-close |
-| `LaunchServer.server.luau` | `ChestRevealStarted` declared + fired with the anchor; lid timer split |
-| `LaunchClient.client.luau` | anchor state + handler; `showSlimeReveal` reads the anchor; Divine light; `endRewardScene` clears it |
-| `REPORT.md` | this |
+| `LaunchClient/LaunchHud.luau` | Studio gate removed; `distanceText` added; `setLiveDistance` and `showLandingResult` route through it; `"???"` + Studio suffix on `"past"`; `setDistanceText` deleted (function and export) |
+| `LaunchClient.client.luau` | `Hud.setDistanceText("0.0 studs")` → `Hud.setLiveDistance(0)` |
 
-Nothing on the exclusion list was touched: the roll table, the 20% Divine, tier 11's reach and
-snap, the luck distribution, the crown, the pending-chest flag, `SlimeBuilder`, `SignBuilder`,
-and the mystery box's sequence, camera, character hiding and dismissal are all unmodified.
+A repo-wide grep for `%.1f studs`, `0.0 studs` and `setDistanceText` returns only comments recording
+what those used to be.
 
----
+**Untouched:** the outcome word and its rainbow, the HUD's visibility gating and fade timing, the
+chest reveal and model, the roll table, tier 11's reach and snap thresholds, ping compensation, the
+multiplier-to-distance mapping, and everything else on the exclusion list. `flightDistance` itself is
+unchanged — this pass only formats it.
 
-## 5. What I could not verify
+## 5. Worth knowing
 
-Static analysis only — everything above is read off the code, not observed. What a playtest
-would settle, in the order I would look:
+- **A luckless landing shows a distance now.** It always did before the Studio gate, and it still
+  reads `"No luck (short of the road)"` over e.g. `"2410 studs"` — correct, and the same as before
+  that pass.
+- **The `"past"` headline stays blank** (from the previous pass), so a chest landing now shows an
+  empty headline over `???`. That is the intended reading — the player is standing on the platform
+  looking at a chest — but it is the composition to glance at first.
+- **No playtest**, per instruction.
 
-1. **Is 26 studs the right size and 14 the right height** from where the player actually stands?
-   The chest is 68 studs from the landing point, so the slime is read at that range against a
-   1,050-stud backdrop. This is the number most likely to want a nudge, and it is one config
-   value.
-2. **Does the slime clear the open lid**, or does the lid at 100° intersect it? The lift is
-   computed from the chest's top face, and the lid rotates up and back, so it should — but I
-   have not seen either move.
-3. **The Divine light's range and brightness** against Roblox's default outdoor lighting at that
-   time of day. 90/6 is a guess.
-4. **The billboard's readability** at that distance — it is sized in pixels, so it does not
-   shrink, but it was positioned for a 16-stud slime and this one is 26.
+## 6. Still outstanding, unchanged
 
-None of these can strand a player or cost a reward: the slime is awarded server-side before any
-of this renders, and every teardown path is confirmed above.
+The chest's facing inference (`orientLockToFront`); the tier-11 overshoot slice; `game.rbxlx` still a
+stale 6 Aug artifact; the two duplicate-function pairs; the 27-local remotes bootstrap; and the
+`GetNetworkPing()` one-way-vs-RTT question.

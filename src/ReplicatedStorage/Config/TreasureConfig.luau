@@ -15,11 +15,9 @@
 -- and the roll live here.
 
 export type TreasureConfig = {
-	CHEST_SIZE: Vector3,
-	CHEST_LID_HEIGHT_STUDS: number,
-	CHEST_COLOR: Color3,
-	CHEST_TRIM_COLOR: Color3,
-	CHEST_MATERIAL: Enum.Material,
+	CHEST_HEIGHT_STUDS: number,
+	CHEST_MATERIAL_COLORS: { [string]: Color3 },
+	CHEST_MATERIAL_SURFACES: { [string]: Enum.Material },
 	CHEST_SETBACK_FRACTION: number,
 	CHEST_PROMPT_DISTANCE_STUDS: number,
 	CHEST_PROMPT_HOLD_SECONDS: number,
@@ -28,8 +26,11 @@ export type TreasureConfig = {
 	CHEST_LID_RECLOSE_SECONDS: number,
 	CHEST_REVEAL_WIDTH_STUDS: number,
 	CHEST_REVEAL_RISE_STUDS: number,
-	CHEST_REVEAL_HEIGHT_STUDS: number,
 	CHEST_REVEAL_ENTRANCE_SECONDS: number,
+	CHEST_REVEAL_EYE_HEIGHT_STUDS: number,
+	CHEST_REVEAL_EYE_RISE_STUDS: number,
+	CHEST_REVEAL_LID_CLEARANCE_STUDS: number,
+	CHEST_REVEAL_LABEL_HEIGHT_STUDS: number,
 	CHEST_REVEAL_DIVINE_ENTRANCE_SECONDS: number,
 	CHEST_REVEAL_DIVINE_EXTRA_HEIGHT_STUDS: number,
 	CHEST_REVEAL_DIVINE_LIGHT_RANGE_STUDS: number,
@@ -39,23 +40,67 @@ export type TreasureConfig = {
 }
 
 local TreasureConfig: TreasureConfig = {
-	-- ===== The chest itself, built from parts (a base box and a lid box) --
-	-- no asset, no mesh. Sized against two very different references at once:
-	-- the player walks to it from ~100 studs away, and it stands in front of a
-	-- 1,050-stud slime. 14 x 10 x 10 reads as a clear silhouette at that walk
-	-- distance without being a speck against the landmark behind it.
-	CHEST_SIZE = Vector3.new(14, 10, 10),
-	-- The lid's own slab height, taken off the top of CHEST_SIZE.Y -- so the
-	-- base box is (CHEST_SIZE.Y - this) tall and the two together are exactly
-	-- CHEST_SIZE.Y. Retuning the chest's height keeps the lid proportional
-	-- without a second number needing to move.
-	CHEST_LID_HEIGHT_STUDS = 3,
-	-- Gold, and metal so it catches light against a Grass-material platform.
-	CHEST_COLOR = Color3.fromRGB(212, 175, 55),
-	-- Darker banding for the lid, so base and lid read as two pieces rather
-	-- than one gold cube.
-	CHEST_TRIM_COLOR = Color3.fromRGB(140, 110, 30),
-	CHEST_MATERIAL = Enum.Material.Metal,
+	-- ===== The chest is an IMPORTED MESH now (assets/Chest.rbxmx, assembled by
+	-- ChestBuilder.luau) rather than two boxes -- see REPORT.md. The old
+	-- CHEST_SIZE / CHEST_LID_HEIGHT_STUDS / CHEST_COLOR / CHEST_TRIM_COLOR /
+	-- CHEST_MATERIAL are gone with the parts they described: the mesh brings its
+	-- own proportions, and only its overall HEIGHT is a decision left to make.
+	--
+	-- ONE NUMBER SETS THE SIZE. ChestBuilder measures the template's own height
+	-- at scale 1 and scales by targetHeight / unitHeight, so width and depth
+	-- follow the mesh's own aspect and never need a second constant that could
+	-- drift out of proportion with this one.
+	--
+	-- 12 studs against a ~5-stud character reads as 2.4x the player: big enough
+	-- to be unmistakably the thing you walked 100 studs for, small enough to
+	-- still read as an object you open rather than a building. It also has to
+	-- survive standing in front of a 1,050-stud slime without becoming a speck,
+	-- which is what pushed it above the old parts chest's 10.
+	CHEST_HEIGHT_STUDS = 12,
+
+	-- ===== PER-MATERIAL LOOK. The imported mesh arrives as twelve MeshParts
+	-- named "<group>_<material>" (Base_gold, Lid_gem, ...) all sharing one flat
+	-- import colour and Plastic; these two tables are what turn that back into
+	-- a chest. Keyed by the material half of the part name, so a re-export that
+	-- adds or renames a material only needs an entry here -- ChestBuilder looks
+	-- every part up by name and leaves anything it cannot find alone rather
+	-- than erroring.
+	CHEST_MATERIAL_COLORS = {
+		gold = Color3.fromRGB(237, 144, 6),
+		deepgold = Color3.fromRGB(131, 59, 1),
+		plank = Color3.fromRGB(82, 30, 9),
+		plankdark = Color3.fromRGB(50, 17, 5),
+		woodshade = Color3.fromRGB(15, 5, 2),
+		iron = Color3.fromRGB(23, 27, 37),
+		gem = Color3.fromRGB(13, 171, 255),
+	},
+	-- The surface each of those reads as. Deliberately conservative -- the
+	-- chest is viewed from ~100 studs on approach and then from arm's length,
+	-- and heavily-textured materials (DiamondPlate, Cobblestone) turn to noise
+	-- at the first distance and to obvious tiling at the second.
+	--   gold/deepgold/iron -> Metal. One material, three very different
+	--     colours: the metals differ by hue (bright gold, dark gold, near-black
+	--     iron) and adding a second metal material on top of that would be
+	--     differentiating something already differentiated.
+	--   plank/plankdark -> WoodPlanks. The visible outer boards, where a plank
+	--     grain is exactly the read wanted.
+	--   woodshade -> Wood. The inner/shadowed shell: plain grain rather than
+	--     plank seams, so it does not fight the boards sitting over it.
+	--   gem -> Neon. THE one deliberate choice here. It is the chest's focal
+	--     point and the player first sees it from across the platform, where
+	--     Glass (the obvious alternative) all but disappears -- it needs
+	--     lighting and depth behind it to read at all, and there is sky behind
+	--     this. Neon is lighting-independent, so the gem stays visible for the
+	--     whole approach, which is the job it has.
+	CHEST_MATERIAL_SURFACES = {
+		gold = Enum.Material.Metal,
+		deepgold = Enum.Material.Metal,
+		plank = Enum.Material.WoodPlanks,
+		plankdark = Enum.Material.WoodPlanks,
+		woodshade = Enum.Material.Wood,
+		iron = Enum.Material.Metal,
+		gem = Enum.Material.Neon,
+	},
 
 	-- Where the chest stands, as a fraction of the CLEAR STRIP between the
 	-- platform's near edge and the giant slime's own near edge (200 studs at
@@ -101,15 +146,72 @@ local TreasureConfig: TreasureConfig = {
 	-- camera at arm's length from a frozen player; this one is viewed from
 	-- wherever a walking player happens to be standing, under a 1,050-stud
 	-- landmark, with no camera take at all (see REPORT.md for why the camera
-	-- is deliberately left alone). Bigger and slower is the whole difference.
-	CHEST_REVEAL_WIDTH_STUDS = 26,
+	-- is deliberately left alone). SLOWER is still the difference; BIGGER is
+	-- not, any more.
+	--
+	-- WAS 26, WHICH WAS SIZED FOR THE WRONG SCENE (see REPORT.md). At 26 wide
+	-- the slime stood 17.6 studs tall -- one and a half times the whole chest
+	-- -- so the thing that came out of the chest was larger than the chest, and
+	-- getting it clear of a 12-stud lid put its billboard 28 studs above the
+	-- player's eyes. 8 wide is 5.4 tall: about a player's own height, which
+	-- reads as something you could pick up and carry, and against a 12.9-wide
+	-- chest it is unmistakably "what was inside" rather than a second landmark.
+	CHEST_REVEAL_WIDTH_STUDS = 8,
 	-- How far below its rest pose the slime starts, rising as it scales up.
+	-- Unchanged at 9, and it means something different now: the rest pose used
+	-- to sit 14 studs clear of the lid, so starting 9 lower still began ABOVE
+	-- the chest and the slime never appeared to come out of anything. From the
+	-- derived rest height (see below) 9 studs down is inside the chest's own
+	-- envelope, so the entrance now genuinely starts within the box it is
+	-- emerging from.
 	CHEST_REVEAL_RISE_STUDS = 9,
-	-- How high above the chest's own top face the slime settles -- enough that
-	-- it clears the open lid and reads against the sky rather than against the
-	-- chest.
-	CHEST_REVEAL_HEIGHT_STUDS = 14,
 	CHEST_REVEAL_ENTRANCE_SECONDS = 0.9,
+
+	-- ===== WHERE THE SLIME SETTLES, and the whole of it is derived -- see
+	-- LaunchRewardScene's showSlimeReveal. The old CHEST_REVEAL_HEIGHT_STUDS
+	-- (a flat 14 studs above the lid) is gone: it was a fixed offset from a
+	-- chest that has since tripled in height, and it took no account of how
+	-- tall the slime itself is or of where the player's eyes are.
+	--
+	-- THE RULE: settle as close to eye level as the chest allows, but never
+	-- inside the lid. In code that is
+	--
+	--   restY = max(groundY + EYE_HEIGHT + EYE_RISE,            -- where we want it
+	--               lidTopY + LID_CLEARANCE + slimeHalfHeight)  -- where it must clear
+	--
+	-- with the slime's half-height MEASURED off the model that was just built,
+	-- so it tracks CHEST_REVEAL_WIDTH_STUDS, and lidTopY measured off the
+	-- chest, so it tracks CHEST_HEIGHT_STUDS. Shrink the chest and the first
+	-- term takes over and the slime settles at eye level; grow it and the
+	-- second does, and the slime rides on top of the lid rather than sinking
+	-- into it. Neither number is a hardcoded height.
+	--
+	-- At today's numbers the chest wins by 6.5 studs -- 12 + 0.75 + 2.71 =
+	-- 15.46 against 9 -- which is the honest answer to "how much of this is
+	-- the chest's fault": all of it. A 12-stud chest cannot have anything sit
+	-- on top of it that a player standing next to it does not look up at.
+	--
+	-- A STANDING PLAYER'S EYES. R15 default: HipHeight 2 plus a 2-stud root
+	-- makes the root centre 3, and the head sits about 5 up. Named here rather
+	-- than measured off a live character because the reveal has to be placed
+	-- before anyone is necessarily standing anywhere near it.
+	CHEST_REVEAL_EYE_HEIGHT_STUDS = 5,
+	-- How far ABOVE eye level the slime would like to sit -- enough to read as
+	-- presented rather than as level with the horizon, not enough to be a
+	-- look-up on its own.
+	CHEST_REVEAL_EYE_RISE_STUDS = 4,
+	-- The gap between the closed lid's top face and the bottom of the hovering
+	-- slime. Small on purpose: this is the visual thread back to the chest, and
+	-- the further it floats the more it reads as a separate object that
+	-- happened to appear nearby.
+	CHEST_REVEAL_LID_CLEARANCE_STUDS = 0.75,
+	-- The name/tier/NEW billboard's offset above the slime, for the CHEST path
+	-- only -- SlimeConfig.SLIME_REVEAL_LABEL_HEIGHT_STUDS (7.5) still governs
+	-- the box, which is looked at on a framed camera where nothing is competing
+	-- for vertical room. Here every stud above the slime is another stud the
+	-- player has to look up past a 12-stud chest, and the billboard is the part
+	-- that was going off screen first.
+	CHEST_REVEAL_LABEL_HEIGHT_STUDS = 3.5,
 
 	-- ===== DIVINE. Roughly one chest in five is Divine (see
 	-- CHEST_DIVINE_CHANCE), so whatever marks it has to bear repetition --
@@ -122,7 +224,12 @@ local TreasureConfig: TreasureConfig = {
 	-- box's idiom, and reusing it here would blur exactly the distinction that
 	-- makes walking to this reward feel different from being played at.
 	CHEST_REVEAL_DIVINE_ENTRANCE_SECONDS = 1.8,
-	CHEST_REVEAL_DIVINE_EXTRA_HEIGHT_STUDS = 8,
+	-- WAS 8, which is now most of the frame. The "settles higher" signal is
+	-- kept -- it is one of the two things that mark a Divine -- but 2 studs
+	-- against a 5.4-stud slime is still a clearly higher hover, and 8 would
+	-- have put the billboard straight back out of view and undone the fix above
+	-- for one chest in five.
+	CHEST_REVEAL_DIVINE_EXTRA_HEIGHT_STUDS = 2,
 	CHEST_REVEAL_DIVINE_LIGHT_RANGE_STUDS = 90,
 	CHEST_REVEAL_DIVINE_LIGHT_BRIGHTNESS = 6,
 

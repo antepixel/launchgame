@@ -11,7 +11,12 @@ export type LaunchConfig = {
 	SWEET_SPOT_EDGE_MULTIPLIER: number,
 	SWEET_SPOT_MULTIPLIER: number,
 	SWEET_SPOT_SNAP_THRESHOLD: number,
+	RELEASE_PING_COMPENSATION_MAX_SECONDS: number,
 	OUTCOME_BANDS: { { threshold: number, text: string } },
+	LAST_BAND_OUTCOME_TEXT: string,
+	OUTCOME_RAINBOW_CYCLES_PER_SECOND: number,
+	OUTCOME_RAINBOW_SATURATION: number,
+	OUTCOME_RAINBOW_VALUE: number,
 	DISTANCE_PER_MULTIPLIER: number,
 	FLIGHT_DURATION_SECONDS: number,
 	FLIGHT_DURATION_EXPONENT: number,
@@ -104,8 +109,14 @@ local LaunchConfig: LaunchConfig = {
 	-- "close enough to centre" into a genuine, reachable perfect instead of a
 	-- vanishingly rare bullseye. Only affects the TOP of the inner ramp (see
 	-- launchMultiplier in LaunchServer/LaunchClient) -- the outer ramp and the
-	-- 1.5->1.8 jump are untouched. Also doubles as the top OUTCOME_BANDS cutoff
-	-- below, since anything that snaps to 2.0 should read as "Perfect!" too.
+	-- 1.5->1.8 jump are untouched.
+	--
+	-- THIS IS THE FALLBACK, NOT THE VALUE EVERY TIER USES: SWING_TIER_SNAP_
+	-- THRESHOLD below overrides it per tier, and tier 11 does. It also does NOT
+	-- double as the top OUTCOME_BANDS cutoff any more -- see that table's own
+	-- comment for why a second, separately-written copy of "what counts as
+	-- perfect" is exactly how the HUD came to disagree with the launch.
+	--
 	-- 1.90 snaps the top HALF of the inner ramp's half-width (a graded value
 	-- reaches 1.90 at 50% of the way from edge to centre) -- so the "perfect"
 	-- zone is 50% of the full sweet-spot width, not a sliver you can only find
@@ -347,6 +358,39 @@ local LaunchConfig: LaunchConfig = {
 	-- 0.12 was chosen as the starting point and what to retune first.
 	SWEET_SPOT_WIDTH = 0.12,
 
+	-- ===== LATENCY COMPENSATION ON RELEASE (see REPORT.md). The server grades a
+	-- release from the phase at the instant it PROCESSES the Release event, which
+	-- is one network hop later than the instant the player actually clicked --
+	-- always later, never earlier, so the error is a systematic bias and not just
+	-- noise. LaunchServer's onRelease now subtracts the player's own measured
+	-- network latency from the sampled time before grading. THE MULTIPLIER ONLY:
+	-- the launch ORIGIN still reads the live seat, so nothing about where the
+	-- flight starts moves, and the multiplier-to-distance mapping is untouched.
+	--
+	-- MEASURED BY THE SERVER, NOT SENT BY THE CLIENT. Player:GetNetworkPing() is
+	-- the engine's own measurement of the connection; a modified client cannot
+	-- set it, so this opens no exploit surface. (Handing the client its own
+	-- release timestamp WOULD, which is why that option was rejected.)
+	--
+	-- THIS IS THE CLAMP, and it exists because a rolling average can spike: an
+	-- absurd reading must not be able to rewind the phase arbitrarily. Applied as
+	-- math.clamp(ping, 0, this) -- the zero floor matters too, so a negative or
+	-- NaN reading can never push the phase FORWARD.
+	--
+	-- WHY 0.12s. Two bounds, and the smaller one wins:
+	--   * it must comfortably cover real one-way latency. Roblox players on a
+	--     distant region sit in the 20-120ms band, and at tier 11 the whole snap
+	--     window is +-36ms, so anything less than ~100ms would leave the worst-
+	--     connected players still systematically short.
+	--   * it must stay BELOW the sweet spot's own half-width
+	--     (SWEET_SPOT_WIDTH / 2 * SWING_PERIOD_SECONDS = 0.144s). Above that, a
+	--     bad ping reading could rewind a release from outside the window to
+	--     inside it -- compensation would stop correcting the outcome and start
+	--     inventing one. 0.12 sits under that ceiling with room to spare.
+	-- The residual after correction is the JITTER around the average, not the
+	-- average itself; see REPORT.md for the before/after tolerance numbers.
+	RELEASE_PING_COMPENSATION_MAX_SECONDS = 0.12,
+
 	-- ===== Outcome text: the short result word shown on release (see
 	-- LaunchClient's outcomeBandIndex) -- purely cosmetic feedback, reads
 	-- the SAME graded multiplier the bar/scoring already produced, just mapped to
@@ -355,11 +399,30 @@ local LaunchConfig: LaunchConfig = {
 	-- sorted descending and cover down to WORST_MULTIPLIER with no gaps. Styling
 	-- (colour/size/font) lives in LaunchClient, keyed by position in this array --
 	-- change the wording here freely, but keep the array the same length (5) or
-	-- update the client's parallel style list to match. =====
+	-- update the client's parallel style list to match.
+	--
+	-- ONE ENTRY IS NOT REACHED FROM THIS TABLE: the last-band ring below
+	-- (LAST_BAND_OUTCOME_TEXT) is decided by WHERE THE FLIGHT LANDS, not by a
+	-- multiplier threshold, so it cannot live in a threshold-ordered list. It
+	-- overrides the lookup entirely when it applies -- see LaunchClient's
+	-- landsOnLastBand. =====
 	OUTCOME_BANDS = {
-		-- Matches SWEET_SPOT_SNAP_THRESHOLD -- anything that snaps to a perfect
-		-- 2.0x reads as a perfect result, not a coincidence of two separate numbers.
-		{ threshold = 1.95, text = "Perfect!" },
+		-- SWEET_SPOT_MULTIPLIER ITSELF -- i.e. "this launch actually snapped."
+		-- NOT a copy of any snap threshold, which is what this used to be.
+		--
+		-- BUG (see REPORT.md): the cutoff was a hand-written 1.95 whose comment
+		-- claimed it "matches SWEET_SPOT_SNAP_THRESHOLD" -- which was 1.90, and
+		-- is now per-tier anyway (SWING_TIER_SNAP_THRESHOLD). Any number written
+		-- here other than the snapped value is a second, independent definition
+		-- of "perfect" that has to be kept in step with every tier's threshold by
+		-- hand, forever. Testing for the snapped value instead makes that
+		-- impossible by construction: a launch reads "Perfect!" if and only if
+		-- launchMultiplier returned SWEET_SPOT_MULTIPLIER, at whatever threshold
+		-- that tier snapped at. Numerically identical to the old 1.95 for every
+		-- tier that exists today (no tier's graded ramp can produce a value in
+		-- [1.95, 2.0) -- the highest snap threshold IS 1.95, so anything that
+		-- reaches it has already been replaced by 2.0).
+		{ threshold = 2.0, text = "Perfect!" },
 		-- The rest of the graded interior of the sweet spot (1.8 up to the snap).
 		{ threshold = 1.8, text = "Great!" },
 		-- The top slice of the OUTER ramp -- a near miss close enough to the
@@ -372,6 +435,62 @@ local LaunchConfig: LaunchConfig = {
 		-- times, and a harsh word on a fifth of them would grate fast.
 		{ threshold = 0.75, text = "Lock in.." },
 	},
+
+	-- ===== THE LAST-BAND RING: the outcome word for a flight that comes down on
+	-- the FINAL band of the road (band #LuckCurve.VALUES - 1, band 73 today) --
+	-- the ring of road immediately before the platform. It replaces whatever
+	-- OUTCOME_BANDS above would have said, and nothing else about that lookup
+	-- changes.
+	--
+	-- WHY IT IS NOT A THRESHOLD. Every other outcome word is a function of the
+	-- multiplier alone. This one is a function of WHERE THE FLIGHT LANDS, which
+	-- is the multiplier scaled by the tier's own SWING_TIER_DISTANCE_SCALE and
+	-- measured against the road -- so the same 1.92x that is one band short at
+	-- tier 11 is barely a third of the way down the road at tier 5. Deriving it
+	-- from the landing (see LaunchClient's landsOnLastBand, which mirrors
+	-- LaunchServer's own bandLuckForLandingZ) is also what keeps this honest for
+	-- free: it reads the same seat position, the same tier scale and the same
+	-- band arithmetic the server scores the flight with, so the word cannot
+	-- claim a band the flight did not reach.
+	--
+	-- WHERE IT APPLIES. Only where the flight can reach the last band at all,
+	-- and that falls out of the same arithmetic rather than needing a per-tier
+	-- flag: at tiers 1-10 even a snapped 2.0x stops at band 68 (tier 10's best),
+	-- so this word is unreachable there and those tiers label EXACTLY as they
+	-- did before it existed -- verified over 4,000,000 sampled phases per tier,
+	-- see REPORT.md. Tier 11 is the only tier this can fire on today.
+	--
+	-- THE WORDING. This is the one outcome in the game that is a near miss and a
+	-- maximum at the same time: band 73 pays the top of the luck curve (100,000)
+	-- and is also the one thing standing between the player and the platform.
+	-- "One Step Short!" says both -- "step" is small and countable and maps to
+	-- the single coloured band the player can see they stopped on, and "short"
+	-- refuses to let it read as a win. A generic "So Close!" would fit a 1.5x
+	-- just as well and throws away the specificity that makes this beat land;
+	-- anything built around "Last Band" reads as an achievement, which is
+	-- exactly the mistake the "Perfect!" bug above was already making.
+	LAST_BAND_OUTCOME_TEXT = "One Step Short!",
+
+	-- ===== THE PERFECT TEXT IS A MOVING RAINBOW (see REPORT.md and LaunchHud's
+	-- own outcomeRainbow block). Hue travels ALONG the letters rather than the
+	-- whole string pulsing as one colour, which is why it is a UIGradient whose
+	-- ColorSequence is rebuilt per frame rather than a TextColor3 tween.
+	--
+	-- ONLY A PERFECT GETS IT. Every other outcome keeps the flat colour from
+	-- LaunchHud's OUTCOME_STYLES, untouched.
+	--
+	-- Full hue rotations per second. The outcome word is on screen for the
+	-- flight plus RESET_DELAY -- a few seconds -- so 0.6 gives it two or three
+	-- visible sweeps at a pace that reads as motion rather than as a strobe.
+	-- This is the number to lower first if it ever feels frantic; there is no
+	-- reason to raise it.
+	OUTCOME_RAINBOW_CYCLES_PER_SECOND = 0.6,
+	-- Saturation and value fed to Color3.fromHSV for every keypoint. 0.9/1.0 is
+	-- vivid without going full neon: at S = 1 the blues and magentas read as
+	-- cheap against the sky, and at V below 1 the whole thing loses to the
+	-- gold "Luck x..." headline sitting above it.
+	OUTCOME_RAINBOW_SATURATION = 0.9,
+	OUTCOME_RAINBOW_VALUE = 1.0,
 
 	-- ===== Rainbow road: coloured distance bands under the flight path (built by
 	-- RunwayBuilder.server.luau -- generated at runtime, not hand-authored in the
@@ -812,6 +931,28 @@ local LaunchConfig: LaunchConfig = {
 	-- Band 73 therefore occupies EXACTLY the top of the graded ramp -- no more
 	-- and no less -- which is what makes "one step short" a real, hittable
 	-- outcome rather than a sliver. See SWING_TIER_SNAP_THRESHOLD below.
+	--
+	-- ===== MEASURED CORRECTION TO THE PARAGRAPH ABOVE (no number here changed
+	-- -- see REPORT.md for the measurement). That derivation uses SWING_PIVOT_Z
+	-- as the launch origin, and the launch origin is NOT the pivot: a flight
+	-- starts from the SEAT, which at the sweet spot hangs
+	-- ropeLength * sin(SWING_ARC_HALF_ANGLE_DEGREES) forward of the pivot --
+	-- 36 * sin(35) = 20.649 studs at tier 11. Every tier-11 flight therefore
+	-- travels 20.649 studs further down the road than this equation accounts
+	-- for, which is 0.516 of a band.
+	--
+	-- The ring is still exactly one band wide (the 0.52 : 1 ratio quoted under
+	-- SWING_TIER_SNAP_THRESHOLD below is right, and measures 0.519 : 1), but it
+	-- is DISPLACED half a band DOWN: band 73 is graded 1.9107 .. 1.9366, not
+	-- 1.9239 .. 1.95. The leftover top slice, graded 1.9366 up to the 1.95
+	-- snap, clears the road WITHOUT snapping -- so the second bullet above is
+	-- wrong that only the snap carries a flight off the end, and the platform
+	-- does NOT sit entirely inside a distance no flight can occupy. That slice
+	-- is 0.0192s of every cycle against the perfect window's 0.0720s: roughly
+	-- one chest landing in five today is earned by a launch that never snapped.
+	-- Left as-is deliberately -- fixing it moves tier 11's reach. The outcome
+	-- readout does not depend on it either way (it reads the landing, see
+	-- LAST_BAND_OUTCOME_TEXT), so the HUD stays honest whichever way it goes.
 	--
 	-- Tiers 1-10 are untouched and must stay so: they are the feel curve, each
 	-- derived by picking the reference game's target luck value, finding the
