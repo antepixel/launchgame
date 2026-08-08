@@ -54,6 +54,17 @@ local UNIT_WIDTH_STUDS = templateBoard.Size.X / template:GetScale()
 -- ratio at any width.
 local BOARD_FACE_ASPECT = templateBoard.Size.Y / templateBoard.Size.X
 
+-- ===== The crown (see SignBuilder.setCrown). Every dimension is a fraction
+-- of the BUILT board's own measured width, so it stays proportional at any
+-- BASE_SIGN_WIDTH_STUDS rather than needing a second retune. A quarter of the
+-- board's width reads clearly from the walkway without competing with the
+-- name on the board itself.
+local CROWN_PART_NAME = "Crown"
+local CROWN_WIDTH_FRACTION = 0.25
+local CROWN_HEIGHT_RATIO = 0.6
+local CROWN_DEPTH_RATIO = 0.35
+local CROWN_COLOR = Color3.fromRGB(235, 195, 60)
+
 -- The player's headshot, as a Roblox-generated thumbnail: rbxthumb content
 -- strings are resolved by the engine from data it already has, so this costs
 -- no upload, no asset id and no web request of our own.
@@ -269,7 +280,50 @@ function SignBuilder.build(text: string, userId: number, widthStuds: number): Mo
 	label.Text = text
 	label.Parent = surface
 
+	-- The crown, built ALWAYS and hidden by default (see setCrown). Built here
+	-- rather than on demand because the sign is assembled before its owner's
+	-- profile has finished loading -- there is no moment at build time when
+	-- "has this player opened a chest" is knowable.
+	--
+	-- Sized and placed off the board's OWN measured geometry so it sits on the
+	-- top edge at any sign width: worldAABB (not GetBoundingBox -- see its own
+	-- comment) gives the built model's real extents after scaling, and the
+	-- crown is a fraction of the board's width centred on it.
+	local minCorner, maxCorner = SignBuilder.worldAABB(model)
+	local boardWidth = maxCorner.X - minCorner.X
+	local crownWidth = boardWidth * CROWN_WIDTH_FRACTION
+	local crown = Instance.new("Part")
+	crown.Name = CROWN_PART_NAME
+	crown.Anchored = true
+	crown.CanCollide = false
+	crown.Size = Vector3.new(crownWidth, crownWidth * CROWN_HEIGHT_RATIO, crownWidth * CROWN_DEPTH_RATIO)
+	crown.Color = CROWN_COLOR
+	crown.Material = Enum.Material.Metal
+	crown.Transparency = 1
+	crown.CFrame = CFrame.new(
+		(minCorner.X + maxCorner.X) / 2,
+		maxCorner.Y + crown.Size.Y / 2,
+		(minCorner.Z + maxCorner.Z) / 2
+	)
+	crown.Parent = model
+
 	return model
+end
+
+-- Shows or hides a built sign's crown. A SETTER, not a build argument, and
+-- that is load-order driven rather than stylistic: PlayerProfile builds the
+-- sign in buildBaseFolder, which runs BEFORE the DataStore read that says
+-- whether this player has ever opened a chest resolves. A build argument
+-- would always be false on the first frame and need a rebuild afterwards.
+-- A setter also handles earning the crown mid-session with no rebuild at all.
+--
+-- Tolerant of a sign built before this existed (returns quietly), so a live
+-- server mid-rollout cannot error here.
+function SignBuilder.setCrown(model: Model, visible: boolean)
+	local crown = model:FindFirstChild(CROWN_PART_NAME)
+	if crown and crown:IsA("BasePart") then
+		crown.Transparency = if visible then 0 else 1
+	end
 end
 
 return SignBuilder

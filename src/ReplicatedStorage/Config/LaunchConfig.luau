@@ -72,6 +72,7 @@ export type LaunchConfig = {
 	BOX_OPEN_BURST_SECONDS: number,
 	BOX_OPEN_BURST_SPIN_DEGREES: number,
 	SWING_TIER_DISTANCE_SCALE: { number },
+	SWING_TIER_SNAP_THRESHOLD: { number },
 	REMOTE_LANE_RESCAN_INTERVAL_SECONDS: number,
 }
 
@@ -789,10 +790,58 @@ local LaunchConfig: LaunchConfig = {
 	-- that target, then solving for the scale that lands a perfect (2.0x)
 	-- launch safely inside that band's stud range -- see the written report
 	-- for the full table and the arithmetic behind each entry. Must stay
-	-- exactly 11 entries long (one per tier); tier 11 is deliberately tuned
-	-- to land just inside the LAST band on the road (see LuckCurve.VALUES),
-	-- not past it.
-	SWING_TIER_DISTANCE_SCALE = { 1.0, 3.0, 4.4, 6.4, 8.2, 9.2, 10.8, 11.6, 12.6, 13.8, 14.8 },
+	-- exactly 11 entries long (one per tier).
+	--
+	-- ===== TIER 11 IS NO LONGER "just inside the last band" -- it OVERSHOOTS
+	-- THE ROAD ENTIRELY and lands on the giant slime's platform (see
+	-- TreasureConfig.luau and REPORT.md). Its 15.3552 is DERIVED, not picked,
+	-- and the rule is worth stating because it is the only entry in this array
+	-- that is not a hand-tuned feel number:
+	--
+	--   scale_11 = (SWING_PIVOT_Z - roadFarEdgeZ)
+	--              / (DISTANCE_PER_MULTIPLIER * snapThreshold_11)
+	--
+	-- i.e. the scale at which a launch AT tier 11's own snap threshold lands
+	-- exactly on the road's far edge. That single equation gives the whole
+	-- three-outcome ladder for free:
+	--   * anything below the snap lands ON the road, shortest bands first, up
+	--     to and including band 73 (luck 100,000) right at the lip;
+	--   * the snap to 2.0x is a discontinuous jump of
+	--     (2.0 - 1.95) * 100 * 15.3552 = 77 studs, which carries the flight
+	--     clean off the end of the road and onto the platform.
+	-- Band 73 therefore occupies EXACTLY the top of the graded ramp -- no more
+	-- and no less -- which is what makes "one step short" a real, hittable
+	-- outcome rather than a sliver. See SWING_TIER_SNAP_THRESHOLD below.
+	--
+	-- Tiers 1-10 are untouched and must stay so: they are the feel curve, each
+	-- derived by picking the reference game's target luck value, finding the
+	-- closest band on THIS game's generated curve (see LuckCurve.luau), then
+	-- solving for the scale that lands a perfect launch safely inside it.
+	SWING_TIER_DISTANCE_SCALE = { 1.0, 3.0, 4.4, 6.4, 8.2, 9.2, 10.8, 11.6, 12.6, 13.8, 15.3552 },
+
+	-- ===== PER-TIER SWEET-SPOT SNAP THRESHOLD. Overrides
+	-- SWEET_SPOT_SNAP_THRESHOLD for one tier; every entry that equals the
+	-- global value is a no-op, and tiers 1-10 all do, so their behaviour is
+	-- BIT-IDENTICAL to before this table existed (verified numerically, see
+	-- REPORT.md).
+	--
+	-- WHY TIER 11 IS DIFFERENT. The snap is what makes the platform reachable:
+	-- nothing ever lands with a multiplier between the threshold and 2.0, so
+	-- that gap is a distance no flight can occupy, and the platform sits
+	-- inside it. But the gap is also dead space taken out of the top of the
+	-- road -- at the global 1.90 it swallowed 3.9 bands' worth of tier-11
+	-- distance, leaving band 73 reachable through a window half a frame wide.
+	-- Raising tier 11's threshold shrinks the gap, which hands band 73 back.
+	--
+	-- WHY 1.95 AND NOT 1.97. 1.97 gives a perfect window of ~0.043s. That is
+	-- below the input-latency variance of touch devices -- a phone player
+	-- could not hit it by skill, only by luck, which is exactly what
+	-- SWEET_SPOT_SNAP_THRESHOLD's own comment exists to prevent. 1.95 gives
+	-- 0.072s: half of today's 0.144s, a real difficulty step for the endgame,
+	-- and still comfortably above that floor. The cost is that band 73's ring
+	-- comes out narrower than the perfect window rather than wider (0.52 : 1);
+	-- see REPORT.md, where the measured numbers are set against both.
+	SWING_TIER_SNAP_THRESHOLD = { 1.90, 1.90, 1.90, 1.90, 1.90, 1.90, 1.90, 1.90, 1.90, 1.90, 1.95 },
 
 	-- ===== Remote-lane rendering (client only -- see LaunchClient.client.
 	-- luau's renderOtherLanes/rescanRemoteLanes) =====

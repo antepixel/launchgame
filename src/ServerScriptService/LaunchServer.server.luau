@@ -26,6 +26,11 @@ local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local RunwayGeometry = require(ReplicatedStorage.Config.RunwayGeometry)
 local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
 local SlimeConfig = require(ReplicatedStorage.Config.SlimeConfig)
+-- Only for rollChestSlime's own pool lookup (SLIMES_BY_TIER) and its return
+-- type -- the chest rolls from the same shared catalog every other reveal
+-- already draws from, never a second copy.
+local SlimeData = require(ReplicatedStorage.Config.SlimeData)
+local TreasureConfig = require(ReplicatedStorage.Config.TreasureConfig)
 local SwingTierVisuals = require(ReplicatedStorage.Config.SwingTierVisuals)
 local SwingGeometry = require(ReplicatedStorage.Config.SwingGeometry)
 local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
@@ -136,6 +141,15 @@ local boxResultRemote = makeRemote("BoxResult")
 -- slime identifier ever sent; the client looks up name/tier/colour/income
 -- from the shared SlimeData table by this index, never from anything else
 -- the server says.
+-- Server -> client: fired ONCE, immediately before SlimeRevealed, and ONLY on
+-- a treasure-chest open. Carries the world CFrame the reveal slime should rise
+-- out of -- the chest's own top face. Without it the client would place the
+-- slime at the last mystery box's position, which is what it used to do (see
+-- REPORT.md). The CFrame is sent rather than having the client look up
+-- Workspace.GiantSlimeLandmark.TreasureChest, so the client never needs to
+-- know the landmark's structure -- same "send what the receiver needs, not
+-- where to find it" shape every other remote here uses.
+local chestRevealRemote = makeRemote("ChestRevealStarted")
 local slimeRevealedRemote = makeRemote("SlimeRevealed")
 -- Server -> client: fires ONCE per player, the moment they claim the (single,
 -- shared) rider slot -- tells that client "you're the one who should render
@@ -571,7 +585,19 @@ end
 -- SWEET_SPOT_SNAP_THRESHOLD then snaps up to exactly 2.0x -- landing on the
 -- single exact centre phase is luck, not skill, so "close enough" is a real,
 -- reachable perfect instead of a vanishingly rare bullseye.
-local function launchMultiplier(phase: number): number
+-- SNAP THRESHOLD IS PER-TIER now (see LaunchConfig.SWING_TIER_SNAP_THRESHOLD).
+-- Every tier whose entry equals the global SWEET_SPOT_SNAP_THRESHOLD behaves
+-- exactly as it did before that table existed -- tiers 1-10 all do, so this
+-- change is invisible to them. Tier 11 raises it, which shrinks the dead gap
+-- between the threshold and 2.0x and is what hands band 73 back as a hittable
+-- outcome; see that constant's own comment. A missing/short table entry falls
+-- back to the global value rather than erroring.
+local function snapThresholdForTier(tier: number): number
+	local perTier = LaunchConfig.SWING_TIER_SNAP_THRESHOLD[tier]
+	return if typeof(perTier) == "number" then perTier else LaunchConfig.SWEET_SPOT_SNAP_THRESHOLD
+end
+
+local function launchMultiplier(phase: number, tier: number): number
 	local distanceFromSweetSpot = circularPhaseDistance(phase, LaunchConfig.SWEET_SPOT_PHASE)
 	local halfWidth = LaunchConfig.SWEET_SPOT_WIDTH / 2
 	if distanceFromSweetSpot <= halfWidth then
@@ -582,7 +608,7 @@ local function launchMultiplier(phase: number): number
 		local t = 1 - (distanceFromSweetSpot / halfWidth)
 		local graded = LaunchConfig.SWEET_SPOT_EDGE_MULTIPLIER
 			+ (LaunchConfig.SWEET_SPOT_MULTIPLIER - LaunchConfig.SWEET_SPOT_EDGE_MULTIPLIER) * t
-		if graded >= LaunchConfig.SWEET_SPOT_SNAP_THRESHOLD then
+		if graded >= snapThresholdForTier(tier) then
 			return LaunchConfig.SWEET_SPOT_MULTIPLIER
 		end
 		return graded
@@ -651,14 +677,33 @@ end
 -- or distances growing later. Clamped to the LAST band -- never an
 -- out-of-range index, and never worse to travel farther than to travel less
 -- far.
-local function bandLuckForLandingZ(landingZ: number): number
+-- RETURNS (luck, zone). The zone is an explicit enum -- "short" | "road" |
+-- "past" -- and every caller branches on IT, never on a luck value that
+-- happens to be the maximum.
+--
+-- PAST THE ROAD USED TO CLAMP, AND THAT IS NOW A BUG RATHER THAN A
+-- SAFETY NET. This function's own comment used to say overshooting the road
+-- was "still impossible today... but must survive the road shrinking or
+-- distances growing later", and clamped to the last band accordingly. Tier 11
+-- now deliberately overshoots (see LaunchConfig.SWING_TIER_DISTANCE_SCALE), so
+-- a clamp would silently report the platform landing as luck 100,000 -- the
+-- best possible band -- fire the normal mystery box, and make the chest
+-- landing indistinguishable from a band-73 landing.
+--
+-- "past" therefore carries luck 0, not the last band's value. Nothing
+-- downstream should ever read a luck number off a chest landing, and a 0
+-- makes a missed branch fail loudly (no box at all) instead of quietly (a
+-- maximum box).
+local function bandLuckForLandingZ(landingZ: number): (number, string)
 	local distanceFromStart = RunwayGeometry.RUNWAY_START_Z - landingZ
 	if distanceFromStart < 0 then
-		return 0
+		return 0, "short"
 	end
 	local index = math.floor(distanceFromStart / LaunchConfig.RUNWAY_BAND_LENGTH_STUDS)
-	index = math.clamp(index, 0, #LuckCurve.VALUES - 1)
-	return LuckCurve.VALUES[index + 1]
+	if index > #LuckCurve.VALUES - 1 then
+		return 0, "past"
+	end
+	return LuckCurve.VALUES[index + 1], "road"
 end
 
 -- ===== Flight pose: a cheap static "flailing" silhouette (arms out/up, legs
@@ -968,6 +1013,11 @@ type Flight = {
 	startTime: number,
 	poseJoints: PoseJoints,
 	luck: number,
+	-- "short" | "road" | "past" -- which side of the road this flight ends on
+	-- (see bandLuckForLandingZ). Carried on the flight rather than recomputed
+	-- at landing so the zone the box/chest branch reads is the exact zone the
+	-- landing readout was already scored against.
+	zone: string,
 	trailRig: TrailRig?,
 }
 -- Every player currently mid-flight, independently -- see the Heartbeat
@@ -1257,6 +1307,102 @@ local function scheduleLucklessReturn(landedPlayer: Player, landedCharacter: Mod
 			resetReadyRemote:FireClient(landedPlayer)
 		end
 	end)
+end
+
+-- ===== THE CHEST LANDING (see TreasureConfig.luau and REPORT.md) =====
+-- A perfect tier-11 launch clears the road and lands on the giant slime's
+-- platform. No box fires (the landing's zone is "past", which carries luck 0
+-- by construction), so none of the box/reveal machinery above runs. Instead:
+-- the player is UNFROZEN, walks to the chest, and opens it.
+--
+-- WHY THE PENDING FLAG IS ON THE PROFILE, NOT HERE. states[player] is
+-- session state -- a death, a disconnect or a respawn wipes it. Losing a
+-- 20%-Divine reward to a network blip would be the worst failure this feature
+-- could have, so the entitlement is persisted (PlayerProfile.markChestPending)
+-- and survives all three. It is consumed only by actually opening the chest.
+-- The player cannot walk back out here from their base -- the platform is
+-- ~3,100 studs down a road with no path -- so a pending chest is not free
+-- money, it is just not DESTROYED by bad luck with the network.
+local function beginChestLanding(landedPlayer: Player, landedCharacter: Model)
+	PlayerProfile.markChestPending(landedPlayer)
+
+	-- Unfreeze. This is the only landing in the game that does this -- see the
+	-- Heartbeat handler's own "FROZEN AT LANDING" comment for why every other
+	-- one stays anchored.
+	local humanoid = landedCharacter:FindFirstChildOfClass("Humanoid") :: Humanoid?
+	local rootPart = humanoid and humanoid.RootPart
+	if humanoid and rootPart then
+		rootPart.Anchored = false
+		humanoid.AutoRotate = true
+	end
+	local landedPivot = playerSwingPivots[landedPlayer]
+	if landedPivot then
+		landedPivot:SetAttribute("RiderState", "empty")
+	end
+
+	-- THE SAFETY NET, and it covers every abandonment case at once: idle,
+	-- distracted, wandered off, walked to the far edge. Same
+	-- moveToLaneReturn every other return path uses, so the destination
+	-- cannot drift. Deliberately does NOT consume the pending chest.
+	task.delay(TreasureConfig.CHEST_ABANDON_SECONDS, function()
+		-- Stale-timer guard, same shape as scheduleLucklessReturn's: anything
+		-- other than "chest" means this landing already ended (opened, died,
+		-- disconnected) and this timer must not move a character that has
+		-- since been respawned or freed.
+		if states[landedPlayer] ~= "chest" then
+			return
+		end
+		states[landedPlayer] = "grounded"
+		local h = landedCharacter:FindFirstChildOfClass("Humanoid") :: Humanoid?
+		local rp = h and h.RootPart
+		local laneIndex = PlayerProfile.getBaseIndex(landedPlayer)
+		if h and rp and laneIndex then
+			moveToLaneReturn(landedCharacter, h, rp, laneIndex, playerSwingPivots[landedPlayer])
+		end
+		if landedPlayer.Parent then
+			resetReadyRemote:FireClient(landedPlayer)
+		end
+	end)
+end
+
+-- The chest's own roll -- ITS OWN TABLE, never SlimeRoll.distributionForLuck
+-- (a 4-tier sliding window whose whole point is that everything outside the
+-- window is exactly zero; a chest must be able to award anything). Flat
+-- CHEST_DIVINE_CHANCE for Divine off the top, the remainder spread across the
+-- other tiers geometrically at CHEST_TIER_WEIGHT_RATIO per tier upward.
+--
+-- SERVER-SIDE AND SERVER-ONLY. The client's entire contribution to this is a
+-- ProximityPrompt.Triggered signal, which carries nothing but the player --
+-- no odds, no outcome, no luck. Same shape as onBoxPress.
+local function rollChestSlime(): SlimeData.Slime
+	local tierCount = #SlimeConfig.SLIME_TIER_NAMES
+	local roll = math.random()
+	local tier
+	if roll < TreasureConfig.CHEST_DIVINE_CHANCE then
+		tier = tierCount
+	else
+		local weights, total = {}, 0
+		for i = 1, tierCount - 1 do
+			weights[i] = TreasureConfig.CHEST_TIER_WEIGHT_RATIO ^ (i - 1)
+			total += weights[i]
+		end
+		-- Re-drawn rather than rescaling the first roll: one more math.random
+		-- is free, and reusing a draw across two different distributions is
+		-- the kind of subtle correlation that is hard to notice and hard to
+		-- reason about later.
+		local inner = math.random() * total
+		local cumulative = 0
+		tier = tierCount - 1
+		for i = 1, tierCount - 1 do
+			cumulative += weights[i]
+			if inner <= cumulative then
+				tier = i
+				break
+			end
+		end
+	end
+	local pool = SlimeData.SLIMES_BY_TIER[tier]
+	return pool[math.random(1, #pool)]
 end
 
 -- Fired by a GROUNDED player's own click-anywhere/tap listener once the
@@ -1652,7 +1798,8 @@ local function onRelease(player: Player)
 	-- flight (camera, live counter) is downstream, cosmetic, and can't feed
 	-- anything back into this number.
 	local phase = swingPhase(laneIndex)
-	local multiplier = launchMultiplier(phase)
+	local riderTierForMultiplier = PlayerProfile.getSwingTier(player)
+	local multiplier = launchMultiplier(phase, riderTierForMultiplier)
 	-- Swing tier scaling: a plain multiplier on top of the usual timing-based
 	-- distance, read once here from THIS PLAYER's OWN tier (see
 	-- PlayerProfile.getSwingTier/buyNextTier -- the old server-wide,
@@ -1660,7 +1807,7 @@ local function onRelease(player: Player)
 	-- never change length or count -- this is the ONLY place tier
 	-- progression enters the flight, which is what keeps it from having to
 	-- touch the trajectory formula, the camera, or the band curve at all.
-	local riderTier = PlayerProfile.getSwingTier(player)
+	local riderTier = riderTierForMultiplier
 	local tierScale = LaunchConfig.SWING_TIER_DISTANCE_SCALE[riderTier]
 	-- Also refresh the whole swing's cosmetic look here -- now purely
 	-- defensive/idempotent (see buildPlayerSwing's own SwingTier-attribute
@@ -1722,7 +1869,7 @@ local function onRelease(player: Player)
 	-- bandLuckForLandingZ can never diverge from the Z the character actually
 	-- ends up standing at.
 	local landingPosition = trajectoryPosition(startPosition, distance, archHeight, 1)
-	local luck = bandLuckForLandingZ(landingPosition.Z)
+	local luck, landingZone = bandLuckForLandingZ(landingPosition.Z)
 
 	local poseJoints = applyFlightPose(character)
 
@@ -1753,6 +1900,7 @@ local function onRelease(player: Player)
 		startTime = startTime,
 		poseJoints = poseJoints,
 		luck = luck,
+		zone = landingZone,
 		trailRig = trailRig,
 	}
 
@@ -2023,7 +2171,21 @@ RunService.Heartbeat:Connect(function()
 
 		local earnedLuck = flight.luck
 
-		if earnedLuck > 0 then
+		if flight.zone == "past" then
+			-- ===== THE CHEST LANDING. Cleared the road entirely and came down
+			-- on the giant slime's platform. No box, no box camera, no burst --
+			-- the reward here is ARRIVING somewhere, and the player walks to it.
+			--
+			-- THE ONE LANDING IN THIS GAME THAT UNFREEZES. Every other landing
+			-- leaves the character anchored with AutoRotate off, all the way
+			-- through the box and the reveal, because there is nothing to walk
+			-- to. Here there is, so the anchor comes straight back off. Both
+			-- the anchor and AutoRotate are restored on the way out (see
+			-- beginChestLanding), so the click-to-return path behaves exactly
+			-- as it does everywhere else.
+			states[player] = "chest"
+			beginChestLanding(player, character)
+		elseif earnedLuck > 0 then
 			-- Mystery box: the box's STARTING luck is the exact value already
 			-- computed at release and already shown in the landing readout
 			-- (see onRelease/bandLuckForLandingZ) -- carried forward, not
@@ -2202,3 +2364,107 @@ local function onBoxPress(player: Player)
 end
 
 boxPressRemote.OnServerEvent:Connect(onBoxPress)
+
+-- ===== THE CHEST PROMPT =====
+-- ONE chest for the whole server (built by MapBuilder alongside the landmark),
+-- gated PER PLAYER here. ProximityPrompt has no per-player enable, and it does
+-- not need one: the gate is a server-side check on the CALLING player's own
+-- pending flag, which is exactly where every other authority in this project
+-- lives. Six players can stand on the platform at once; each one's Triggered
+-- consumes only their own entitlement, and a player without one simply gets
+-- nothing when they hold the prompt.
+--
+-- WAITED FOR, NOT ASSUMED: MapBuilder and this file are both top-level server
+-- scripts with no guaranteed run order, so this yields rather than erroring if
+-- the landmark has not been built yet -- same pattern PlayerProfile uses for
+-- MapBlockout.
+task.spawn(function()
+	local landmark = Workspace:WaitForChild("GiantSlimeLandmark", 30)
+	local chest = landmark and landmark:WaitForChild("TreasureChest", 30)
+	local chestBase = chest and chest:FindFirstChild("Base")
+	local prompt = chestBase and chestBase:FindFirstChild("OpenPrompt")
+	local lid = chest and chest:FindFirstChild("Lid")
+	if not (prompt and prompt:IsA("ProximityPrompt") and lid and lid:IsA("BasePart")) then
+		warn("[LaunchServer] treasure chest never appeared -- the tier-11 platform landing will still work, but the chest cannot be opened this session.")
+		return
+	end
+
+	local lidClosedCFrame = lid.CFrame
+	local hingeZ = lid:GetAttribute("HingeZ")
+	local hingeY = lid:GetAttribute("HingeY")
+
+	-- Swings the lid up about its own back-bottom edge, so it opens AWAY from
+	-- the approaching player. Rotate-about-a-point, expressed as the standard
+	-- move-to-origin / rotate / move-back, using the hinge MapBuilder recorded
+	-- rather than re-deriving the chest's assembly here.
+	local function setLidOpen(open: boolean)
+		if not (typeof(hingeZ) == "number" and typeof(hingeY) == "number") then
+			return
+		end
+		if not open then
+			lid.CFrame = lidClosedCFrame
+			return
+		end
+		local hinge = CFrame.new(lid.Position.X, hingeY, hingeZ)
+		local toHinge = hinge:ToObjectSpace(lidClosedCFrame)
+		lid.CFrame = hinge * CFrame.Angles(-math.rad(TreasureConfig.CHEST_LID_OPEN_DEGREES), 0, 0) * toHinge
+	end
+
+	prompt.Triggered:Connect(function(player: Player)
+		-- THE GATE, and the only one needed. consumeChestPending is atomic on
+		-- the profile: it returns true exactly once per earned chest, so two
+		-- Triggered signals from the same player -- a double tap, a modified
+		-- client spamming it -- award one slime between them. Nothing about
+		-- the prompt's own state is trusted.
+		if not PlayerProfile.consumeChestPending(player) then
+			return
+		end
+
+		local slime = rollChestSlime()
+		local isNew = PlayerProfile.recordSeen(player, slime.globalIndex)
+		PlayerProfile.receiveSlime(player, slime)
+		PlayerProfile.recordChestOpened(player)
+
+		setLidOpen(true)
+		task.delay(TreasureConfig.CHEST_LID_RECLOSE_SECONDS, function()
+			-- Closes for the next visitor. CHEST_LID_RECLOSE_SECONDS, not the
+			-- abandon timeout it used to borrow -- two unrelated concerns
+			-- should not share a number. Long enough that the opener never
+			-- sees it shut in front of them; the lid is cosmetic and shared,
+			-- so a second player arriving mid-window simply finds it open.
+			setLidOpen(false)
+		end)
+
+		-- Re-freeze and hand the player to the SAME click-to-return path every
+		-- other reward uses (see onBoxPress's own reveal block): the panel goes
+		-- up, they dismiss it, onReturnToSwing takes them home. This is why the
+		-- chest landing needs no return mechanism of its own.
+		local character = player.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+		local rootPart = humanoid and humanoid.RootPart
+		if rootPart then
+			rootPart.Anchored = true
+		end
+		if humanoid then
+			humanoid.AutoRotate = false
+		end
+
+		states[player] = "grounded"
+		if player.Parent then
+			-- ORDER MATTERS: the anchor has to be on the client before the
+			-- reveal that reads it. Both are RemoteEvents to the same client,
+			-- which Roblox delivers in send order, so this is guaranteed
+			-- rather than merely likely.
+			--
+			-- The slime rises out of the chest's TOP FACE -- the lid's own
+			-- world position plus half its height, so the anchor tracks the
+			-- chest wherever MapBuilder put it. `toward` points back down the
+			-- road (+Z), the direction the player walked in from, so the
+			-- mesh's face meets them (see SlimeBuilder's MESH_FACE_AXIS).
+			local topY = lidClosedCFrame.Position.Y + lid.Size.Y / 2
+			local anchor = CFrame.new(lidClosedCFrame.Position.X, topY, lidClosedCFrame.Position.Z)
+			chestRevealRemote:FireClient(player, anchor, Vector3.new(0, 0, 1))
+			slimeRevealedRemote:FireClient(player, slime.globalIndex, isNew)
+		end
+	end)
+end)

@@ -47,6 +47,7 @@ local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local RunwayGeometry = require(ReplicatedStorage.Config.RunwayGeometry)
 local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
 local GiantSlimeConfig = require(ReplicatedStorage.Config.GiantSlimeConfig)
+local TreasureConfig = require(ReplicatedStorage.Config.TreasureConfig)
 local SlimeBuilder = require(ReplicatedStorage.SlimeBuilder)
 
 local baseplate = Workspace:WaitForChild("Baseplate") :: BasePart
@@ -341,7 +342,21 @@ do
 	local groundPatch = Instance.new("Part")
 	groundPatch.Name = "GroundPatch"
 	groundPatch.Anchored = true
-	groundPatch.CanCollide = false
+	-- WALKABLE, and this is a real behaviour change (see REPORT.md). It was
+	-- CanCollide = false because the landmark was purely decorative and
+	-- nothing could ever reach it -- the road is 2,960 studs and the longest
+	-- possible flight fell short of its far end. Tier 11 now overshoots the
+	-- road and lands ON this slab, so it has to hold a character up.
+	--
+	-- NOTHING depended on it being non-colliding -- checked, not assumed: it
+	-- sits ~3,000 studs past the last band, no spawn, path, stall, plot or
+	-- swing is within a thousand studs of it, this project has no Touched
+	-- handler anywhere, and the only physics that ever happens out here is a
+	-- tier-11 character landing. The BODY stays non-colliding (SlimeBuilder
+	-- sets CanCollide = false on all four MeshParts) -- a 1,050-stud collision
+	-- mesh would be expensive and pointless, and walking through the slime is
+	-- harmless.
+	groundPatch.CanCollide = true
 	groundPatch.Material = baseplate.Material
 	groundPatch.Color = baseplate.Color
 	groundPatch.Size = Vector3.new(groundPatchFootprint, GiantSlimeConfig.GROUND_PATCH_THICKNESS_STUDS, groundPatchFootprint)
@@ -393,5 +408,80 @@ do
 	body:PivotTo(body:GetPivot() + Vector3.new(0, slimeGroundY - minCorner.Y, 0))
 
 	body.Parent = slimeModel
+
+	-- ===== THE TREASURE CHEST, built here alongside the landmark because its
+	-- position is derived from the landmark's own geometry and from nothing
+	-- else. One chest for the whole server (see REPORT.md): six players can
+	-- stand on this platform at once, and the authority for "may THIS player
+	-- open it" lives server-side in LaunchServer's Triggered handler, keyed on
+	-- the calling player -- exactly where every other action in this project
+	-- decides things. Per-player chest instances would stack at one position
+	-- and buy nothing.
+	--
+	-- Z, DERIVED: CHEST_SETBACK_FRACTION of the CLEAR STRIP between the
+	-- platform's near edge and the body's near edge, measured back from the
+	-- body. X is the road's own centreline, the same one the landmark and
+	-- every band already use. Y rests the base on the platform surface.
+	local platformNearZ = slimeCenterZ + groundPatchFootprint / 2
+	local bodyNearZ = slimeCenterZ + GiantSlimeConfig.BODY_WIDTH_STUDS / 2
+	local clearStripDepth = platformNearZ - bodyNearZ
+	local chestZ = bodyNearZ + clearStripDepth * TreasureConfig.CHEST_SETBACK_FRACTION
+
+	local chestSize = TreasureConfig.CHEST_SIZE
+	local lidHeight = TreasureConfig.CHEST_LID_HEIGHT_STUDS
+	local baseHeight = chestSize.Y - lidHeight
+
+	local chest = Instance.new("Model")
+	chest.Name = "TreasureChest"
+
+	local chestBase = Instance.new("Part")
+	chestBase.Name = "Base"
+	chestBase.Anchored = true
+	chestBase.CanCollide = true
+	chestBase.Size = Vector3.new(chestSize.X, baseHeight, chestSize.Z)
+	chestBase.Position = Vector3.new(LaneConfig.ROAD_CENTER_X, slimeGroundY + baseHeight / 2, chestZ)
+	chestBase.Color = TreasureConfig.CHEST_COLOR
+	chestBase.Material = TreasureConfig.CHEST_MATERIAL
+	chestBase.TopSurface = Enum.SurfaceType.Smooth
+	chestBase.BottomSurface = Enum.SurfaceType.Smooth
+	chestBase.Parent = chest
+	chest.PrimaryPart = chestBase
+
+	-- The lid sits on the base. Its HINGE is the back edge (the -Z side, away
+	-- from the incoming player), so opening swings it away and never occludes
+	-- what is inside. LaunchServer rotates it about that edge on open; the
+	-- closed pose is authored here so there is one place that knows the shape.
+	local lid = Instance.new("Part")
+	lid.Name = "Lid"
+	lid.Anchored = true
+	lid.CanCollide = true
+	lid.Size = Vector3.new(chestSize.X, lidHeight, chestSize.Z)
+	lid.Position = Vector3.new(LaneConfig.ROAD_CENTER_X, slimeGroundY + baseHeight + lidHeight / 2, chestZ)
+	lid.Color = TreasureConfig.CHEST_TRIM_COLOR
+	lid.Material = TreasureConfig.CHEST_MATERIAL
+	lid.TopSurface = Enum.SurfaceType.Smooth
+	lid.BottomSurface = Enum.SurfaceType.Smooth
+	lid.Parent = chest
+
+	-- The hinge point, stored as an attribute rather than recomputed later:
+	-- the lid's own back-bottom edge, in world space. LaunchServer reads it to
+	-- swing the lid without needing to know anything about how the chest was
+	-- assembled.
+	lid:SetAttribute("HingeZ", chestZ - chestSize.Z / 2)
+	lid:SetAttribute("HingeY", slimeGroundY + baseHeight)
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "OpenPrompt"
+	prompt.ObjectText = "Treasure Chest"
+	prompt.ActionText = "Open"
+	prompt.MaxActivationDistance = TreasureConfig.CHEST_PROMPT_DISTANCE_STUDS
+	prompt.HoldDuration = TreasureConfig.CHEST_PROMPT_HOLD_SECONDS
+	-- The slime is enormous and non-colliding, and the chest stands right in
+	-- front of it -- a line-of-sight test would flicker against geometry that
+	-- cannot actually block anything.
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = chestBase
+
+	chest.Parent = slimeModel
 	slimeModel.Parent = Workspace
 end

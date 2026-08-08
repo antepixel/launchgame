@@ -35,6 +35,12 @@ local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
 local SlimeConfig = require(ReplicatedStorage.Config.SlimeConfig)
 local SlimeData = require(ReplicatedStorage.Config.SlimeData)
+local TreasureConfig = require(ReplicatedStorage.Config.TreasureConfig)
+
+-- The top tier, derived from the tier list rather than written as an 8 -- the
+-- chest reveal marks a Divine specially (see showSlimeReveal) and must keep
+-- meaning "the top tier" if that list ever grows.
+local DIVINE_TIER_INDEX = #SlimeConfig.SLIME_TIER_NAMES
 local SwingGeometry = require(ReplicatedStorage.Config.SwingGeometry)
 local RunwayGeometry = require(ReplicatedStorage.Config.RunwayGeometry)
 local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
@@ -104,6 +110,9 @@ local boxStartedRemoteMaybe = remotesFolder:WaitForChild("BoxStarted", REMOTES_W
 local boxPressRemoteMaybe = remotesFolder:WaitForChild("BoxPress", REMOTES_WAIT_TIMEOUT_SECONDS)
 local boxResultRemoteMaybe = remotesFolder:WaitForChild("BoxResult", REMOTES_WAIT_TIMEOUT_SECONDS)
 local slimeRevealedRemoteMaybe = remotesFolder:WaitForChild("SlimeRevealed", REMOTES_WAIT_TIMEOUT_SECONDS)
+-- Server -> client, chest reveals only -- arms the reveal's world anchor just
+-- before SlimeRevealed. See its own handler below.
+local chestRevealRemoteMaybe = remotesFolder:WaitForChild("ChestRevealStarted", REMOTES_WAIT_TIMEOUT_SECONDS)
 local ridingAssignedRemoteMaybe = remotesFolder:WaitForChild("RidingAssigned", REMOTES_WAIT_TIMEOUT_SECONDS)
 -- Client -> server ack -- see LaunchServer.server.luau's setupCharacter
 -- watchdog: fired once this script has made it all the way through every
@@ -136,6 +145,7 @@ if not (
 	and boxPressRemoteMaybe
 	and boxResultRemoteMaybe
 	and slimeRevealedRemoteMaybe
+	and chestRevealRemoteMaybe
 	and ridingAssignedRemoteMaybe
 	and riderReadyRemoteMaybe
 	and returnToSwingRemoteMaybe
@@ -153,6 +163,7 @@ local boxStartedRemote = boxStartedRemoteMaybe :: RemoteEvent
 local boxPressRemote = boxPressRemoteMaybe :: RemoteEvent
 local boxResultRemote = boxResultRemoteMaybe :: RemoteEvent
 local slimeRevealedRemote = slimeRevealedRemoteMaybe :: RemoteEvent
+local chestRevealRemote = chestRevealRemoteMaybe :: RemoteEvent
 local ridingAssignedRemote = ridingAssignedRemoteMaybe :: RemoteEvent
 local riderReadyRemote = riderReadyRemoteMaybe :: RemoteEvent
 local returnToSwingRemote = returnToSwingRemoteMaybe :: RemoteEvent
@@ -1404,6 +1415,26 @@ end
 -- suppressed HUDs. That single release point is what stops a slime being left
 -- standing on the road -- the same class of bug as a camera left Scriptable,
 -- and given the same fix.
+-- ===== THE REVEAL ANCHOR (see REPORT.md). showSlimeReveal used to derive its
+-- rest pose directly from boxRestCFrame, which is written ONLY by
+-- showWorldBox. A chest landing never creates a box, so that value still held
+-- either CFrame.identity or the player's PREVIOUS box landing -- and the
+-- reveal slime was built, labelled and parented into Workspace hundreds to
+-- thousands of studs away, which is why nothing appeared.
+--
+-- nil means "use the box's rest pose", which is every landing except a chest.
+-- The box path therefore reads exactly the expression it always did (see
+-- showSlimeReveal) and is bit-identical. Set by the ChestRevealStarted
+-- handler, cleared in endRewardScene -- the same single acquire / single
+-- release the camera and character hiding already use.
+local revealAnchorCFrame: CFrame? = nil
+local revealAnchorToward: Vector3? = nil
+-- Per-reveal overrides, also nil on the box path. Held rather than passed as
+-- arguments because updateSlimeReveal runs every frame from the render loop
+-- and has no call site to thread them through.
+local revealRiseStuds = 0
+local revealEntranceSeconds = 0
+
 local slimeRevealModel: Model? = nil
 -- Where it hovers, and the scale SlimeBuilder gave it -- held here because the
 -- entrance animates both and needs somewhere exact to animate TO. Rotation is
@@ -1462,6 +1493,12 @@ local function endRewardScene()
 	-- dismissRevealAndReturn re-arms it immediately after calling this, which is
 	-- the only path that should.
 	returnPendingCameraSettle = false
+	-- Cleared HERE and nowhere else, alongside everything else the reward
+	-- scene takes over. A chest anchor left set would make the NEXT box
+	-- landing's reveal appear at the chest -- the exact mirror of the bug this
+	-- fixes -- so it is released on the same single path the camera is.
+	revealAnchorCFrame = nil
+	revealAnchorToward = nil
 	destroyWorldBox()
 	destroySlimeReveal()
 	releaseBoxCamera()
@@ -1753,14 +1790,33 @@ end
 local function showSlimeReveal(slime: SlimeData.Slime, isNew: boolean)
 	destroySlimeReveal()
 
-	local model = SlimeBuilder.build(slime.color, SlimeConfig.SLIME_REVEAL_WIDTH_STUDS)
+	local model = SlimeBuilder.build(
+		slime.color,
+		if revealAnchorCFrame then TreasureConfig.CHEST_REVEAL_WIDTH_STUDS else SlimeConfig.SLIME_REVEAL_WIDTH_STUDS
+	)
 	-- Captured because the entrance animates scale and Model:ScaleTo takes an
 	-- ABSOLUTE scale -- animating it means multiplying THIS, not stacking a
 	-- second ScaleTo on top of the one build() already applied.
 	slimeRevealBuiltScale = model:GetScale()
 
-	local centre = boxRestCFrame.Position
-	slimeRevealRestCFrame = CFrame.lookAt(centre, centre + boxRestTowardPlayer)
+	-- THE ONE LINE THE CHEST FIX TURNS ON. With no anchor set -- every landing
+	-- except a chest -- these are literally boxRestCFrame.Position and
+	-- boxRestTowardPlayer, the same two values this used to read directly, so
+	-- the box path computes the identical CFrame.lookAt it always has.
+	local centre = if revealAnchorCFrame then revealAnchorCFrame.Position else boxRestCFrame.Position
+	local toward = revealAnchorToward or boxRestTowardPlayer
+	if revealAnchorCFrame then
+		-- Chest only: lift off the chest's top face, higher again for a Divine,
+		-- and slow its entrance. Done HERE rather than in the remote handler
+		-- because the tier is not known until the reveal itself arrives.
+		local lift = TreasureConfig.CHEST_REVEAL_HEIGHT_STUDS
+		if slime.tier == DIVINE_TIER_INDEX then
+			lift += TreasureConfig.CHEST_REVEAL_DIVINE_EXTRA_HEIGHT_STUDS
+			revealEntranceSeconds = TreasureConfig.CHEST_REVEAL_DIVINE_ENTRANCE_SECONDS
+		end
+		centre += Vector3.new(0, lift, 0)
+	end
+	slimeRevealRestCFrame = CFrame.lookAt(centre, centre + toward)
 
 	-- The name/tier/NEW readout, on the slime rather than in a panel -- same
 	-- shape and reasoning as the box's own luck billboard it replaces:
@@ -1836,6 +1892,12 @@ local function showSlimeReveal(slime: SlimeData.Slime, isNew: boolean)
 	-- half-built. The first frame's placement is written here too so it never
 	-- appears for one frame at the template's own origin.
 	slimeRevealStartClock = os.clock()
+	-- Defaulted to the box's own constants whenever no chest reveal armed
+	-- them, so the box path's rise and entrance duration are unchanged.
+	if not revealAnchorCFrame then
+		revealRiseStuds = SlimeConfig.SLIME_REVEAL_RISE_STUDS
+		revealEntranceSeconds = SlimeConfig.SLIME_REVEAL_ENTRANCE_SECONDS
+	end
 	slimeRevealModel = model
 	model:ScaleTo(slimeRevealBuiltScale * 0.001)
 	-- THE HOVER POSE, not slimeRevealRestCFrame. The hover's spin runs off the
@@ -1846,7 +1908,22 @@ local function showSlimeReveal(slime: SlimeData.Slime, isNew: boolean)
 	-- over to the hover. Starting from the hover instead means the two are the
 	-- same pose at every u, including u = 0 and u = 1, so there is nothing to
 	-- snap between. See updateSlimeReveal, which applies the rise the same way.
-	model:PivotTo(entranceCFrame(SlimeConfig.SLIME_REVEAL_RISE_STUDS))
+	model:PivotTo(entranceCFrame(revealRiseStuds))
+
+	-- DIVINE: a light in the slime's own tier colour, parented to the MODEL so
+	-- it is destroyed by destroySlimeReveal along with everything else -- no
+	-- second registry, no separate teardown path. Chest reveals only; the box
+	-- sequence is untouched.
+	if revealAnchorCFrame and slime.tier == DIVINE_TIER_INDEX then
+		local light = Instance.new("PointLight")
+		light.Name = "DivineGlow"
+		light.Color = slime.tierColor
+		light.Range = TreasureConfig.CHEST_REVEAL_DIVINE_LIGHT_RANGE_STUDS
+		light.Brightness = TreasureConfig.CHEST_REVEAL_DIVINE_LIGHT_BRIGHTNESS
+		light.Shadows = false
+		light.Parent = model.PrimaryPart
+	end
+
 	model.Parent = Workspace
 end
 
@@ -1878,7 +1955,7 @@ local function updateSlimeReveal()
 		return
 	end
 
-	local duration = SlimeConfig.SLIME_REVEAL_ENTRANCE_SECONDS
+	local duration = revealEntranceSeconds
 	local elapsed = os.clock() - slimeRevealStartClock
 	local u = if duration > 0 then math.clamp(elapsed / duration, 0, 1) else 1
 
@@ -1887,7 +1964,7 @@ local function updateSlimeReveal()
 		-- Never exactly zero: Model:ScaleTo rejects a scale of 0, and a model
 		-- scaled to nothing has no meaningful pivot to grow back out of.
 		model:ScaleTo(slimeRevealBuiltScale * math.max(eased, 0.001))
-		model:PivotTo(entranceCFrame(SlimeConfig.SLIME_REVEAL_RISE_STUDS * (1 - eased)))
+		model:PivotTo(entranceCFrame(revealRiseStuds * (1 - eased)))
 		return
 	end
 
@@ -2755,6 +2832,25 @@ end)
 -- THE SLIME HAS NO TIMER. It stands there for as long as the player wants to
 -- look at it, and ONE primary click or tap dismisses it AND returns them, in
 -- the same action -- see dismissRevealAndReturn.
+-- ChestRevealStarted: arrives immediately BEFORE SlimeRevealed, and only for a
+-- treasure chest. All it does is arm the anchor the reveal is about to read --
+-- there is no camera take, no character hiding and no HUD suppression here,
+-- deliberately: the player walked to this chest and is standing in control,
+-- and taking any of that away at the moment they arrive would undo the one
+-- thing that makes this reward different from the box (see REPORT.md).
+--
+-- Everything armed here is released in endRewardScene, the same single point
+-- that already releases the box, the camera and the character.
+chestRevealRemote.OnClientEvent:Connect(function(anchor: CFrame, toward: Vector3)
+	revealAnchorCFrame = anchor
+	revealAnchorToward = toward
+	-- Its own rise and duration, and a Divine gets longer still. The rest pose
+	-- itself is lifted CHEST_REVEAL_HEIGHT_STUDS above the chest's top face so
+	-- the slime clears the open lid and reads against the sky.
+	revealRiseStuds = TreasureConfig.CHEST_REVEAL_RISE_STUDS
+	revealEntranceSeconds = TreasureConfig.CHEST_REVEAL_ENTRANCE_SECONDS
+end)
+
 slimeRevealedRemote.OnClientEvent:Connect(function(globalIndex: number, isNew: boolean)
 	local slime = SlimeData.SLIMES[globalIndex]
 	if not slime then

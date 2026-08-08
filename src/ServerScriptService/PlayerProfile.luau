@@ -67,6 +67,21 @@ type Profile = {
 	-- Replaces the old server-wide, hand-edited LaunchConfig.
 	-- ACTIVE_SWING_TIER -- see the written report.
 	swingTier: number,
+	-- ===== TREASURE (see TreasureConfig.luau and REPORT.md) =====
+	-- How many chests this player has ever opened. A COUNT, not a boolean, and
+	-- the crown on their entrance sign renders off `>= 1`. A boolean would have
+	-- matched the requirement exactly ("permanently marks the player"), but a
+	-- count costs the same bytes, is not lossy, and answers "how many" later
+	-- without a save migration -- and the one thing a boolean buys, that you
+	-- cannot accidentally draw three crowns, is better handled by the renderer
+	-- only ever asking `>= 1`.
+	chestsOpened: number,
+	-- An EARNED-BUT-UNOPENED chest. Persisted deliberately: session state is
+	-- wiped by death, disconnect and respawn, and losing a 20%-Divine reward to
+	-- a network blip would be the worst failure this feature could have. The
+	-- player cannot walk back to the platform from their base, so this is not
+	-- free money -- it just survives bad luck with the network.
+	chestPending: boolean,
 	-- false means "this session's load did not succeed" (see PlayerStore.
 	-- load) -- while false, NOTHING here is ever saved, for this player, for
 	-- the rest of this session. That's the only way to protect a real save
@@ -522,6 +537,12 @@ local function syncClientState(profile: Profile)
 		end
 	end
 	profile.baseFolder:SetAttribute("Inventory", HttpService:JSONEncode(inventoryEntries))
+
+	-- Replicated the same way Money/SwingTier already are -- a plain attribute
+	-- on this player's own base folder. Nothing on the client reads it yet;
+	-- it is here so a future HUD or the sign's own client-side rendering does
+	-- not need a new remote.
+	profile.baseFolder:SetAttribute("ChestsOpened", profile.chestsOpened)
 end
 
 -- ===== Save-shape adapters: the ONLY place that translates between the
@@ -529,6 +550,17 @@ end
 -- the plain, DataStore-safe table PlayerStore reads/writes (a dense array
 -- with a 0 sentinel for an empty slot, since DataStore arrays can't hold
 -- holes reliably) -- see PlayerStore.luau. =====
+-- Shows or hides the crown on this player's own entrance sign. Rendered off
+-- `chestsOpened >= 1` -- a count stored, a boolean drawn (see the Profile
+-- type). Silently does nothing if the sign is missing, which is the load-order
+-- case below, not an error.
+local function refreshSignCrown(profile: Profile)
+	local sign = profile.baseFolder:FindFirstChild("EntranceSign")
+	if sign and sign:IsA("Model") then
+		SignBuilder.setCrown(sign, profile.chestsOpened >= 1)
+	end
+end
+
 local function toSaveShape(profile: Profile): { [string]: any }
 	local slotsOut = table.create(BaseConfig.SLOT_COUNT, 0)
 	local levelsOut = table.create(BaseConfig.SLOT_COUNT, 1)
@@ -557,6 +589,8 @@ local function toSaveShape(profile: Profile): { [string]: any }
 		seen = seenOut,
 		swingTier = profile.swingTier,
 		inventory = inventoryOut,
+		chestsOpened = profile.chestsOpened,
+		chestPending = profile.chestPending,
 	}
 end
 
@@ -592,6 +626,17 @@ local function applyLoadedData(profile: Profile, data: { [string]: any }?)
 	if typeof(data.swingTier) == "number" then
 		local tierCount = #LaunchConfig.SWING_TIER_DISTANCE_SCALE
 		profile.swingTier = math.clamp(math.floor(data.swingTier), 1, tierCount)
+	end
+	-- Absent on every save written before this feature existed, which reads as
+	-- 0/false -- no migration needed, same as `levels` was for a pre-leveling
+	-- save. Floored and clamped for the same reason swingTier is: a
+	-- hand-edited value must not be able to produce a fractional or negative
+	-- crown count.
+	if typeof(data.chestsOpened) == "number" then
+		profile.chestsOpened = math.max(0, math.floor(data.chestsOpened))
+	end
+	if typeof(data.chestPending) == "boolean" then
+		profile.chestPending = data.chestPending
 	end
 	local seen = data.seen
 	if typeof(seen) == "table" then
@@ -654,6 +699,8 @@ local function onPlayerAdded(player: Player)
 		seen = {},
 		levels = {},
 		swingTier = 1,
+		chestsOpened = 0,
+		chestPending = false,
 		canSave = false,
 	}
 	profiles[player] = profile
@@ -685,6 +732,13 @@ local function onPlayerAdded(player: Player)
 
 		applyLoadedData(profile, data)
 		profile.canSave = true
+		-- THE CROWN, applied HERE and not at build time. buildBaseFolder
+		-- already ran (it is what created baseFolder for this profile), and it
+		-- ran before this DataStore read resolved -- so the sign exists but
+		-- nothing knew yet whether this player had ever opened a chest. That
+		-- load order is the whole reason SignBuilder exposes setCrown instead
+		-- of taking a hasCrown build argument.
+		refreshSignCrown(profile)
 		baseFolder:SetAttribute("Money", profile.money)
 		baseFolder:SetAttribute("SwingTier", profile.swingTier)
 		for i = 1, BaseConfig.SLOT_COUNT do
@@ -731,6 +785,45 @@ Players.PlayerRemoving:Connect(onPlayerRemoving)
 -- Records a reveal and reports whether it was new -- same contract
 -- SlimeCollection.recordSeen used to have, just scoped through this
 -- player's own profile instead of a server-wide table.
+-- ===== Treasure chest state (see TreasureConfig.luau and REPORT.md) =====
+
+-- Records that this player has EARNED a chest by landing on the platform.
+-- Idempotent: a second platform landing before the first is opened does not
+-- stack. Chests are not a currency.
+function PlayerProfile.markChestPending(player: Player)
+	local profile = profiles[player]
+	if profile then
+		profile.chestPending = true
+	end
+end
+
+-- Claims the pending chest, ATOMICALLY: returns true exactly once per earned
+-- chest and false every other time. This is the whole gate on the shared
+-- chest's ProximityPrompt -- two Triggered signals from the same player (a
+-- double tap, a modified client spamming it) award one slime between them,
+-- because the second call finds the flag already cleared.
+function PlayerProfile.consumeChestPending(player: Player): boolean
+	local profile = profiles[player]
+	if not (profile and profile.chestPending) then
+		return false
+	end
+	profile.chestPending = false
+	return true
+end
+
+-- Permanent once earned -- nothing ever decrements this. Refreshes the crown
+-- on this player's own entrance sign immediately, so the mark appears the
+-- moment it is earned rather than on next join.
+function PlayerProfile.recordChestOpened(player: Player)
+	local profile = profiles[player]
+	if not profile then
+		return
+	end
+	profile.chestsOpened += 1
+	refreshSignCrown(profile)
+	syncClientState(profile)
+end
+
 function PlayerProfile.recordSeen(player: Player, globalIndex: number): boolean
 	local profile = profiles[player]
 	if not profile then

@@ -422,10 +422,17 @@ local Instance = {
 }
 
 --============================= game / services =============================--
+-- MUST MATCH default.project.json's Workspace.Baseplate EXACTLY. This used to
+-- be a placeholder (200,-2,0)/(500,4,120), which gave RunwayGeometry a
+-- RUNWAY_START_Z of -60 against the real -4.26 -- every shim-based geometry
+-- analysis that read RunwayGeometry was silently off by 55.74 studs in Z.
+-- Nothing about the economy work depended on it (none of it read
+-- RUNWAY_START_Z), but the tier-11 landing derivation did, and got the wrong
+-- answer the first time because of it.
 local baseplate = newInstance("Part")
 baseplate.Anchored = true
-baseplate.Position = v3(200, -2, 0)
-baseplate.Size = v3(500, 4, 120)
+baseplate.Position = v3(0, -2, 120.74)
+baseplate.Size = v3(480, 4, 250)
 
 local Workspace = newInstance("Folder")
 Workspace.Name = "Workspace"
