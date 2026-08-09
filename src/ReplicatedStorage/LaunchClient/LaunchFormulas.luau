@@ -107,7 +107,35 @@ local function repositionChainSide(links: { Instance }, topPoint: Vector3, seatT
 					link.Size = Vector3.new(length, link.Size.Y, link.Size.Z)
 				else
 					local yAxis = delta.Unit
-					local reference = if math.abs(yAxis.Y) > 0.9 then Vector3.new(1, 0, 0) else Vector3.new(0, 1, 0)
+					-- BUG FIX (chain links flipping thick/thin, see REPORT.md).
+					-- This used to pick the reference the same way the Cylinder
+					-- branch above still does:
+					--   if math.abs(yAxis.Y) > 0.9 then (1,0,0) else (0,1,0)
+					-- For a CYLINDER that is harmless -- it is radially symmetric
+					-- about its length axis, so which perpendicular you pick can
+					-- never be seen. For "Chain" style it is a visible bug: those
+					-- links are BLOCKS with a 2:1 cross-section (chainThickness by
+					-- chainThickness*0.5), so the reference decides which face is
+					-- presented to the camera. The chain hangs at the swing's own
+					-- theta, |cos(theta)| crosses 0.9 at theta = 25.84 degrees, and
+					-- the swing travels +-35 -- so the branch flipped four times a
+					-- cycle and took EVERY link's apparent thickness with it,
+					-- inverting the whole alternating pattern mid-swing. Which
+					-- thickness sat at the top was therefore a function of the
+					-- swing's current angle, not of the link's index.
+					--
+					-- (1,0,0) UNCONDITIONALLY is correct here, not a workaround:
+					-- each side's chain runs from an anchor at X = +-seatHalfWidth
+					-- to a seat attachment at the SAME X, so delta.X is exactly
+					-- zero and the chain direction always lies in the YZ plane.
+					-- World X is the swing-plane normal -- perpendicular to yAxis
+					-- by construction at every theta, so it can never go
+					-- degenerate, and it is continuous where the old branch was
+					-- not. It is also the exact branch SwingBuilder's own
+					-- cframeFacingAlongY takes when it builds these links at the
+					-- theta=0 reference pose, so the first repositioned frame now
+					-- matches the built pose instead of popping.
+					local reference = Vector3.new(1, 0, 0)
 					local xAxis = reference:Cross(yAxis).Unit
 					local cf = CFrame.fromMatrix((segStart + segEnd) / 2, xAxis, yAxis)
 					if link:GetAttribute("Twist90") then

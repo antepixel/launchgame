@@ -1,236 +1,261 @@
-# Arc raised 25%: k 3.85 → 4.8125
+# Chain links flipping thick/thin: the alternation was a function of the swing's angle
 
-One constant, one file. **`ARC_HEIGHT_SQRT_COEFFICIENT = 4.8125`**, exactly.
+**Your diagnosis was close but not right.** The alternation *is* already a pure function of link index,
+the link count *is* a fixed per-tier integer, and `repositionChainSide` *does* only move links. All
+three of the things you suspected check out clean.
 
-**Your expected shape is exact** — 68.1 / 206.4 / 266.7 against your 68 / 206 / 267. §2.
+**The actual bug is one line**, `LaunchFormulas.repositionChainSide`, in the orientation basis rather
+than in the alternation. The links are not two thicknesses — they are one 2:1 block, and every other
+one is rotated 90°. Which *face* that presents to the camera depends on a reference vector that was
+picked by a threshold on the chain's current tilt:
 
-**Distance is untouched and the release framing is byte-identical** — the pullback formula contains
-no arch term, and the sky table's u = 0 column comes out the same to the digit. §5, §7.
+```lua
+local reference = if math.abs(yAxis.Y) > 0.9 then Vector3.new(1, 0, 0) else Vector3.new(0, 1, 0)
+```
 
-**What it costs: scenery goes from worth 32 points of frame to 29.** Bare-map mid-flight gives back
-2 points (84% → 86%). Cheap for a 25% bigger arc. §4.
+`|cos θ| = 0.9` is **θ = 25.84°**, and the swing travels **±35°**. So the branch flips four times a
+cycle, and takes every link's apparent thickness with it — inverting the whole pattern, top included.
+The swing spends **45% of each cycle** on the far side of that threshold, which is why two screenshots
+disagree about half the time.
 
-**The pose clamp comes back at tiers 4 and 5.** It bound at tiers 1–3 before; the binding band widens
-from ≤1,040 studs of distance to ≤1,654. §6.
+**Fixed by pinning the reference to `(1, 0, 0)`**, the swing-plane normal. One line. §5.
 
-**The launch angle you asked to watch** now runs 53.0° at tier 1 down to 18.8° at tier 11 — the same
-3.9× spread, lifted. Tier 1 is back to almost exactly its original steepness. §3.
+**Worth pinning? Yes, easily** — the fix is a constant replacing a conditional, strictly *less* code
+than what was there. Flattening every link to one thickness would have been the bigger change. §7.
 
 ---
 
-## 1. The value, derived
+## a) Where the links are built, and how thickness is decided
 
-```
-current shipped k                     3.85
-target: arch 25% above current        3.85 * 1.25 = 4.8125   <- exact, no rounding
-```
-
-**Arch is linear in k**, so multiplying k by 1.25 multiplies the arch by exactly 1.25 at every tier —
-verified at 1.2500 to four places at tiers 1, 6 and 11. This is a uniform lift of the whole curve,
-not a reshaping: the 3.9× spread between the ends is unchanged.
-
-**I used 4.8125, not 4.8082.** Re-deriving from a scaled mid-ladder target (165 × 1.25 = 206.25, over
-√1840) gives 4.808228. The two differ because the shipped 3.85 was itself rounded *up* from 3.846582.
-The brief said "25% above current", and current means the value actually in the file — so the
-multiply is the honest reading, and it is the one that makes the ratio exactly 1.25 rather than
-1.2494. The difference is 0.6 studs of arch at tier 11.
-
-Your 4.81 would have given 1.2494× — a 0.06% shortfall, invisible, but there was no reason to accept
-it when the exact value is a terminating decimal.
-
-## 2. Arch, apex and launch angle, every tier
-
-| tier | dist | OLD arch | OLD apex | OLD angle | **NEW arch** | **NEW apex** | **NEW angle** | apex Δ |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 200 | 54.4 | 57.9 | 46.5° | **68.1** | **71.5** | **53.0°** | +23.5% |
-| 2 | 600 | 94.3 | 98.0 | 31.6° | **117.9** | **121.6** | **37.7°** | +24.0% |
-| 3 | 880 | 114.2 | 118.3 | 27.0° | **142.8** | **146.9** | **32.6°** | +24.1% |
-| 4 | 1280 | 137.7 | 142.5 | 22.9° | **172.2** | **176.9** | **28.0°** | +24.2% |
-| 5 | 1640 | 155.9 | 161.2 | 20.5° | **194.9** | **200.1** | **25.1°** | +24.2% |
-| 6 | 1840 | 165.1 | 171.0 | 19.4° | **206.4** | **212.3** | **23.9°** | +24.1% |
-| 7 | 2160 | 178.9 | 185.5 | 18.0° | **223.7** | **230.2** | **22.2°** | +24.1% |
-| 8 | 2320 | 185.4 | 192.6 | 17.4° | **231.8** | **239.0** | **21.5°** | +24.1% |
-| 9 | 2520 | 193.3 | 201.1 | 16.7° | **241.6** | **249.4** | **20.7°** | +24.0% |
-| 10 | 2760 | 202.3 | 210.9 | 16.0° | **252.8** | **261.5** | **19.8°** | +24.0% |
-| 11 | 3071 | 213.4 | 223.1 | 15.2° | **266.7** | **276.4** | **18.8°** | +23.9% |
-
-**Arch is up exactly 25.00% everywhere; apex is up 23.5–24.2%.** Not a discrepancy — apex is the
-arch term *plus* the start-height descent term, and only the arch part scales with k. The gap is
-largest at tier 1, where the 6.8-stud start height is the biggest share of the total.
-
-### Where the launch angle lands
-
-This is the character measure worth watching, since √ scaling made it vary by tier. Against all
-three arcs the game has had:
-
-| tier | 1 | 3 | 6 | 8 | 11 | spread |
-|---|---:|---:|---:|---:|---:|---|
-| original (0.35 linear) | 53.8° | 54.3° | 54.3° | 54.3° | 54.3° | flat |
-| k = 3.85 | 46.5° | 27.0° | 19.4° | 17.4° | 15.2° | 3.1× |
-| **k = 4.8125** | **53.0°** | **32.6°** | **23.9°** | **21.5°** | **18.8°** | **2.8×** |
-
-**Tier 1 is back to essentially its original steepness** — 53.0° against the old 53.8°, a 0.8°
-difference. So the lift lands almost entirely where you'd want it: the bottom of the ladder is
-restored to the lob it always was, and the top comes up from 15.2° to 18.8° without returning to the
-flat 54° that put every flight 650 studs in the sky.
-
-The tiers that still read flattest are 9–11 at 18.8–20.7°. That is a line drive rather than a lob,
-and it is inherent to √ scaling — only a different exponent narrows the spread.
-
-## 3. How far ahead the ground enters frame
-
-`apex / tan(35°)`, against all three arcs:
-
-| tier | dist | original | k = 3.85 | **k = 4.8125** |
-|---:|---:|---:|---:|---:|
-| 1 | 200 | 105 | 83 | **102** |
-| 2 | 600 | 305 | 140 | **174** |
-| 3 | 880 | 446 | 169 | **210** |
-| 4 | 1280 | 647 | 204 | **253** |
-| 5 | 1640 | 827 | 230 | **286** |
-| 6 | 1840 | **928** | **244** | **303** |
-| 7 | 2160 | 1089 | 265 | **329** |
-| 8 | 2320 | 1170 | 275 | **341** |
-| 9 | 2520 | 1271 | 287 | **356** |
-| 10 | 2760 | 1392 | 301 | **373** |
-| 11 | 3071 | 1549 | 319 | **395** |
-
-At tier 6: 928 → 244 → **303**. Still 16% of the flight's length rather than the 50% the original arc
-cost, so the ground is in frame from early in the flight — just not quite as early as at k = 3.85.
-
-## 4. Sky fraction — what the lift costs
-
-Camera unchanged (pullback 200.3 at tier 6 — it does not read arch, §7). Same method, same points,
-lane 0 / lane 3.
-
-### Bare map
-
-| level camera | u=0 | u=.25 | u=.5 | u=.75 | u=1 |
-|---|---|---|---|---|---|
-| k = 3.85 (arch 165.1) | 41/41 | 84/84 | 86/86 | 80/80 | 48/41 |
-| **k = 4.8125 (arch 206.4)** | 41/41 | **86/86** | **88/88** | **83/83** | 48/41 |
-
-| 35° down camera | u=0 | u=.25 | u=.5 | u=.75 | u=1 |
-|---|---|---|---|---|---|
-| k = 3.85 | 40/37 | 76/76 | 78/78 | 74/74 | 57/49 |
-| **k = 4.8125** | 40/37 | **78/78** | **80/80** | **76/76** | 57/49 |
-
-### With the hypothetical flanking scenery
-
-(Same sensitivity test as before — 100 studs tall, X ±130 to ±320, road's full length. Not a
-proposal.)
-
-| level camera | u=0 | u=.25 | u=.5 | u=.75 | u=1 |
-|---|---|---|---|---|---|
-| k = 3.85 | 28/25 | 52/52 | 57/56 | 49/49 | 14/11 |
-| **k = 4.8125** | 28/25 | **57/56** | **63/61** | **54/53** | 14/11 |
-
-| 35° down camera | u=0 | u=.25 | u=.5 | u=.75 | u=1 |
-|---|---|---|---|---|---|
-| k = 3.85 | 11/6 | 29/26 | 35/32 | 27/24 | 5/6 |
-| **k = 4.8125** | 11/6 | **34/31** | **42/38** | **32/29** | 5/6 |
-
-### What scenery is worth, at each arc
-
-At u = 0.25, level camera:
-
-| arc | bare | with scenery | **scenery is worth** |
-|---|---:|---:|---:|
-| original (0.35 linear) | 94% | 86% | 8 points |
-| k = 3.85 | 84% | 52% | **32 points** |
-| **k = 4.8125** | **86%** | **57%** | **29 points** |
-
-On the 35°-down camera: 19 → 47 → **44** points.
-
-**The cost of the 25% lift is 3 points of scenery value and 2 points of bare-map sky.** The change
-gives back a small fraction of what flattening bought, and keeps the great majority of it — 29 of the
-32 points. Nothing about the enabling result changes.
-
-## 5. Horizontal distance at u = 1 — confirmed
-
-Both trajectory copies are untouched by this pass:
+`SwingBuilder.luau:538-565`, inside `buildChainSide`, run once per side:
 
 ```lua
-local z = startPosition.Z - distance * u              -- no arch term
-local heightOffset = archHeight * 4 * u * (1 - u)     -- exactly 0 at u = 0 and u = 1
-```
-
-Landing Z per tier, identical to the last four surveys:
-
-| tier | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| landing Z | −175.74 | −576.42 | −857.34 | −1258.89 | −1620.04 | −1821.47 | −2143.19 | −2304.63 | −2506.06 | −2748.07 | −3061.69 |
-
-And observed rather than argued: **the u = 0 and u = 1 columns of every sky table above are
-bit-identical between the two arcs.** They can only be, if the arch term really is zero at both
-endpoints.
-
-Duration is also unchanged (distance only): 1.80 s at tier 1 through 7.05 s at tier 11.
-
-## 6. The pose clamp binds again at tiers 4 and 5
-
-`trajectoryPitch` clamps to ±25°.
-
-| tier | 1 | 2 | 3 | **4** | **5** | 6 | 7 | 8 | 9 | 10 | 11 |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| raw release angle | 53.0° | 37.7° | 32.6° | **28.0°** | **25.1°** | 23.9° | 22.2° | 21.5° | 20.7° | 19.8° | 18.8° |
-| k = 3.85 — binds? | YES | YES | YES | no | no | no | no | no | no | no | no |
-| **k = 4.8125 — binds?** | **YES** | **YES** | **YES** | **YES** | **YES** | no | no | no | no | no | no |
-
-**The binding band widens from distance ≤ 1,040 studs to ≤ 1,654 studs** (solving
-`4k√d − startY = d·tan 25°`). Tiers 4 and 5 cross back over; **tier 5 is marginal at 25.1°**, one
-tenth of a degree inside the clamp, so it will visually read as clamped but is effectively right on
-the line.
-
-The shape is the same as before and still the inverse of the linear case: arch grows as √d while the
-clamp threshold grows as d, so short flights slam into the clamp and long ones do not reach it. Tiers
-6–11 still release at their true angle (18.8–23.9°) rather than a clipped 25°.
-
-## 7. The release framing is identical — confirmed
-
-```lua
-local function releaseCameraPullback(startPositionZ: number, distance: number): number
-	local requested = LaunchConfig.CAMERA_BEHIND_DISTANCE + distance * LaunchConfig.CAMERA_PULLBACK_FACTOR
-	local standZ = (BaseConfig.BASE_BACK_EDGE_Z + RunwayGeometry.MAP_BACK_EDGE_Z) / 2
-	return math.min(requested, standZ - startPositionZ)
+local topPoint = anchor.Position
+local count = math.max(1, visual.chainLinkCount)
+local chainThickness = if visual.chainStyle == "Rod" then postThickness * 0.35 else postThickness * 0.22
+for i = 1, count do
+	local segStart = topPoint:Lerp(seatTopPoint, (i - 1) / count)
+	local segEnd = topPoint:Lerp(seatTopPoint, i / count)
+	local link: Part
+	local twisted = visual.chainStyle == "Chain" and i % 2 == 0
+	if visual.chainStyle == "Chain" then
+		local cf, length = cframeAlongY(segStart, segEnd)
+		if twisted then
+			cf = cf * CFrame.Angles(0, math.rad(90), 0)
+		end
+		link = newPart(Enum.PartType.Block, Vector3.new(chainThickness, length, chainThickness * 0.5), cf, ...)
+	else
+		link = newRod(segStart, segEnd, chainThickness, Enum.PartType.Cylinder, ...)
+	end
+	link:SetAttribute("ChainIndex", i)
+	link:SetAttribute("Side", sideName)
+	link:SetAttribute("Twist90", twisted)
 end
 ```
 
-**No arch term appears anywhere in it.** Pullback per tier is unchanged: 88.0 at tier 1, then 195.3
-→ 209.5 for tiers 2–11, all pinned to the map's back edge at Z 218.87.
+**There is no thickness alternation at all.** Every link on a tier is built at the *same* size,
+`Vector3.new(chainThickness, length, chainThickness * 0.5)` — a block with a **2:1 cross-section**,
+wide on local X, narrow on local Z. What alternates is a **90° rotation about the link's own long
+axis** (`CFrame.Angles(0, math.rad(90), 0)`), applied when `twisted` is true.
 
-Empirically: the u = 0 sky column is **41/41 and 40/37 in both rows of every table** — identical,
-because both the camera and the arch term are the same at that instant. This is exactly the property
-the camera fix was made for, and it is now observed twice over.
+So "thick" and "thin" are the *same part* seen edge-on or face-on. That distinction is the whole bug:
+a rotation's appearance depends on the frame it is measured in, and a size's does not.
 
-## 8. Files changed
+**`twisted` is decided by `i % 2 == 0` — a pure parity check on the loop index.** Not position, not
+height, not a rounded value. That part is exactly what you asked for and it was already correct.
 
-| file | change |
-|---|---|
-| `Config/LaunchConfig.luau` | `ARC_HEIGHT_SQRT_COEFFICIENT` 3.85 → **4.8125**, and the derivation comment updated to record the multiply and why it is not 4.8082 |
+## b) What the alternation is actually a function of
 
-**Nothing else.** No code path changed — `LaunchServer:1888` still reads
-`ARC_HEIGHT_SQRT_COEFFICIENT * math.sqrt(distance)`. Distance, the camera pullback, snap thresholds,
-ping compensation, the luck distribution, the chest and reveal, road geometry, the platform, the
-landmark, the builders, the module boundaries, the six-lane block, the spawn flow, the dev panel
-gates and the `resetReadyRemote` path are all untouched.
+Two separate things, and only the first is index-driven:
 
-Both files parse; `rojo build` succeeds.
+| | driven by | stable? |
+|---|---|---|
+| **which links are twisted** (the parity) | `i % 2` — pure index | ✅ yes, always was |
+| **what "twisted" looks like** (the basis it rotates in) | the chain's **current tilt** | ❌ **this is the bug** |
 
-## 9. What needs eyes in Studio
+The parity is applied relative to a basis recomputed every frame in
+`LaunchFormulas.repositionChainSide`:
 
-- **Tiers 4 and 5 are back on the pose clamp**, and tier 5 by 0.1°. If the tilt reads
-  inconsistently between tier 5 (clamped) and tier 6 (23.9°, not clamped), the clamp itself —
-  `MAX_FLIGHT_PITCH`, 25° — is the constant, not k.
-- **Tier 1 at 53.0° is within a degree of the original 53.8°.** If tier 1 was already the tier that
-  felt right, it now feels the same again, which is either the confirmation or the sign that the lift
-  went too far at the bottom.
-- **Bare-map mid-flight is 86%.** As before, judging this arc against the current empty map measures
-  the wrong thing — the 29-point scenery figure is the one that matters.
+```lua
+local yAxis = delta.Unit
+local reference = if math.abs(yAxis.Y) > 0.9 then Vector3.new(1, 0, 0) else Vector3.new(0, 1, 0)
+local xAxis = reference:Cross(yAxis).Unit
+```
+
+`delta` is anchor → seat, so `yAxis.Y = -cos θ` where θ is the swing's angle. Working the cross
+products through, the block's **wide** local-X axis lands on:
+
+| swing angle | `\|yAxis.Y\|` | reference chosen | wide axis points along | untwisted link reads |
+|---|---|---|---|---|
+| θ = 0° (rest) | 1.00 | `(1,0,0)` | world −Z (into the view) | **narrow** |
+| θ = 25° | 0.906 | `(1,0,0)` | world −Z | **narrow** |
+| **θ = 25.84°** | **0.900** | — **threshold** — | — | — |
+| θ = 26° | 0.899 | `(0,1,0)` | world +X (across the view) | **WIDE** |
+| θ = 35° (sweet spot) | 0.819 | `(0,1,0)` | world +X | **WIDE** |
+
+Verified numerically — the top link's wide-axis projection onto world X goes 0.00 → 1.00 between 25°
+and 26°, and stays there out to 35°.
+
+**So the topmost link is narrow below 25.84° and wide above it**, and every link behind it inverts in
+lockstep. The pattern never breaks or shifts by one — it flips wholesale. `θ = 35 sin(2πp)` puts the
+swing past 25.84° for **45% of every cycle**, so a screenshot taken at an arbitrary moment is close to
+a coin flip. That matches "two screenshots of the same swing show opposite arrangements" precisely.
+
+Worth noting *why* this hid for so long: the identical threshold lives in `SwingBuilder`'s
+`cframeFacingAlongY:79-84`, where it is genuinely harmless — the builder only ever evaluates it at the
+**θ = 0 reference pose**, where it always takes the `(1,0,0)` branch. The built swing is correct. It is
+only the per-frame client repositioning that ever sees a tilted chain.
+
+## c) The link count does not vary, and does not divide anything
+
+```lua
+local count = math.max(1, visual.chainLinkCount)
+```
+
+`chainLinkCount` is a **literal integer in `SwingTierVisuals`**, one per tier. It is not derived from
+the swing's height, the rope length, `scale`, or any geometry — so there is no division, no remainder,
+and no possibility of the loop starting or ending mid-pattern. The links are spaced by `Lerp` at
+`(i-1)/count` and `i/count`, which fits exactly `count` segments between the endpoints at any height by
+construction.
+
+**And the top link is always `i = 1`, so `1 % 2 == 0` is always false — the topmost link is never the
+twisted one, at every tier, in every build.** Your hypothesis (c) would have produced a pattern that
+shifted by one; what you actually have is a pattern that inverts. Different signature, different cause.
+
+## d) `repositionChainSide` only moves links — confirmed
+
+It writes `CFrame` and `Size`, but never the cross-section:
+
+```lua
+-- Cylinder branch: X is the length axis
+link.Size = Vector3.new(length, link.Size.Y, link.Size.Z)
+-- Block branch: Y is the length axis
+link.Size = Vector3.new(link.Size.X, length, link.Size.Z)
+```
+
+Each writes **only the length axis** and reads the other two back off the part itself. The 2:1
+cross-section set at build time is preserved verbatim, every frame, forever. No size is ever
+reassigned.
+
+The ordering is sound too: links are filtered by their `Side` attribute, then
+`table.sort`ed on `ChainIndex`. Every link carries a distinct `ChainIndex` within its side, so the
+comparator is a strict ordering with no ties and the result is deterministic regardless of
+`GetChildren` order or `table.sort`'s instability. `Twist90` is read per-link from the attribute rather
+than recomputed from the loop position, so the parity follows the individual link.
+
+Both callers — `LaunchClient.repositionChainLinks:359` and
+`LaunchRemoteLanes.repositionChainLinksFor:75` — delegate to this one function, so they shared the bug
+and share the fix.
+
+## e) Per tier: which tiers are affected
+
+Only `chainStyle == "Chain"` builds blocks. `Rope` and `Rod` build **cylinders**, which are radially
+symmetric about their length axis — the reference vector rotates them, but you cannot see a cylinder
+spin about its own axis, so the flip is invisible. `Energy` builds no links at all, just a `Beam`.
+
+| tier | style | links | count even? | alternates? | topmost link | affected by the bug? |
+|---:|---|---:|---|---|---|---|
+| 1 | Rope | 5 | odd | no | cylinder | no — radially symmetric |
+| 2 | Rope | 5 | odd | no | cylinder | no — radially symmetric |
+| 3 | Rope | 6 | even | no | cylinder | no — radially symmetric |
+| **4** | **Chain** | **7** | **odd** | **YES** | **`i=1`, untwisted** | **YES** |
+| **5** | **Chain** | **7** | **odd** | **YES** | **`i=1`, untwisted** | **YES** |
+| **6** | **Chain** | **8** | **even** | **YES** | **`i=1`, untwisted** | **YES** |
+| 7 | Rod | 3 | odd | no | cylinder | no — radially symmetric |
+| 8 | Rod | 3 | odd | no | cylinder | no — radially symmetric |
+| 9 | Rod | 2 | even | no | cylinder | no — radially symmetric |
+| 10 | Energy | 0 | — | no | Beam | no — no links exist |
+| 11 | Energy | 0 | — | no | Beam | no — no links exist |
+
+**Tiers 4, 5 and 6 only.** You reported tier 5, which is one of exactly three tiers that can show it —
+consistent. Note the count's parity is irrelevant to the symptom: tier 6 has an even count and tiers 4
+and 5 odd, and all three flip identically, because the flip is global to the side rather than an
+off-by-one at either end.
+
+## 5. The fix
+
+`LaunchFormulas.repositionChainSide`, block branch only:
+
+```lua
+-- was: local reference = if math.abs(yAxis.Y) > 0.9 then Vector3.new(1, 0, 0) else Vector3.new(0, 1, 0)
+local reference = Vector3.new(1, 0, 0)
+```
+
+**`(1, 0, 0)` is correct unconditionally here, not a workaround for the threshold.** Each side's chain
+runs from an anchor at `X = ±seatHalfWidth` to a seat attachment at the **same** `X`
+(`SwingBuilder:446-452, 506-507`), so `delta.X` is exactly zero and the chain direction always lies in
+the YZ plane. World X is the swing-plane normal: perpendicular to `yAxis` at every θ by construction,
+so the cross product can never go degenerate, and it is continuous where the old branch was not.
+
+Working it through, `xAxis = (1,0,0) × (0, −cos θ, sin θ) = (0, −sin θ, −cos θ)`, which is a unit vector
+perpendicular to `yAxis` at every θ, and the block's narrow local-Z axis lands on world −X for all θ.
+Stable by construction, not by tuning.
+
+It is also **the same branch the builder takes**, since `cframeFacingAlongY` evaluates at the θ = 0
+reference pose where `|yAxis.Y| = 1`. So the first repositioned frame now agrees with the built pose
+instead of potentially popping.
+
+**What it was a function of:** the swing's current tilt angle, via a `|yAxis.Y| > 0.9` threshold on the
+chain direction.
+**What it is a function of now:** nothing but the link's own index — the basis is a fixed world axis,
+and `i % 2` alone decides which links are turned in it.
+
+### Deliberately not changed
+
+The **cylinder branch keeps its conditional.** It is genuinely unobservable there (a cylinder cannot
+show rotation about its length axis), the Rope/Rod chains are the only callers that hit it, and
+changing it would be churn with no visual effect. The asymmetry between the two branches is now
+explained in a comment at the fix site so it does not read as an oversight.
+
+## 6. Verification
+
+- **Geometry re-derived from the source constants**: threshold at θ = 25.84°, swing travel ±35°, 45% of
+  each cycle past it, top link's wide-axis projection 0.00 → 1.00 across the threshold under the old
+  code and flat 0.00 at every θ under the fix.
+- **`rojo build default.project.json` succeeds.**
+- **Diff is one file**: `LaunchFormulas.luau`, one logic line plus its comment.
 - **No playtest**, per instruction.
+
+Not verified on screen — this is a visual bug and the arithmetic says it is fixed, but tiers 4–6 at the
+swing extremes are what would confirm it.
+
+## 7. Is it worth pinning, or should the links just be one thickness?
+
+**Pinning is worth it, and it is not a close call** — the fix replaced a conditional with a constant.
+It is fewer tokens than what was there, adds no state, no new attribute, no per-tier data, and no
+branch. There is no complexity to weigh against the detail.
+
+Flattening the links to a single thickness would have been the *larger* change: it means editing the
+block's size in `SwingBuilder`, deleting the `twisted` computation, the build-time
+`CFrame.Angles` branch, the `Twist90` `SetAttribute`, and the re-apply in `repositionChainSide` — five
+edits across two files, to remove a deliberate visual that distinguishes the three mid-tier swings from
+the Rope tiers below and the Rod tiers above.
+
+If the alternation had needed new machinery to stabilise — a stored orientation, a per-tier table, a
+seeded value — the answer would have been the opposite, and I would have said so. It did not. The
+alternation was already index-driven; only the frame it was drawn in was not.
+
+## 8. Untouched
+
+Swing heights, `SWING_PERIOD_SECONDS`, the sweet-spot phase window, arc angle,
+`ARC_HEIGHT_SQRT_COEFFICIENT`, the camera pullback, distance at any tier, the per-tier snap thresholds,
+ping compensation, the luck distribution, swing prices, the upgrade curve, the chest and its reveal,
+road geometry, the platform, the landmark, SlimeBuilder, SignBuilder, ChestBuilder, the collect pads,
+the idle breathing animation, the six-lane remote rendering block, the spawn flow, the dev panel gates
+and the `resetReadyRemote` death-cancellation path. `SwingBuilder` itself is unmodified — the build was
+always correct.
+
+## 9. One adjacent observation, not fixed
+
+`Twist90` is read with `link:GetAttribute("Twist90")`, which returns `nil` if the client repositions a
+link before its attributes have replicated. That would make *every* link untwisted for those frames —
+all links looking identical, briefly — rather than inverting the pattern, so it is not what you saw.
+It is transient and self-correcting, and fixing it properly means gating the reposition on attribute
+presence. Left alone; flagged in case a first-frame flicker ever gets reported.
 
 ## 10. Still outstanding, unchanged
 
 The chest's facing inference (`orientLockToFront`); the tier-11 overshoot slice; `game.rbxlx` still a
-stale 6 Aug artifact; the two duplicate-function pairs; the 27-local remotes bootstrap; and the
-`GetNetworkPing()` one-way-vs-RTT question.
+stale 6 Aug artifact; the two duplicate-function pairs; the 27-local remotes bootstrap; the
+`GetNetworkPing()` one-way-vs-RTT question; and the release camera's 35° tilt against a 88–210 stud
+pullback putting the subject at the top edge of frame (see the previous report).
