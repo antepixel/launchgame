@@ -1880,7 +1880,12 @@ local function onRelease(player: Player)
 	-- up, correct either way if it somehow hasn't.
 	applySwingVisualForTier(riderTier, pivot, structureFolder)
 	local distance = LaunchConfig.DISTANCE_PER_MULTIPLIER * multiplier * tierScale
-	local archHeight = distance * LaunchConfig.ARC_HEIGHT_FRACTION
+	-- SQUARE ROOT, not a fraction of distance (see the constant's own comment
+	-- and REPORT.md): the linear version had tier 11 flying 15x higher than
+	-- tier 1 and put every mid-tier flight 650 studs up, above everything there
+	-- was to look at. Still exactly zero at u = 1, so no value here can move a
+	-- landing -- see trajectoryPosition.
+	local archHeight = LaunchConfig.ARC_HEIGHT_SQRT_COEFFICIENT * math.sqrt(distance)
 	-- Flight duration now scales WITH distance instead of staying fixed --
 	-- see FLIGHT_DURATION_EXPONENT's comment in LaunchConfig for why a square
 	-- root (not linear, not flat). baseDistance is deliberately NOT tier-

@@ -1007,9 +1007,11 @@ flightStartedRemote.OnClientEvent:Connect(function(distance: number, archHeight:
 	-- the one thing the server's copy cannot tell them.
 	Hud.setMultiplierReadout(multiplier)
 
-	-- "Pull back as the arc gets bigger": computed ONCE per flight from this
-	-- flight's own arc height, not re-adjusted mid-flight.
-	local cameraBehindOffset = LaunchConfig.CAMERA_BEHIND_DISTANCE + archHeight * LaunchConfig.CAMERA_PULLBACK_FACTOR
+	-- Where the camera stands for this flight, computed ONCE and not re-adjusted
+	-- mid-flight. NO LONGER READS archHeight -- see
+	-- LaunchFormulas.releaseCameraPullback for why the arc must not move the
+	-- camera and how the cap is derived from the map's own back edge.
+	local cameraBehindOffset = LaunchFormulas.releaseCameraPullback(startPosition.Z, distance)
 
 	camera.CameraType = Enum.CameraType.Scriptable
 	camera.CFrame = LaunchFormulas.chaseCameraCFrame(startPosition, cameraBehindOffset)

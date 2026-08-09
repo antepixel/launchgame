@@ -18,6 +18,19 @@ local RunwayGeometry = {}
 -- platform actually sits in the place file.
 RunwayGeometry.RUNWAY_START_Z = baseplate.Position.Z - baseplate.Size.Z / 2
 
+-- The OPPOSITE edge of the same part: where the walkable world ENDS behind the
+-- swings, in +Z. Read from the Baseplate for the same reason RUNWAY_START_Z is
+-- -- one formula, both consumers, and a Baseplate that is ever moved or resized
+-- takes every derived edge with it.
+--
+-- Added for the flight camera (see LaunchFormulas.releaseCameraPullback and
+-- REPORT.md): the release camera used to be placed a distance behind the rider
+-- that scaled with the flight, and from tier 4 up that put it 173 studs PAST
+-- this line -- hanging over void, outside the map, looking back in. Nothing can
+-- decide "is the camera still inside the world" without knowing where the world
+-- stops, and this is where it stops.
+RunwayGeometry.MAP_BACK_EDGE_Z = baseplate.Position.Z + baseplate.Size.Z / 2
+
 -- Y coordinate of the road/platform surface -- the Baseplate's own top,
 -- same value RunwayBuilder places every band's top at. Also read by
 -- LaunchServer's trajectoryPosition, which now lands the flight ON this

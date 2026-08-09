@@ -20,7 +20,7 @@ export type LaunchConfig = {
 	DISTANCE_PER_MULTIPLIER: number,
 	FLIGHT_DURATION_SECONDS: number,
 	FLIGHT_DURATION_EXPONENT: number,
-	ARC_HEIGHT_FRACTION: number,
+	ARC_HEIGHT_SQRT_COEFFICIENT: number,
 	GRAVITY: number,
 	RESET_DELAY: number,
 	CAMERA_BEHIND_DISTANCE: number,
@@ -178,19 +178,61 @@ local LaunchConfig: LaunchConfig = {
 	-- FLIGHT_DURATION_SECONDS by the same factor to restore the original
 	-- per-tier speeds exactly).
 	FLIGHT_DURATION_EXPONENT = 0.5,
-	-- Peak arc height as a FRACTION of that flight's total distance (not a fixed
-	-- stud value) -- a bigger release automatically gets a proportionally
-	-- bigger, more dramatic arc, which is also exactly what the camera's
-	-- pull-back (CAMERA_PULLBACK_FACTOR below) scales off of. 0.35 gives a
-	-- clearly visible rise (~35 studs at the 100-stud DISTANCE_PER_MULTIPLIER
-	-- distance) without reading as absurd.
-	ARC_HEIGHT_FRACTION = 0.35,
+	-- ===== PEAK ARC HEIGHT: k * sqrt(distance), NOT a fraction of distance.
+	--
+	-- WHAT WAS WRONG WITH THE FRACTION (see REPORT.md). It was 0.35 of the
+	-- flight's own distance, which is linear, which means tier 11 flew FIFTEEN
+	-- TIMES higher than tier 1 -- 1,075 studs against 70. Measured: a tier-6
+	-- flight apexed at 650 studs, and from up there the ground does not enter
+	-- the camera's frame until 928 studs ahead, so the whole map was a ribbon
+	-- far below and the flight was 86-94% sky. No single fraction fixes that:
+	-- quartering it would have brought tier 11 down to a sensible 279 and
+	-- turned tier 1 into a 17-stud shuffle.
+	--
+	-- WHY A SQUARE ROOT. It is the shape that grows without keeping pace: the
+	-- arc still gets bigger every tier, so a longer flight is still visibly a
+	-- bigger event, but the ratio between the ends collapses from 15x to 3.9x.
+	-- It also matches FLIGHT_DURATION_EXPONENT (0.5) -- duration already scales
+	-- as the square root of distance, so height and time now grow together and
+	-- the arc keeps the same shape in the air rather than getting steeper with
+	-- every tier.
+	--
+	-- WHERE k COMES FROM. It started as a mid-ladder target: tier 6 is the middle
+	-- of the eleven, its perfect launch is 1,840 studs, and 165 studs of arch
+	-- there gives k = 165 / sqrt(1840) = 3.8466, rounded to 3.85.
+	--
+	-- RAISED 25% since (see REPORT.md): 3.85 * 1.25 = 4.8125, exactly. Scaling k
+	-- scales the arch by the same factor at EVERY tier, because arch is linear
+	-- in k -- so this is a uniform 25% lift of the whole curve, not a reshaping,
+	-- and the 3.9x spread between tier 1 and tier 11 is unchanged.
+	--
+	-- 4.8125 AND NOT 4.8082, which is what re-deriving from a scaled target
+	-- (165 * 1.25 = 206.25, over sqrt(1840)) would give. The two differ because
+	-- the shipped 3.85 was already rounded UP from 3.8466; the brief was "25%
+	-- above current", and current means the value actually in this file, so the
+	-- multiply is the honest reading. The mid-ladder arch it produces is 206.4.
+	--
+	-- The resulting ladder is 68 studs at tier 1, 206 at tier 6, 267 at tier 11.
+	-- This coefficient is the one free choice here; everything else follows.
+	--
+	-- THE CAMERA NO LONGER MOVES WITH THIS. Pullback used to be computed off
+	-- arch height, so retuning the arc silently reframed the launch and made the
+	-- two impossible to judge apart; it now scales off DISTANCE and is capped at
+	-- the map's own back edge (see CAMERA_PULLBACK_FACTOR and
+	-- LaunchFormulas.releaseCameraPullback). Changing k moves the arc and
+	-- nothing else.
+	--
+	-- HORIZONTAL DISTANCE IS UNTOUCHED BY ANY VALUE OF THIS. Arc enters the
+	-- trajectory as archHeight * 4 * u * (1 - u), which is exactly zero at u = 0
+	-- and u = 1, and the horizontal term (startZ - distance * u) never reads it.
+	-- No k can move a landing by a stud.
+	ARC_HEIGHT_SQRT_COEFFICIENT = 4.8125,
 
 	-- ===== Physics environment (only affects normal walking-around now, not
 	-- flight, which is fully scripted) =====
 	-- Workspace.Gravity (studs/sec^2), applied once at server startup. Roblox's
 	-- default is 196.2. No longer touches the flight arc at all (see
-	-- ARC_HEIGHT_FRACTION) -- kept only because it still governs the player's
+	-- ARC_HEIGHT_SQRT_COEFFICIENT) -- kept only because it still governs the player's
 	-- ordinary jump/fall feel while riding up to a launch.
 	GRAVITY = 130,
 
@@ -220,13 +262,31 @@ local LaunchConfig: LaunchConfig = {
 	-- reads like a level chase cam with no sense of height; too much and the
 	-- character crowds the top edge of frame.
 	CAMERA_DOWNWARD_ANGLE_DEGREES = 35,
-	-- Extra camera distance added per stud of THIS FLIGHT's arc height (see
-	-- ARC_HEIGHT_FRACTION) -- "pull back as the arc gets bigger," computed once
-	-- per launch, not re-adjusted mid-flight. 1.0 is a starting guess (equal
-	-- parts arc height and pull-back); the first thing to retune if a
-	-- sweet-spot flight ever clips past the edge of frame or a weak one looks
-	-- too zoomed-out.
-	CAMERA_PULLBACK_FACTOR = 1.0,
+	-- Extra camera distance added per stud of THIS FLIGHT's horizontal DISTANCE
+	-- -- "pull back as the flight gets bigger," computed once per launch, not
+	-- re-adjusted mid-flight.
+	--
+	-- IT USED TO BE PER STUD OF ARC HEIGHT, at 1.0 (see REPORT.md). Two things
+	-- were wrong with that and this fixes the first:
+	--   * reading ARCH meant retuning the flight's HEIGHT silently reframed the
+	--     launch, by a proportional amount, which makes an arc change impossible
+	--     to judge -- the camera moves at the same time and you cannot tell the
+	--     two effects apart.
+	--   * it was unbounded; the cap is now derived from the map's own back edge,
+	--     in LaunchFormulas.releaseCameraPullback, which is where the second
+	--     problem is fixed and explained.
+	-- 0.35 is NOT a retune: arch was distance * the old ARC_HEIGHT_FRACTION (0.35) and
+	-- the old factor was 1.0, so 0.35 per stud of distance reproduces the exact
+	-- same requested pullback at every tier. The value is here rather than
+	-- borrowed from the arc constant deliberately -- the whole point is that the
+	-- camera stops moving when the arc is retuned, which is now literally true:
+	-- the arc is ARC_HEIGHT_SQRT_COEFFICIENT * sqrt(distance) and shares no term
+	-- with this line at all.
+	--
+	-- In practice only tier 1 comes out under the map-derived cap, so this
+	-- governs tier 1's framing and the cap governs every tier above it. Retune
+	-- this if a short flight ever looks too zoomed-out or too close.
+	CAMERA_PULLBACK_FACTOR = 0.35,
 
 	-- ===== The swing (unchanged from the previous pass) =====
 	-- Seconds for one full back-and-forth cycle. Lower = faster/twitchier sweep,
@@ -897,7 +957,7 @@ local LaunchConfig: LaunchConfig = {
 	-- number (tier 1 reads index 1, tier 11 reads index 11; Luau arrays are
 	-- 1-indexed, so tier number IS the index, no off-by-one). Applied on top
 	-- of DISTANCE_PER_MULTIPLIER * multiplier, before
-	-- ARC_HEIGHT_FRACTION/duration -- everything downstream (arc height,
+	-- ARC_HEIGHT_SQRT_COEFFICIENT/duration -- everything downstream (arc height,
 	-- camera pull-back, flight duration) already scales off the resulting
 	-- distance, so scaling distance here is the ONLY change needed to make a
 	-- whole flight bigger. Bands themselves stay uniform length -- all of the

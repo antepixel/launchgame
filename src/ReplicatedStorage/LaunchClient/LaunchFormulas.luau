@@ -32,6 +32,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
 local RunwayGeometry = require(ReplicatedStorage.Config.RunwayGeometry)
+-- For BASE_BACK_EDGE_Z only -- the back of the plots, one of the two edges the
+-- release camera is parked between. See releaseCameraPullback.
+local BaseConfig = require(ReplicatedStorage.Config.BaseConfig)
 
 local LaunchFormulas = {}
 
@@ -244,6 +247,42 @@ local function chaseCameraCFrame(characterPosition: Vector3, cameraBehindOffset:
 	return CFrame.new(cameraPosition) * CFrame.Angles(-math.rad(LaunchConfig.CAMERA_DOWNWARD_ANGLE_DEGREES), 0, 0)
 end
 
+-- ===== WHERE THE RELEASE CAMERA STANDS. Returns how far BEHIND the rider the
+-- camera is placed at the instant of release -- the one number chaseCameraCFrame
+-- above takes.
+--
+-- DECOUPLED FROM ARC HEIGHT (see REPORT.md). This used to be
+-- CAMERA_BEHIND_DISTANCE + archHeight * CAMERA_PULLBACK_FACTOR, and it was
+-- broken in two separate ways:
+--   1. it read ARCH, so retuning the flight's HEIGHT silently reframed the
+--      launch -- which makes any arc change impossible to judge, since the
+--      camera moves at the same time and by a proportional amount;
+--   2. it was unbounded. Tier 11 asked for 1,093 studs. The only thing stopping
+--      it was Roblox's default CameraMaxZoomDistance of 400, which this project
+--      never sets -- an accident doing load-bearing work. And 400 was still too
+--      far: the release camera sat at Z 418.5 with the Baseplate ending at
+--      245.74, i.e. 173 studs PAST the back of the world, over void.
+--
+-- THE CAP IS DERIVED FROM THE MAP, not chosen. The camera is parked at the
+-- MIDPOINT between the back of the plots (BaseConfig.BASE_BACK_EDGE_Z) and the
+-- back of the world (RunwayGeometry.MAP_BACK_EDGE_Z) -- the point furthest from
+-- both, so it is unambiguously inside the Baseplate and unambiguously behind
+-- everything built. Both terms are read live, so moving the plots or resizing
+-- the Baseplate moves the camera with them and there is no number here to go
+-- stale.
+--
+-- THE SCALED TERM SURVIVES, on DISTANCE rather than arch. Below the cap the
+-- camera still pulls back further for a longer flight -- CAMERA_PULLBACK_FACTOR
+-- is now studs of pullback per stud of distance, set so the result is
+-- numerically identical to what it was before this change. In practice only
+-- tier 1 is under the cap, so tier 1's framing is untouched and every tier above
+-- it is pinned to the map's own back edge.
+local function releaseCameraPullback(startPositionZ: number, distance: number): number
+	local requested = LaunchConfig.CAMERA_BEHIND_DISTANCE + distance * LaunchConfig.CAMERA_PULLBACK_FACTOR
+	local standZ = (BaseConfig.BASE_BACK_EDGE_Z + RunwayGeometry.MAP_BACK_EDGE_Z) / 2
+	return math.min(requested, standZ - startPositionZ)
+end
+
 LaunchFormulas.swingPhase = swingPhase
 LaunchFormulas.swingTheta = swingTheta
 LaunchFormulas.riderCFrame = riderCFrame
@@ -258,5 +297,6 @@ LaunchFormulas.trajectoryPosition = trajectoryPosition
 LaunchFormulas.trajectoryPitch = trajectoryPitch
 LaunchFormulas.trajectoryCFrame = trajectoryCFrame
 LaunchFormulas.chaseCameraCFrame = chaseCameraCFrame
+LaunchFormulas.releaseCameraPullback = releaseCameraPullback
 
 return LaunchFormulas

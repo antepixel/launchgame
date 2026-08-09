@@ -340,6 +340,36 @@ do
 	-- doesn't care about sibling order. Top surface pinned to slimeGroundY
 	-- (RunwayGeometry.RUNWAY_TOP_Y) -- UNCHANGED by the mesh pass.
 	local groundPatchFootprint = GiantSlimeConfig.BODY_WIDTH_STUDS + 2 * GiantSlimeConfig.GROUND_PATCH_MARGIN_STUDS
+
+	-- ===== THE PATCH'S Z EXTENT IS NOT ITS X EXTENT ANY MORE (see REPORT.md).
+	-- It used to be square -- groundPatchFootprint on both axes, centred on the
+	-- slime -- which put its near edge 25 studs BEFORE the road's far edge. That
+	-- overlap was deliberate once (no void between road and grass to fall into)
+	-- and it is the artifact now: the grass runs UNDER the last bands at exactly
+	-- the same Y, so the two coplanar surfaces fight for the depth test and the
+	-- green cuts across the road.
+	--
+	-- BOTH EDGES DERIVED, NEITHER HARDCODED:
+	--   near -- the road's own far edge, the SAME lastBandFarEdgeZ expression
+	--           above (band count x band length back from RUNWAY_START_Z). The
+	--           grass now starts exactly where the road stops.
+	--   far  -- unchanged: the slime's centre minus the footprint's half-width,
+	--           which is what it always was.
+	-- So the patch keeps its X size and its far edge and gives up 25 studs of
+	-- depth at the near end. Change the band count, the band length or the
+	-- landmark's offset and both edges still follow.
+	--
+	-- ABUTTING EXACTLY, NOT OVERLAPPING AND NOT GAPPED. The road is already 74
+	-- abutting band parts (see RunwayBuilder: band i is centred at
+	-- RUNWAY_START_Z - (i + 0.5) * length, so consecutive bands meet edge to
+	-- edge), and nobody falls between those 73 seams. This adds a 75th abutment
+	-- of the same kind, at the same Y -- both surfaces' tops are pinned to
+	-- RUNWAY_TOP_Y -- so it is a continuous walkable plane, and coplanar
+	-- surfaces that merely TOUCH do not z-fight the way overlapping ones do.
+	local platformFarZ = slimeCenterZ - groundPatchFootprint / 2
+	local platformNearZ = lastBandFarEdgeZ
+	local platformDepth = platformNearZ - platformFarZ
+
 	local groundPatch = Instance.new("Part")
 	groundPatch.Name = "GroundPatch"
 	groundPatch.Anchored = true
@@ -360,8 +390,14 @@ do
 	groundPatch.CanCollide = true
 	groundPatch.Material = baseplate.Material
 	groundPatch.Color = baseplate.Color
-	groundPatch.Size = Vector3.new(groundPatchFootprint, GiantSlimeConfig.GROUND_PATCH_THICKNESS_STUDS, groundPatchFootprint)
-	groundPatch.CFrame = CFrame.new(LaneConfig.ROAD_CENTER_X, slimeGroundY - GiantSlimeConfig.GROUND_PATCH_THICKNESS_STUDS / 2, slimeCenterZ)
+	-- X keeps the footprint; Z is now the derived depth, and the part is centred
+	-- between its two derived edges rather than on the slime.
+	groundPatch.Size = Vector3.new(groundPatchFootprint, GiantSlimeConfig.GROUND_PATCH_THICKNESS_STUDS, platformDepth)
+	groundPatch.CFrame = CFrame.new(
+		LaneConfig.ROAD_CENTER_X,
+		slimeGroundY - GiantSlimeConfig.GROUND_PATCH_THICKNESS_STUDS / 2,
+		(platformNearZ + platformFarZ) / 2
+	)
 	groundPatch.Parent = slimeModel
 
 	-- Body: the imported mesh, scaled to the landmark's own width (see
@@ -423,9 +459,22 @@ do
 	-- platform's near edge and the body's near edge, measured back from the
 	-- body. X is the road's own centreline, the same one the landmark and
 	-- every band already use. Y rests the base on the platform surface.
-	local platformNearZ = slimeCenterZ + groundPatchFootprint / 2
+	-- THE CHEST'S REFERENCE IS NO LONGER THE PLATFORM'S NEAR EDGE, and the
+	-- rename is the honest half of that (see REPORT.md). This expression --
+	-- the slime's centre plus the footprint's half-width -- WAS the patch's
+	-- near edge, back when the patch was square. The patch's near edge has
+	-- since moved 25 studs out to meet the road; this quantity has not, and the
+	-- chest is deliberately sited against the strip it was tuned in, so it does
+	-- not shift 3.75 studs backwards for a reason that has nothing to do with
+	-- the chest.
+	--
+	-- It is still a real measurement rather than a leftover: it is how far the
+	-- landmark's own ground reaches to either SIDE of the slime, the patch's
+	-- X half-width, which is unchanged. If the chest should track the walkable
+	-- grass instead, swap this for platformNearZ above and accept the shift.
+	local chestStripNearZ = slimeCenterZ + groundPatchFootprint / 2
 	local bodyNearZ = slimeCenterZ + GiantSlimeConfig.BODY_WIDTH_STUDS / 2
-	local clearStripDepth = platformNearZ - bodyNearZ
+	local clearStripDepth = chestStripNearZ - bodyNearZ
 	local chestZ = bodyNearZ + clearStripDepth * TreasureConfig.CHEST_SETBACK_FRACTION
 
 	-- THE MESH CHEST (see ChestBuilder.luau and REPORT.md). Was two hand-built
