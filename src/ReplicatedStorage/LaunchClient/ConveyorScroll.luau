@@ -129,7 +129,8 @@ function ConveyorScroll.update(deltaTime: number)
 		-- texture repeats every `tile` studs, so the wrap is invisible and
 		-- the running value stays small and exact forever. The property is
 		-- written, never read back.
-		belt.offset = (belt.offset + belt.speed * deltaTime * PathConfig.BELT_RIDGE_SCROLL_SIGN) % tile
+		local increment = belt.speed * deltaTime * PathConfig.BELT_RIDGE_SCROLL_SIGN
+		belt.offset = (belt.offset + increment) % tile
 		belt.texture.OffsetStudsU = belt.offset
 	end
 end
