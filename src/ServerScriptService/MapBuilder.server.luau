@@ -78,6 +78,25 @@ local function newBlock(size: Vector3, position: Vector3, material: Enum.Materia
 	return newPart(size, CFrame.new(position), material, color, name, parent)
 end
 
+--- Marks a part as WALKABLE GROUND, giving it the shared studded top
+--- (GroundConfig.GROUND_TOP_SURFACE). Returns the part so it can wrap a
+--- newBlock/newFlatLink call inline.
+---
+--- OPT-IN AT THE CALL SITE, not applied in the factory above, because the
+--- factory also builds stall roofs, posts, sign boards and the giant slime's
+--- ground patch -- none of which are ground. Wrapping each ground surface
+--- explicitly keeps "what counts as ground" readable as a list rather than
+--- as a side effect of which constructor something happened to use.
+---
+--- Only the TOP surface is touched. The other five faces stay at their
+--- defaults: nothing here is ever seen from below or edge-on at a distance
+--- where a surface decoration would read, and leaving them alone keeps the
+--- change to exactly the face that was asked for.
+local function asGround(part: Part): Part
+	part.TopSurface = GroundConfig.GROUND_TOP_SURFACE
+	return part
+end
+
 -- A flat horizontal link spanning two points at the SAME Y (every path in
 -- this file is flat, so this never has to handle a near-vertical
 -- direction) -- oriented so its local Z axis runs along the line between
@@ -105,14 +124,14 @@ local function newFlatDisc(center: Vector3, diameter: number, thickness: number,
 end
 
 -- ===== Kerb: one part, the full width of the road. =====
-newBlock(
+asGround(newBlock(
 	GroundConfig.KERB_SIZE,
 	Vector3.new(LaneConfig.ROAD_CENTER_X, groundY + GroundConfig.KERB_Y_OFFSET, GroundConfig.KERB_Z),
 	GroundConfig.KERB_MATERIAL,
 	GroundConfig.KERB_COLOR,
 	"Kerb",
 	mapFolder
-)
+))
 
 -- ===== Per-lane plot + paths =====
 for laneIndex = 0, LaneConfig.LANE_COUNT - 1 do
@@ -125,18 +144,20 @@ for laneIndex = 0, LaneConfig.LANE_COUNT - 1 do
 	laneFolder.Parent = mapFolder
 
 	-- Mat.
-	newBlock(BaseConfig.BASE_MAT_SIZE, BaseGeometry.matPosition(laneIndex), BaseConfig.BASE_MAT_MATERIAL, BaseConfig.BASE_MAT_COLOR, "Mat", laneFolder)
+	asGround(newBlock(BaseConfig.BASE_MAT_SIZE, BaseGeometry.matPosition(laneIndex), BaseConfig.BASE_MAT_MATERIAL, BaseConfig.BASE_MAT_COLOR, "Mat", laneFolder))
 
 	-- Central path.
-	newBlock(BaseConfig.BASE_PATH_SIZE, BaseGeometry.centralPathPosition(laneIndex), BaseConfig.BASE_PATH_MATERIAL, BaseConfig.BASE_PATH_COLOR, "CentralPath", laneFolder)
+	asGround(newBlock(BaseConfig.BASE_PATH_SIZE, BaseGeometry.centralPathPosition(laneIndex), BaseConfig.BASE_PATH_MATERIAL, BaseConfig.BASE_PATH_COLOR, "CentralPath", laneFolder))
 
-	-- Side edges (left, right).
+	-- Side edges (left, right) -- the raised trim. Ground rather than
+	-- decoration: they are 1.1 studs proud of the mat, so a player walks
+	-- straight over them between neighbouring plots and sees their tops.
 	local sideLeft, sideRight = BaseGeometry.sideEdgePositions(laneIndex)
-	newBlock(BaseConfig.BASE_SIDE_EDGE_SIZE, sideLeft, BaseConfig.BASE_EDGE_MATERIAL, BaseConfig.BASE_EDGE_COLOR, "SideEdgeLeft", laneFolder)
-	newBlock(BaseConfig.BASE_SIDE_EDGE_SIZE, sideRight, BaseConfig.BASE_EDGE_MATERIAL, BaseConfig.BASE_EDGE_COLOR, "SideEdgeRight", laneFolder)
+	asGround(newBlock(BaseConfig.BASE_SIDE_EDGE_SIZE, sideLeft, BaseConfig.BASE_EDGE_MATERIAL, BaseConfig.BASE_EDGE_COLOR, "SideEdgeLeft", laneFolder))
+	asGround(newBlock(BaseConfig.BASE_SIDE_EDGE_SIZE, sideRight, BaseConfig.BASE_EDGE_MATERIAL, BaseConfig.BASE_EDGE_COLOR, "SideEdgeRight", laneFolder))
 
 	-- Back edge.
-	newBlock(BaseConfig.BASE_BACK_EDGE_SIZE, BaseGeometry.backEdgePosition(laneIndex), BaseConfig.BASE_EDGE_MATERIAL, BaseConfig.BASE_EDGE_COLOR, "BackEdge", laneFolder)
+	asGround(newBlock(BaseConfig.BASE_BACK_EDGE_SIZE, BaseGeometry.backEdgePosition(laneIndex), BaseConfig.BASE_EDGE_MATERIAL, BaseConfig.BASE_EDGE_COLOR, "BackEdge", laneFolder))
 
 	-- Ten slot pads, flush on top of the mat (BaseGeometry.slotPosition
 	-- already bakes in BASE_SLOT_PAD_Y_OFFSET) -- static, numbered markers
@@ -145,14 +166,20 @@ for laneIndex = 0, LaneConfig.LANE_COUNT - 1 do
 	-- these by lane + slot number (Slot01..Slot10) rather than building its
 	-- own -- see PlayerProfile.luau's getSlotPad.
 	for slotNumber, slotPosition in BaseGeometry.slotPositions(laneIndex) do
-		local pad = newBlock(
+		-- Studded like the mat it sits on. NOTE this pad carries a Top-face
+		-- SurfaceGui (the slot number, added just below) -- a SurfaceGui is
+		-- drawn as a flat overlay on the face and does not displace the
+		-- surface decoration under it, so the two coexist; see REPORT.md for
+		-- what that actually looks like and the one-line revert if the studs
+		-- make the number harder to read.
+		local pad = asGround(newBlock(
 			BaseConfig.BASE_SLOT_PAD_SIZE,
 			slotPosition,
 			BaseConfig.BASE_SLOT_PAD_MATERIAL,
 			BaseConfig.BASE_SLOT_PAD_COLOR,
 			string.format("Slot%02d", slotNumber),
 			laneFolder
-		)
+		))
 
 		local surfaceGui = Instance.new("SurfaceGui")
 		surfaceGui.Name = "SlotLabel"
@@ -194,15 +221,20 @@ for laneIndex = 0, LaneConfig.LANE_COUNT - 1 do
 		laneFolder
 	)
 
-	-- Angled link: swing side -> WALKWAY (see PathConfig's own header --
-	-- the walkway now sits between the swings and the bases, not behind
-	-- them), oriented along the line between the two (swingX and baseX are
-	-- rarely equal, so this is genuinely angled, not just a straight
-	-- strip).
-	local linkY = groundY + PathConfig.ANGLED_LINK_Y_OFFSET
-	local linkStart = Vector3.new(swingX, linkY, PathConfig.ANGLED_LINK_START_Z)
-	local linkEnd = Vector3.new(baseX, linkY, PathConfig.ANGLED_LINK_END_Z)
-	newFlatLink(linkStart, linkEnd, PathConfig.ANGLED_LINK_WIDTH, PathConfig.ANGLED_LINK_THICKNESS, PathConfig.PATH_MATERIAL, PathConfig.PATH_COLOR, "AngledLink", laneFolder)
+	-- Approach link: swing side -> WALKWAY (see PathConfig's own header --
+	-- the walkway sits between the swings and the bases, not behind them).
+	-- STILL BUILT FROM TWO POINTS, not as an axis-aligned block: swingX and
+	-- baseX are now equal (LaneConfig.baseLaneCenterX delegates to
+	-- laneCenterX), so this comes out dead straight down Z -- but the two
+	-- endpoints are still read independently, so the link would follow
+	-- correctly on its own if a future pass ever pulled the two pitches
+	-- apart again. newFlatLink's CFrame.new(mid, pointB) handles the
+	-- pure-Z case with no degeneracy (the look direction is never parallel
+	-- to the world up it resolves against).
+	local linkY = groundY + PathConfig.APPROACH_LINK_Y_OFFSET
+	local linkStart = Vector3.new(swingX, linkY, PathConfig.APPROACH_LINK_START_Z)
+	local linkEnd = Vector3.new(baseX, linkY, PathConfig.APPROACH_LINK_END_Z)
+	asGround(newFlatLink(linkStart, linkEnd, PathConfig.APPROACH_LINK_WIDTH, PathConfig.APPROACH_LINK_THICKNESS, PathConfig.PATH_MATERIAL, PathConfig.PATH_COLOR, "ApproachLink", laneFolder))
 
 	-- Spur: WALKWAY -> plot, still on baseX -- bridges the gap between the
 	-- walkway (reached first now) and the plot (moved back to clear it) so
@@ -210,19 +242,95 @@ for laneIndex = 0, LaneConfig.LANE_COUNT - 1 do
 	-- bare grass. See PathConfig.SPUR_Z/SPUR_SIZE's own comment for the
 	-- exact span.
 	local spurPosition = Vector3.new(baseX, groundY + PathConfig.SPUR_Y_OFFSET, PathConfig.SPUR_Z)
-	newBlock(PathConfig.SPUR_SIZE, spurPosition, PathConfig.PATH_MATERIAL, PathConfig.PATH_COLOR, "Spur", laneFolder)
+	asGround(newBlock(PathConfig.SPUR_SIZE, spurPosition, PathConfig.PATH_MATERIAL, PathConfig.PATH_COLOR, "Spur", laneFolder))
 end
 
--- ===== Walkway: ONE part, spanning every lane, between the swings and the
--- bases (see PathConfig's own header for why it moved here). =====
-newBlock(
-	PathConfig.BACK_WALKWAY_SIZE,
-	Vector3.new(LaneConfig.ROAD_CENTER_X, groundY + PathConfig.BACK_WALKWAY_Y_OFFSET, PathConfig.BACK_WALKWAY_Z),
-	PathConfig.PATH_MATERIAL,
-	PathConfig.PATH_COLOR,
-	"BackWalkway",
-	mapFolder
-)
+-- ===== Walkway: TWO parts now, spanning every lane between the swings and
+-- the bases (see PathConfig's own header for why it sits here) -- a two-way
+-- CONVEYOR, split down its length into halves running in opposite
+-- directions, so a player can reach any base or either shop from anywhere
+-- along it without walking back around.
+--
+-- NO SCRIPT DRIVES THIS. An anchored, colliding part with a non-zero
+-- AssemblyLinearVelocity is read by the solver as a conveyor surface: the
+-- part itself never moves (it is anchored), but anything resting on it is
+-- carried at that velocity, simulated by whoever owns the character. So
+-- there is no Heartbeat loop, no constraint, and no per-player state to keep
+-- in step -- which is why this is two extra parts rather than a system.
+--
+-- BOTH HALVES ARE DERIVED from the same BACK_WALKWAY_SIZE/Z the single part
+-- used, not stored as two more constants: each is half the footprint's
+-- depth, offset a quarter of it either side of the centreline, so the pair
+-- still exactly fills the footprint PathConfig describes and retuning that
+-- footprint moves both.
+--
+-- NEAR HALF (low Z, the swing side) RUNS +X, far half runs -X. Note this is
+-- keep-LEFT for a player facing their direction of travel, not keep-right:
+-- facing +X with +Y up puts a player's right hand toward +Z, which is the
+-- FAR half. Called out because it is easy to assume the opposite; flip the
+-- two signs below if the traffic ever reads backwards.
+local beltHalfDepth = PathConfig.BACK_WALKWAY_SIZE.Z / 2
+local beltQuarterOffset = beltHalfDepth / 2
+local beltSize = Vector3.new(PathConfig.BACK_WALKWAY_SIZE.X, PathConfig.BACK_WALKWAY_SIZE.Y, beltHalfDepth)
+for _, half in
+	{
+		{ name = "BeltNear", zSign = -1, direction = 1 },
+		{ name = "BeltFar", zSign = 1, direction = -1 },
+	}
+do
+	local beltZ = PathConfig.BACK_WALKWAY_Z + half.zSign * beltQuarterOffset
+	-- DELIBERATELY NOT asGround -- the belt is the one walkable surface in the
+	-- map that stays smooth, and it is the same call that dropped DiamondPlate
+	-- from this part: static relief under a SCROLLING texture gives the eye a
+	-- fixed reference that says the surface is not going anywhere, which is
+	-- exactly what the ridges exist to deny. Studs are a stronger fixed
+	-- reference than the tread was, so this matters more here, not less. If
+	-- you are studding ground and wondering why this one was skipped, that is
+	-- why -- it is not an oversight.
+	local belt = newBlock(
+		beltSize,
+		Vector3.new(LaneConfig.ROAD_CENTER_X, groundY + PathConfig.BACK_WALKWAY_Y_OFFSET, beltZ),
+		PathConfig.BELT_MATERIAL,
+		PathConfig.BELT_COLOR,
+		half.name,
+		mapFolder
+	)
+	-- Set AFTER parenting, and on the anchored part itself -- this is the
+	-- conveyor surface velocity, not motion of the part.
+	belt.AssemblyLinearVelocity = Vector3.new(half.direction * PathConfig.BELT_SPEED_STUDS_PER_SECOND, 0, 0)
+
+	-- ===== The ridge texture: dark bars running ACROSS the belt, repeating
+	-- along its length, scrolled client-side by LaunchClient/ConveyorScroll.
+	-- One Texture per half, on the top face only -- the sides and underside
+	-- are never seen.
+	--
+	-- U IS THE BELT'S LENGTH, V IS ITS DEPTH. For a Top-face Texture, U runs
+	-- along the part's X axis and V along its Z; the belt is 416 x 9 with X
+	-- along travel, so tiling along U is what makes the ridges repeat down
+	-- the belt, and one tile spans the full depth in V so each bar crosses
+	-- the belt exactly once with no seam along it.
+	--
+	-- IF THE RIDGES COME OUT RUNNING ALONG THE BELT rather than across it,
+	-- that mapping is the opposite way round on this face: swap the two
+	-- StudsPerTile lines below AND switch ConveyorScroll to drive
+	-- OffsetStudsV instead of OffsetStudsU. Those two changes go together --
+	-- either both or neither. Roblox does not document the per-face UV
+	-- assignment and it cannot be read back from code, so this is stated as
+	-- the expected case rather than a verified one; it needs one look.
+	--
+	-- CREATED EVEN WHEN THE ASSET IS UNSET (see PathConfig's own note): an
+	-- empty Texture renders nothing, so the belt is plain grey until an ID
+	-- exists -- but the instance and the scroller are already wired, so
+	-- pasting an ID onto this Texture in Studio shows the finished thing
+	-- immediately, with no rebuild.
+	local ridges = Instance.new("Texture")
+	ridges.Name = "BeltRidges"
+	ridges.Face = Enum.NormalId.Top
+	ridges.Texture = PathConfig.BELT_RIDGE_TEXTURE_ASSET_ID
+	ridges.StudsPerTileU = PathConfig.BELT_RIDGE_TILE_STUDS
+	ridges.StudsPerTileV = beltSize.Z
+	ridges.Parent = belt
+end
 
 -- ===== Two stalls, mirrored. face = -sign(x0) points every stall-relative
 -- X-offset back toward the road's centerline, so both stalls face inward

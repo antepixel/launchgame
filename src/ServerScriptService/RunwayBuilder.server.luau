@@ -32,6 +32,7 @@ local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local RunwayGeometry = require(ReplicatedStorage.Config.RunwayGeometry)
 local LuckCurve = require(ReplicatedStorage.Config.LuckCurve)
 local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
+local GroundConfig = require(ReplicatedStorage.Config.GroundConfig)
 
 -- The flight always travels in -Z (see LaunchServer.server.luau's
 -- launchDirection) -- a fixed fact about this world's layout, not recomputed
@@ -128,6 +129,23 @@ for i = 0, #LuckCurve.VALUES - 1 do
 	-- bright and clearly distinct; only the very flattest, poster-like read
 	-- SmoothPlastic gave is gone.
 	band.Material = Enum.Material.Plastic
+	-- The classic studded top, from the SAME GroundConfig.GROUND_TOP_SURFACE
+	-- every other walkable surface in the map reads (MapBuilder applies it to
+	-- the paths, mats, trim, slot pads and kerb; PlayerProfile to the collect
+	-- pads) -- so "the ground is studded" stays ONE decision rather than one
+	-- per builder.
+	--
+	-- IT DOES NOT FIGHT THE NUMBER LABELS, which is why this was excluded at
+	-- first and then added: each band's luck value is drawn on a SEPARATE,
+	-- fully transparent sign part floating SIGN_CLEARANCE above the band (see
+	-- just below) and the SurfaceGui lives on THAT, not on this face. The two
+	-- share neither a part nor a face, so there is nothing here for the relief
+	-- to interfere with.
+	--
+	-- Only the TOP is set. The bands butt end to end down the road with their
+	-- tops flush at RUNWAY_TOP_Y and the rest of each sunk below it, so no
+	-- other face is ever seen.
+	band.TopSurface = GroundConfig.GROUND_TOP_SURFACE
 	band.Size = Vector3.new(LaunchConfig.RUNWAY_WIDTH_STUDS, 1, LaunchConfig.RUNWAY_BAND_LENGTH_STUDS)
 
 	local centerZ = RUNWAY_START_Z - (i + 0.5) * LaunchConfig.RUNWAY_BAND_LENGTH_STUDS

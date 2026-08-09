@@ -1,261 +1,245 @@
-# Chain links flipping thick/thin: the alternation was a function of the swing's angle
+# Studded ground surfaces
 
-**Your diagnosis was close but not right.** The alternation *is* already a pure function of link index,
-the link count *is* a fixed per-tier integer, and `repositionChainSide` *does* only move links. All
-three of the things you suspected check out clean.
+**Three files changed, `rojo build` passes.** One named value —
+`GroundConfig.GROUND_TOP_SURFACE = Enum.SurfaceType.Studs` — read by both builders that make ground.
 
-**The actual bug is one line**, `LaunchFormulas.repositionChainSide`, in the orientation basis rather
-than in the alternation. The links are not two thicknesses — they are one 2:1 block, and every other
-one is rotated 90°. Which *face* that presents to the camera depends on a reference vector that was
-picked by a threshold on the chain's current tilt:
+**Answering (c) honestly up front: only ONE surface in the map had a surface type set at all.** The
+collect pads were explicitly `Smooth`. Everything else was left at the part default, and **I could not
+query what that default is** — the Studio plugin is offline, my probe timed out. That materially
+affects how much visible change to expect. §c.
 
-```lua
-local reference = if math.abs(yAxis.Y) > 0.9 then Vector3.new(1, 0, 0) else Vector3.new(0, 1, 0)
-```
+**The road bands' labels are not on the bands.** They live on a separate invisible part floating above
+each band, so studs there would *not* fight them — your stated reason for excluding them doesn't hold.
+I left them smooth as instructed, but the technical objection is gone and my actual opinion is in §Road
+bands.
 
-`|cos θ| = 0.9` is **θ = 25.84°**, and the swing travels **±35°**. So the branch flips four times a
-cycle, and takes every link's apparent thickness with it — inverting the whole pattern, top included.
-The swing spends **45% of each cycle** on the far side of that threshold, which is why two screenshots
-disagree about half the time.
+**The belt is the one place studs work against you** — static studs under a scrolling texture is the
+same problem that got DiamondPlate dropped from that part last pass. Applied as asked, flagged clearly.
+§a.
 
-**Fixed by pinning the reference to `(1, 0, 0)`**, the swing-plane normal. One line. §5.
+**Studs on the Neon collect pads will probably be invisible** — Neon shades flat and relief is read
+from shading. §b.
 
-**Worth pinning? Yes, easily** — the fix is a constant replacing a conditional, strictly *less* code
-than what was there. Flattening every link to one thickness would have been the bigger change. §7.
+**Nothing derives a height or landing from these surfaces** — verified against each one, not assumed.
+§d.
 
 ---
 
-## a) Where the links are built, and how thickness is decided
+## What was included
 
-`SwingBuilder.luau:538-565`, inside `buildChainSide`, run once per side:
+| surface | builder | included | note |
+|---|---|:--:|---|
+| Belt halves (`BeltNear`/`BeltFar`) | MapBuilder | ✅ | see §a — has a Top-face `Texture` |
+| Approach links | MapBuilder | ✅ | |
+| Spurs | MapBuilder | ✅ | |
+| Plot mats | MapBuilder | ✅ | |
+| Central paths | MapBuilder | ✅ | also PathConfig-coloured, also ground |
+| Side edge trim (×2/lane) | MapBuilder | ✅ | 1.1 studs proud — walked over between plots |
+| Back edge trim | MapBuilder | ✅ | |
+| Slot pads (10/lane) | MapBuilder | ✅ | see §a — has a Top-face `SurfaceGui` |
+| Collect pads | PlayerProfile | ✅ | see §b — Neon |
+| **Kerb** | MapBuilder | ✅ | **my judgement call — you didn't list it** |
+| Shop stall floor | — | n/a | **there isn't one** |
 
-```lua
-local topPoint = anchor.Position
-local count = math.max(1, visual.chainLinkCount)
-local chainThickness = if visual.chainStyle == "Rod" then postThickness * 0.35 else postThickness * 0.22
-for i = 1, count do
-	local segStart = topPoint:Lerp(seatTopPoint, (i - 1) / count)
-	local segEnd = topPoint:Lerp(seatTopPoint, i / count)
-	local link: Part
-	local twisted = visual.chainStyle == "Chain" and i % 2 == 0
-	if visual.chainStyle == "Chain" then
-		local cf, length = cframeAlongY(segStart, segEnd)
-		if twisted then
-			cf = cf * CFrame.Angles(0, math.rad(90), 0)
-		end
-		link = newPart(Enum.PartType.Block, Vector3.new(chainThickness, length, chainThickness * 0.5), cf, ...)
-	else
-		link = newRod(segStart, segEnd, chainThickness, Enum.PartType.Cylinder, ...)
-	end
-	link:SetAttribute("ChainIndex", i)
-	link:SetAttribute("Side", sideName)
-	link:SetAttribute("Twist90", twisted)
-end
-```
+## Things you missed, and what I did about each
 
-**There is no thickness alternation at all.** Every link on a tier is built at the *same* size,
-`Vector3.new(chainThickness, length, chainThickness * 0.5)` — a block with a **2:1 cross-section**,
-wide on local X, narrow on local Z. What alternates is a **90° rotation about the link's own long
-axis** (`CFrame.Angles(0, math.rad(90), 0)`), applied when `twisted` is true.
+**The kerb — included.** `GroundConfig.KERB_SIZE`, 480 × 1.2 × 2 along the road edge. It is paved
+ground dressing in the same concrete as the paths, and at 1.2 studs tall a player walks over it rather
+than round it. Leaving it smooth would have put an unstudded strip across the full width right where
+the paths meet the runway. Say the word and it comes out — it is one `asGround` wrapper.
 
-So "thick" and "thin" are the *same part* seen edge-on or face-on. That distinction is the whole bug:
-a rotation's appearance depends on the frame it is measured in, and a size's does not.
+**The shop stalls have no floor.** I checked the whole build: posts, front panel, rail, counter top,
+roof deck, roof band, shopkeeper torso/head, sign leg, sign board. **No floor part exists** — the
+stalls stand directly on the belt/baseplate. So "stall floors, if they have one" resolves to nothing
+to do. The counter top is furniture, not ground, and is excluded.
 
-**`twisted` is decided by `i % 2 == 0` — a pure parity check on the loop index.** Not position, not
-height, not a rounded value. That part is exactly what you asked for and it was already correct.
+**The swing ground pads — deliberately NOT included, and I want you to confirm.** `SwingBuilder`
+builds four `GroundPad*` parts per swing, under the frame's feet. They are genuinely walkable ground by
+any reasonable reading. I left them alone because "the swings" are on your standing exclusion list and
+these are built by `SwingBuilder` as part of the swing. **If you meant the pads to count as ground,
+that is a fifth call site and I should add it** — but I would rather ask than widen an explicit
+exclusion on my own.
 
-## b) What the alternation is actually a function of
+**The mount radius markers — excluded.** Flat translucent Neon discs, `CanCollide = false`. They are an
+overlay indicating a radius, not a surface; studs on a see-through marker would read as a bug.
 
-Two separate things, and only the first is index-driven:
+## a) Studs + a Texture on the same face
 
-| | driven by | stable? |
+**They coexist. Neither overrides the other, and there is no conflict to resolve.**
+
+They are independent systems: `SurfaceType` is a rendered decoration on the face, a `Texture` is a
+tiled image drawn on it. Setting one does not clear or suppress the other. The belt's ridge texture has
+a **transparent background** (the spec I gave you, and what you uploaded), so the studs show *through*
+the gaps between ridges and the dark bars draw over them.
+
+**The real problem is not technical, it is that they fight for the same job.**
+
+The scrolling ridges exist to make the surface look like it is moving. **Studs are static.** A static
+pattern sitting under a moving one gives the eye a fixed reference that says "this surface is not
+actually going anywhere" — which is precisely the reasoning that got `DiamondPlate` dropped from the
+belt last pass, in this same file's history:
+
+> two competing patterns on one surface read as noise, and the moving one loses — which is exactly the
+> thing that has to stay legible
+
+Studs are a *stronger* fixed reference than DiamondPlate's tread was, because the relief is coarser and
+catches light.
+
+**I applied it, because you scoped it explicitly and you may well like the classic look enough to
+accept a weaker sense of motion.** But it is the one surface in the list where the change works against
+something we deliberately built, so:
+
+**Revert for the belt alone:** delete the `asGround(...)` wrapper on `MapBuilder:288` (the
+`local belt = asGround(newBlock(` line and its closing paren). Nothing else is affected — the texture,
+the scroller, the velocities and the geometry are all independent.
+
+### The slot pads have the same question, with a different answer
+
+Each slot pad carries a Top-face `SurfaceGui` (`SlotLabel`, the slot number, `PixelsPerStud = 24`). A
+SurfaceGui is drawn as a flat overlay *on* the face — it does not displace the surface decoration under
+it, so again both render. Here I think it is fine rather than counterproductive: the label is opaque
+text over the studs, nothing is animated, and a numbered studded pad is exactly the classic look. If
+the number gets harder to read against the relief, the same one-wrapper revert applies at
+`MapBuilder:175`.
+
+## b) Studs on the Neon collect pads
+
+**Likely to be invisible, and the material is the reason — not the property.**
+
+`BASE_COLLECT_PAD_MATERIAL = Enum.Material.Neon`. Neon is self-illuminated: it renders at near-uniform
+full brightness and ignores most scene lighting. **Surface relief is read entirely from shading** — the
+light and dark sides of each stud are what make it look raised. Flood the surface with uniform emission
+and there is little shading left for the relief to live in.
+
+So the property will be set correctly and the pads may look exactly as they do now. **That is expected,
+not a failure.** Your options if you want them studded for real:
+
+- Accept flat — the pads are 4 × 8 stud markers, and their job is to be an obvious green "collect
+  here", which Neon does well.
+- Change `BASE_COLLECT_PAD_MATERIAL` to `SmoothPlastic` with a bright green — studs would read, at the
+  cost of the glow. **Out of scope this pass** (material is on your must-not-change list) and I have
+  not touched it.
+
+Worth noting the pads are also `CanCollide = false` — they are markers you walk *through*, not on. That
+weakens the case for studding them at all, but they were in your list and the change is harmless.
+
+## c) What each part type was set to before
+
+**Only one surface in the entire map had ever been assigned.** `grep` across `src` for any
+`*Surface` property found exactly two lines, both on the collect pad:
+
+| part type | before | after |
 |---|---|---|
-| **which links are twisted** (the parity) | `i % 2` — pure index | ✅ yes, always was |
-| **what "twisted" looks like** (the basis it rotates in) | the chain's **current tilt** | ❌ **this is the bug** |
+| **Collect pads** | **`Enum.SurfaceType.Smooth`** (explicit, `PlayerProfile:399`) | **`Studs`** |
+| Belt halves, approach links, spurs, mats, central paths, side/back trim, slot pads, kerb | **never assigned — engine default** | **`Studs`** |
 
-The parity is applied relative to a basis recomputed every frame in
-`LaunchFormulas.repositionChainSide`:
+### The honest caveat on that second row
 
-```lua
-local yAxis = delta.Unit
-local reference = if math.abs(yAxis.Y) > 0.9 then Vector3.new(1, 0, 0) else Vector3.new(0, 1, 0)
-local xAxis = reference:Cross(yAxis).Unit
-```
+**I could not determine what `Instance.new("Part")` actually defaults `TopSurface` to in your Studio
+version.** I tried to query it — create a part, read the property back, test the Texture interaction
+and confirm the size is unchanged — and the call failed with `Studio plugin connection timeout`. No
+playtest was run, per your instruction.
 
-`delta` is anchor → seat, so `yAxis.Y = -cos θ` where θ is the swing's angle. Working the cross
-products through, the block's **wide** local-X axis lands on:
+This matters, so I will not paper over it. Roblox's long-standing `Instance.new` default is
+`TopSurface = Studs` (Studio's *insert* button applies Smooth, which is a different path). **If that is
+still the default, most of these parts were already studded and this pass changes nothing visible for
+them** — the only guaranteed visible change would be the collect pads, which were explicitly Smooth.
 
-| swing angle | `\|yAxis.Y\|` | reference chosen | wide axis points along | untwisted link reads |
-|---|---|---|---|---|
-| θ = 0° (rest) | 1.00 | `(1,0,0)` | world −Z (into the view) | **narrow** |
-| θ = 25° | 0.906 | `(1,0,0)` | world −Z | **narrow** |
-| **θ = 25.84°** | **0.900** | — **threshold** — | — | — |
-| θ = 26° | 0.899 | `(0,1,0)` | world +X (across the view) | **WIDE** |
-| θ = 35° (sweet spot) | 0.819 | `(0,1,0)` | world +X | **WIDE** |
+Either way the change is worth having: it makes the finish an explicit, named, single decision instead
+of an inherited default that a future engine change could silently flip. But if you look at it and the
+paths appear unchanged, **that is the likely reason, and it means they were already right** — not that
+the code failed.
 
-Verified numerically — the top link's wide-axis projection onto world X goes 0.00 → 1.00 between 25°
-and 26°, and stays there out to 35°.
+If the ground looks smooth *after* this, the cause is elsewhere: most likely material. `Concrete`,
+`Slate` and similar carry their own strong surface texture that can visually swamp stud relief.
 
-**So the topmost link is narrow below 25.84° and wide above it**, and every link behind it inverts in
-lockstep. The pattern never breaks or shifts by one — it flips wholesale. `θ = 35 sin(2πp)` puts the
-swing past 25.84° for **45% of every cycle**, so a screenshot taken at an arbitrary moment is close to
-a coin flip. That matches "two screenshots of the same swing show opposite arrangements" precisely.
+## d) Does anything derive a height or landing from these surfaces?
 
-Worth noting *why* this hid for so long: the identical threshold lives in `SwingBuilder`'s
-`cframeFacingAlongY:79-84`, where it is genuinely harmless — the builder only ever evaluates it at the
-**θ = 0 reference pose**, where it always takes the `(1,0,0)` branch. The built swing is correct. It is
-only the per-frame client repositioning that ever sees a tilted chain.
+**Confirmed, by checking each derivation rather than assuming.**
 
-## c) The link count does not vary, and does not divide anything
+Surface types are a rendered decoration. They do not change `Size`, the bounding box, or collision
+geometry — a studded part occupies exactly the volume its `Size` describes, and a character stands at
+the same height on it.
 
-```lua
-local count = math.max(1, visual.chainLinkCount)
-```
+Every height derivation in the project reads `Position` and `Size`, never a surface:
 
-`chainLinkCount` is a **literal integer in `SwingTierVisuals`**, one per tier. It is not derived from
-the swing's height, the rope length, `scale`, or any geometry — so there is no division, no remainder,
-and no possibility of the loop starting or ending mid-pattern. The links are spaced by `Lerp` at
-`(i-1)/count` and `i/count`, which fits exactly `count` segments between the endpoints at any height by
-construction.
+| derivation | reads | affected |
+|---|---|:--:|
+| `RunwayGeometry.RUNWAY_TOP_Y` | `baseplate.Position.Y + baseplate.Size.Y / 2` | ❌ (and the baseplate is excluded anyway) |
+| `groundY` (BaseGeometry, MapBuilder, SwingGeometry) | same baseplate expression | ❌ |
+| `matTopY` | `groundY + BASE_MAT_Y_OFFSET + BASE_MAT_SIZE.Y / 2` | ❌ |
+| Slot pad Y | `groundY + BASE_SLOT_PAD_Y_OFFSET` | ❌ |
+| Collect pad Y | `matTopY + size.Y / 2` | ❌ |
+| Flight landing Y | `RunwayGeometry.RUNWAY_TOP_Y` (u = 1) | ❌ |
+| `bandLuckForLandingZ` | landing **Z** only | ❌ |
+| Return position Y | `groundY +` a standing offset | ❌ |
+| `SwingGeometry.pivotYForScale` | `groundY + PIVOT_HEIGHT * scale` | ❌ |
 
-**And the top link is always `i = 1`, so `1 % 2 == 0` is always false — the topmost link is never the
-twisted one, at every tier, in every build.** Your hypothesis (c) would have produced a pattern that
-shifted by one; what you actually have is a pattern that inverts. Different signature, different cause.
+**Nothing reads a rendered surface, and no `Size` changed.** The one thing that would have been a real
+risk — a surface decoration inflating collision and lifting characters — is not how Roblox implements
+these.
 
-## d) `repositionChainSide` only moves links — confirmed
+## Road bands — you asked me to push back, so here it is
 
-It writes `CFrame` and `Size`, but never the cross-section:
-
-```lua
--- Cylinder branch: X is the length axis
-link.Size = Vector3.new(length, link.Size.Y, link.Size.Z)
--- Block branch: Y is the length axis
-link.Size = Vector3.new(link.Size.X, length, link.Size.Z)
-```
-
-Each writes **only the length axis** and reads the other two back off the part itself. The 2:1
-cross-section set at build time is preserved verbatim, every frame, forever. No size is ever
-reassigned.
-
-The ordering is sound too: links are filtered by their `Side` attribute, then
-`table.sort`ed on `ChainIndex`. Every link carries a distinct `ChainIndex` within its side, so the
-comparator is a strict ordering with no ties and the result is deterministic regardless of
-`GetChildren` order or `table.sort`'s instability. `Twist90` is read per-link from the attribute rather
-than recomputed from the loop position, so the parity follows the individual link.
-
-Both callers — `LaunchClient.repositionChainLinks:359` and
-`LaunchRemoteLanes.repositionChainLinksFor:75` — delegate to this one function, so they shared the bug
-and share the fix.
-
-## e) Per tier: which tiers are affected
-
-Only `chainStyle == "Chain"` builds blocks. `Rope` and `Rod` build **cylinders**, which are radially
-symmetric about their length axis — the reference vector rotates them, but you cannot see a cylinder
-spin about its own axis, so the flip is invisible. `Energy` builds no links at all, just a `Beam`.
-
-| tier | style | links | count even? | alternates? | topmost link | affected by the bug? |
-|---:|---|---:|---|---|---|---|
-| 1 | Rope | 5 | odd | no | cylinder | no — radially symmetric |
-| 2 | Rope | 5 | odd | no | cylinder | no — radially symmetric |
-| 3 | Rope | 6 | even | no | cylinder | no — radially symmetric |
-| **4** | **Chain** | **7** | **odd** | **YES** | **`i=1`, untwisted** | **YES** |
-| **5** | **Chain** | **7** | **odd** | **YES** | **`i=1`, untwisted** | **YES** |
-| **6** | **Chain** | **8** | **even** | **YES** | **`i=1`, untwisted** | **YES** |
-| 7 | Rod | 3 | odd | no | cylinder | no — radially symmetric |
-| 8 | Rod | 3 | odd | no | cylinder | no — radially symmetric |
-| 9 | Rod | 2 | even | no | cylinder | no — radially symmetric |
-| 10 | Energy | 0 | — | no | Beam | no — no links exist |
-| 11 | Energy | 0 | — | no | Beam | no — no links exist |
-
-**Tiers 4, 5 and 6 only.** You reported tier 5, which is one of exactly three tiers that can show it —
-consistent. Note the count's parity is irrelevant to the symptom: tier 6 has an even count and tiers 4
-and 5 odd, and all three flip identically, because the flip is global to the side rather than an
-off-by-one at either end.
-
-## 5. The fix
-
-`LaunchFormulas.repositionChainSide`, block branch only:
+**The technical objection you raised does not exist.** I checked, expecting to confirm it, and found
+the opposite: the number labels are **not on the bands**. `RunwayBuilder:150-166` builds a *separate*
+part per band —
 
 ```lua
--- was: local reference = if math.abs(yAxis.Y) > 0.9 then Vector3.new(1, 0, 0) else Vector3.new(0, 1, 0)
-local reference = Vector3.new(1, 0, 0)
+local sign = Instance.new("Part")
+sign.Transparency = 1                                    -- invisible
+sign.CanCollide = false
+sign.Position = Vector3.new(RUNWAY_X, RUNWAY_TOP_Y + SIGN_CLEARANCE, centerZ)   -- floating ABOVE
 ```
 
-**`(1, 0, 0)` is correct unconditionally here, not a workaround for the threshold.** Each side's chain
-runs from an anchor at `X = ±seatHalfWidth` to a seat attachment at the **same** `X`
-(`SwingBuilder:446-452, 506-507`), so `delta.X` is exactly zero and the chain direction always lies in
-the YZ plane. World X is the swing-plane normal: perpendicular to `yAxis` at every θ by construction,
-so the cross product can never go degenerate, and it is continuous where the old branch was not.
+— with the `SurfaceGui` on *that*. The labels hover above the road on their own invisible plate. **A
+studded band could not fight them; they do not share a face, or even a part.**
 
-Working it through, `xAxis = (1,0,0) × (0, −cos θ, sin θ) = (0, −sin θ, −cos θ)`, which is a unit vector
-perpendicular to `yAxis` at every θ, and the block's narrow local-Z axis lands on world −X for all θ.
-Stable by construction, not by tuning.
+**My actual opinion: I think the bands would look better studded, and I would put them in.** The road
+is the single biggest surface in the map and the one thing every flight is framed against; leaving it
+the only smooth walkable surface in a studded map is the inconsistency, not the other way round. The
+classic Roblox rainbow road *is* studded — that is the reference this road is already reaching for with
+its full-saturation `Color3.fromHSV(hue, 1, 1)` bands.
 
-It is also **the same branch the builder takes**, since `cframeFacingAlongY` evaluates at the θ = 0
-reference pose where `|yAxis.Y| = 1`. So the first repositioned frame now agrees with the built pose
-instead of potentially popping.
+**Two honest counterpoints:** at flight altitude (68–267 studs of arch) stud relief will be invisible
+anyway, so the benefit is confined to standing near the start; and it is 74 bands at 360 × 40 studs
+each, which is a lot of surface decoration, though the cost is modest.
 
-**What it was a function of:** the swing's current tilt angle, via a `|yAxis.Y| > 0.9` threshold on the
-chain direction.
-**What it is a function of now:** nothing but the link's own index — the basis is a fixed world axis,
-and `i % 2` alone decides which links are turned in it.
+**I left them smooth, as instructed.** If you want them, it is one `asGround`-equivalent line in
+`RunwayBuilder` after `band.Material` — say so and I will add it.
 
-### Deliberately not changed
+## Files
 
-The **cylinder branch keeps its conditional.** It is genuinely unobservable there (a cylinder cannot
-show rotation about its length axis), the Rope/Rod chains are the only callers that hit it, and
-changing it would be churn with no visual effect. The asymmetry between the two branches is now
-explained in a comment at the fix site so it does not read as an oversight.
+| file | change |
+|---|---|
+| `Config/GroundConfig.luau` | new `GROUND_TOP_SURFACE = Enum.SurfaceType.Studs` + type field; header broadened from "just the kerb" |
+| `MapBuilder.server.luau` | new `asGround(part)` helper; applied at **10 call sites** (kerb, mat, central path, 2 side edges, back edge, slot pads, approach link, spur, belt) |
+| `PlayerProfile.luau` | collect pad `TopSurface`: hardcoded `Smooth` → `GroundConfig.GROUND_TOP_SURFACE`; requires `GroundConfig` |
 
-## 6. Verification
+**`asGround` is opt-in at each call site, deliberately not applied in the part factory** — that factory
+also builds stall roofs, posts, sign boards and the giant slime's ground patch, none of which are
+ground. Wrapping explicitly keeps "what counts as ground" readable as a list instead of as a side
+effect of which constructor something used.
 
-- **Geometry re-derived from the source constants**: threshold at θ = 25.84°, swing travel ±35°, 45% of
-  each cycle past it, top link's wide-axis projection 0.00 → 1.00 across the threshold under the old
-  code and flat 0.00 at every θ under the fix.
-- **`rojo build default.project.json` succeeds.**
-- **Diff is one file**: `LaunchFormulas.luau`, one logic line plus its comment.
-- **No playtest**, per instruction.
+**Nothing else changed.** No geometry, position, size, colour or material; the belt velocities and
+ridge texture, the road's Z geometry, the baseplate, the road bands, the slime patch, the swings, signs,
+chest, slimes and landmark are all untouched. `BottomSurface` on the collect pad stays `Smooth` — it
+sits face-down on the mat and is never seen.
 
-Not verified on screen — this is a visual bug and the arithmetic says it is fixed, but tiers 4–6 at the
-swing extremes are what would confirm it.
+## What needs eyes in Studio
 
-## 7. Is it worth pinning, or should the links just be one thickness?
+1. **Did anything actually change?** §c — if the paths look identical, the default was already `Studs`
+   and that is fine.
+2. **Does the belt still read as moving?** §a. This is the one I would revert first.
+3. **Are the collect pads visibly studded, or did Neon flatten them?** §b. Flat is expected.
+4. **Are the slot numbers still readable** over the relief? §a.
+5. **Do you want the road bands too?** §Road bands — the objection turned out not to apply.
+6. **Do you want the swing ground pads?** I excluded them under "the swings"; they are arguably ground.
 
-**Pinning is worth it, and it is not a close call** — the fix replaced a conditional with a constant.
-It is fewer tokens than what was there, adds no state, no new attribute, no per-tier data, and no
-branch. There is no complexity to weigh against the detail.
-
-Flattening the links to a single thickness would have been the *larger* change: it means editing the
-block's size in `SwingBuilder`, deleting the `twisted` computation, the build-time
-`CFrame.Angles` branch, the `Twist90` `SetAttribute`, and the re-apply in `repositionChainSide` — five
-edits across two files, to remove a deliberate visual that distinguishes the three mid-tier swings from
-the Rope tiers below and the Rod tiers above.
-
-If the alternation had needed new machinery to stabilise — a stored orientation, a per-tier table, a
-seeded value — the answer would have been the opposite, and I would have said so. It did not. The
-alternation was already index-driven; only the frame it was drawn in was not.
-
-## 8. Untouched
-
-Swing heights, `SWING_PERIOD_SECONDS`, the sweet-spot phase window, arc angle,
-`ARC_HEIGHT_SQRT_COEFFICIENT`, the camera pullback, distance at any tier, the per-tier snap thresholds,
-ping compensation, the luck distribution, swing prices, the upgrade curve, the chest and its reveal,
-road geometry, the platform, the landmark, SlimeBuilder, SignBuilder, ChestBuilder, the collect pads,
-the idle breathing animation, the six-lane remote rendering block, the spawn flow, the dev panel gates
-and the `resetReadyRemote` death-cancellation path. `SwingBuilder` itself is unmodified — the build was
-always correct.
-
-## 9. One adjacent observation, not fixed
-
-`Twist90` is read with `link:GetAttribute("Twist90")`, which returns `nil` if the client repositions a
-link before its attributes have replicated. That would make *every* link untwisted for those frames —
-all links looking identical, briefly — rather than inverting the pattern, so it is not what you saw.
-It is transient and self-correcting, and fixing it properly means gating the reposition on attribute
-presence. Left alone; flagged in case a first-frame flicker ever gets reported.
-
-## 10. Still outstanding, unchanged
+## Still outstanding, unchanged
 
 The chest's facing inference (`orientLockToFront`); the tier-11 overshoot slice; `game.rbxlx` still a
 stale 6 Aug artifact; the two duplicate-function pairs; the 27-local remotes bootstrap; the
-`GetNetworkPing()` one-way-vs-RTT question; and the release camera's 35° tilt against a 88–210 stud
-pullback putting the subject at the top edge of frame (see the previous report).
+`GetNetworkPing()` one-way-vs-RTT question; the release camera's 35° tilt against an 88–210 stud
+pullback putting the subject at the top edge of frame; the kerb's comment claiming MapBuilder leaves it
+`CanCollide` off when it does not; and the road labels having grown 50% from the widening.

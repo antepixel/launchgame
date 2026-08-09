@@ -91,6 +91,7 @@ local LaunchFormulas = require(ReplicatedStorage.LaunchClient.LaunchFormulas)
 local LaunchHud = require(ReplicatedStorage.LaunchClient.LaunchHud)
 local LaunchRewardScene = require(ReplicatedStorage.LaunchClient.LaunchRewardScene)
 local LaunchRemoteLanes = require(ReplicatedStorage.LaunchClient.LaunchRemoteLanes)
+local ConveyorScroll = require(ReplicatedStorage.LaunchClient.ConveyorScroll)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -503,6 +504,18 @@ end)
 -- halves early-return to nothing whenever no box (and no box camera
 -- transition) is running, which is nearly always.
 RunService.RenderStepped:Connect(RewardScene.update)
+
+-- The conveyor belts' ridge textures -- ONE connection driving BOTH halves
+-- (see ConveyorScroll.luau), not one per part.
+--
+-- ITS OWN CONNECTION, for the same reason the reward scene above has one: the
+-- flight/riding render loop further down is gated on flightActive/mounted, and
+-- the belts must keep scrolling whether or not this player is riding, flying,
+-- or standing still on the other side of the map. Folding it in there would
+-- have stopped the world's conveyors whenever the local player happened to be
+-- mid-launch. It is a no-op (an empty list, one length check) until MapBuilder
+-- has actually built the belts.
+RunService.RenderStepped:Connect(ConveyorScroll.update)
 
 -- The SLIME REVEAL PANEL used to be built here -- a centre-screen Frame with
 -- a tier-coloured UIStroke border, a NEW/Duplicate badge, a tier line and a

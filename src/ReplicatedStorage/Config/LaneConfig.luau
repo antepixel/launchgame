@@ -44,32 +44,66 @@ LaneConfig.SPAWN_Z = 55
 -- Lane i's world X (0-indexed, matching PlayerProfile's baseIndex
 -- directly): LANE_COUNT lanes, evenly spaced across the road's own width
 -- (LaunchConfig.RUNWAY_WIDTH_STUDS), centered on ROAD_CENTER_X. At
--- LANE_COUNT = 6 and RUNWAY_WIDTH_STUDS = 240 this gives a 40-stud pitch
--- and centers -100, -60, -20, 20, 60, 100 -- see the written report for the
--- measured confirmation against the tier-11 footprint clamp.
+-- LANE_COUNT = 6 and RUNWAY_WIDTH_STUDS = 360 this gives a 60-stud pitch
+-- and centers -150, -90, -30, 30, 90, 150.
+--
+-- THE PITCH IS NOW THE PLOT GAP TOO (see REPORT.md): plots ride this same
+-- function, their true footprint is 40 studs, so the bare ground between
+-- neighbouring plots is exactly pitch - 40 -- 20 studs at the current width,
+-- 0 at the previous 240. Nothing else expresses that gap; it is this
+-- subtraction and nothing more.
+--
+-- The tier-11 swing footprint (35.01 studs, see SwingTierVisuals' own
+-- footprint clamp) now clears its neighbour by 24.99 studs, up from 4.99 at
+-- the old 40-stud pitch -- so the widening only ever relieves that
+-- constraint, never tightens it.
+--
+-- DEFINED FOR INDICES OUTSIDE 0..LANE_COUNT-1, deliberately and by
+-- construction: the arithmetic is a plain linear map with no clamp, so
+-- laneCenterX(-1) and laneCenterX(LANE_COUNT) return the next grid position
+-- beyond each end of the row. StallConfig uses exactly those two to place
+-- the shops, which is why the shops track the pitch automatically instead of
+-- needing their own literal. Do not add a clamp here without giving that
+-- caller another way to ask the same question.
 function LaneConfig.laneCenterX(laneIndex: number): number
 	local pitch = LaunchConfig.RUNWAY_WIDTH_STUDS / LaneConfig.LANE_COUNT
 	local offsetFromCenter = (laneIndex - (LaneConfig.LANE_COUNT - 1) / 2) * pitch
 	return LaneConfig.ROAD_CENTER_X + offsetFromCenter
 end
 
--- Studs between adjacent BASE lane centers -- deliberately a SEPARATE,
--- wider pitch than the swing lanes above (see BASE_LANE_PITCH_STUDS): a
--- swing must sit on the (fixed-width) road, so swing lanes are permanently
--- capped at RUNWAY_WIDTH_STUDS / LANE_COUNT; a player's base has no such
--- constraint, so it's free to sit on a wider pitch and give each plot more
--- room to breathe. Bases are placed off the map blockout, not fanned out
--- from the road width.
-LaneConfig.BASE_LANE_PITCH_STUDS = 80
+-- Studs between adjacent BASE lane centers. NOW EQUAL TO THE SWING PITCH,
+-- and derived from it rather than stated (see REPORT.md -- the straightening
+-- pass).
+--
+-- IT USED TO BE 80, an independent literal, on the reasoning that a swing
+-- must sit on the fixed-width road but a plot needn't, so plots were free to
+-- breathe on a wider pitch. That reasoning was sound in isolation and wrong
+-- in composition: it put plot i at exactly TWICE its swing's X, so the
+-- walkway connector between them had to cover a gap that GREW with distance
+-- from centre -- 100 studs of X in 33 studs of Z at the outer lanes, a link
+-- running 71.7 degrees off axis. That outward fan of diagonals is what this
+-- pass removes, and the only way to remove it is for the two pitches to be
+-- the same number. Kept as a named constant rather than deleted because it
+-- is still the documented SEAM: if plots ever need their own pitch again,
+-- this is where it goes back, and baseLaneCenterX below is where it is read.
+LaneConfig.BASE_LANE_PITCH_STUDS = LaunchConfig.RUNWAY_WIDTH_STUDS / LaneConfig.LANE_COUNT
 
--- Lane i's BASE world X -- same evenly-spaced-around-ROAD_CENTER_X shape as
--- laneCenterX above, just on BASE_LANE_PITCH_STUDS instead of the road's
--- own pitch. At LANE_COUNT = 6 and BASE_LANE_PITCH_STUDS = 80 this gives
--- centers -200, -120, -40, 40, 120, 200 -- derived from lane count and the
--- base pitch, not six hand-picked literals, same reasoning as laneCenterX.
+-- Lane i's BASE world X -- now DELEGATES to laneCenterX, so a plot sits
+-- directly above its own swing by construction and cannot drift out of
+-- alignment again the way two independently-maintained formulas did. At
+-- LANE_COUNT = 6 and RUNWAY_WIDTH_STUDS = 360 this gives centers -150, -90,
+-- -30, 30, 90, 150 -- the same six numbers laneCenterX returns, because they
+-- ARE the same six numbers now.
+--
+-- STILL A SEPARATE FUNCTION on purpose: every plot-dressing caller
+-- (BaseGeometry's mat/path/edges/slots/sign, PlayerProfile's slime facing)
+-- goes through this name, and every swing/flight caller goes through
+-- laneCenterX. Collapsing the two call sites into one would erase the
+-- distinction between "where this lane's PLOT is" and "where this lane's
+-- SWING is" -- which is exactly the information a future pass would need to
+-- pull them apart again.
 function LaneConfig.baseLaneCenterX(laneIndex: number): number
-	local offsetFromCenter = (laneIndex - (LaneConfig.LANE_COUNT - 1) / 2) * LaneConfig.BASE_LANE_PITCH_STUDS
-	return LaneConfig.ROAD_CENTER_X + offsetFromCenter
+	return LaneConfig.laneCenterX(laneIndex)
 end
 
 return LaneConfig

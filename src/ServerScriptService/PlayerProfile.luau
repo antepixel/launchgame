@@ -19,6 +19,7 @@ local HttpService = game:GetService("HttpService")
 
 local BaseConfig = require(ReplicatedStorage.Config.BaseConfig)
 local BaseGeometry = require(ReplicatedStorage.Config.BaseGeometry)
+local GroundConfig = require(ReplicatedStorage.Config.GroundConfig)
 local InventoryConfig = require(ReplicatedStorage.Config.InventoryConfig)
 local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
@@ -396,7 +397,20 @@ local function spawnSlimeVisual(profile: Profile, slotNumber: number, slime: Sli
 	collectPad.Position = collectPosition
 	collectPad.Material = BaseConfig.BASE_COLLECT_PAD_MATERIAL
 	collectPad.Color = BaseConfig.BASE_COLLECT_PAD_COLOR
-	collectPad.TopSurface = Enum.SurfaceType.Smooth
+	-- Studded top, from the one shared ground-finish constant every other
+	-- walkable surface reads (MapBuilder applies the same value to the mats,
+	-- paths, belt and slot pads). This is the ONLY surface in the map that
+	-- was explicitly Smooth before -- everywhere else was left at the part
+	-- default -- so this line is the one guaranteed visible change of the
+	-- pass.
+	--
+	-- CAVEAT, and it is a real one: BASE_COLLECT_PAD_MATERIAL is Neon, which
+	-- is self-illuminated and shades almost flat. Stud relief is read from
+	-- shading, so the studs may barely register here even though the property
+	-- is set. See REPORT.md -- if they do not show, the pad's material is the
+	-- reason, not this line.
+	collectPad.TopSurface = GroundConfig.GROUND_TOP_SURFACE
+	-- Bottom stays Smooth: it sits face-down on the mat and is never seen.
 	collectPad.BottomSurface = Enum.SurfaceType.Smooth
 	collectPad.Parent = model
 

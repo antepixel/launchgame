@@ -68,7 +68,18 @@ export type BaseConfig = {
 -- under its own BASE_* key -- these locals are the single copy, not a second
 -- one to keep in step. =====
 local SLOT_PAD_SIZE = Vector3.new(8, 0.6, 8)
-local MAT_SIZE = Vector3.new(44, 0.4, 84)
+-- WIDTH 38, WAS 44 (see REPORT.md -- the straightening pass). The plots now
+-- sit on the SWING lanes' own 40-stud pitch (LaneConfig.baseLaneCenterX
+-- delegates to laneCenterX) so each plot is directly above its own swing,
+-- which removes the diagonal walkway links. 44 does not fit a 40 pitch --
+-- adjacent plots would overlap by 4 studs. The binding limit is actually
+-- tighter than the mat itself: the raised side trim sits at mat/2 + 0.5 and
+-- is 1 stud wide, so no-overlap needs mat + 2 <= 40, i.e. mat <= 38. At
+-- exactly 38 the trim of adjacent plots lands FLUSH -- outer faces meeting
+-- at baseX +-20, precisely half the pitch -- so the six plots read as one
+-- continuous row divided by trim lines rather than six islands. Depth is
+-- untouched; only the frontage narrowed.
+local MAT_SIZE = Vector3.new(38, 0.4, 84)
 local PATH_SIZE = Vector3.new(10, 0.5, 84)
 
 -- ===== HOW FAR APART THE TWO SLOT COLUMNS SIT, DERIVED FROM WHAT HAS TO FIT
@@ -288,15 +299,23 @@ local BaseConfig: BaseConfig = {
 	BASE_PATH_COLOR = Color3.fromRGB(214, 210, 198),
 	BASE_PATH_MATERIAL = Enum.Material.Concrete,
 
-	-- Side edges: one on each side of the plot, at X = baseX +-this.
+	-- Side edges: one on each side of the plot, at X = baseX +-this. The
+	-- offset is MAT_SIZE.X / 2 + half this part's own width -- unchanged as a
+	-- RULE; only the mat it is measured against narrowed (44 -> 38), taking
+	-- this from 22.5 to 19.5 with it. At a 40-stud lane pitch that puts each
+	-- edge's outer face on baseX +-20, exactly half the pitch, so adjacent
+	-- plots' trim meets flush with no overlap and the row is continuous.
 	BASE_SIDE_EDGE_SIZE = Vector3.new(1, 1.1, 86),
-	BASE_SIDE_EDGE_X_OFFSET = 22.5,
+	BASE_SIDE_EDGE_X_OFFSET = 19.5,
 	BASE_SIDE_EDGE_Y_OFFSET = 0.55,
 
 	-- Back edge: one per lane, closing off the far end of the plot. Shifted
 	-- +46 along with BASE_PLOT_CENTER_Z above (146 -> 192 = new plot centre
-	-- 150 + mat half-depth 42, same relationship as before).
-	BASE_BACK_EDGE_SIZE = Vector3.new(46, 1.1, 1),
+	-- 150 + mat half-depth 42, same relationship as before). Its WIDTH is the
+	-- mat plus both side edges (38 + 1 + 1), so it closes the plot corner to
+	-- corner -- same rule as before, restated against the narrower mat
+	-- (was 46 = 44 + 2).
+	BASE_BACK_EDGE_SIZE = Vector3.new(40, 1.1, 1),
 	BASE_BACK_EDGE_Z = 192,
 	BASE_BACK_EDGE_Y_OFFSET = 0.55,
 

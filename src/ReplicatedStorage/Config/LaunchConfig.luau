@@ -582,7 +582,30 @@ local LaunchConfig: LaunchConfig = {
 	-- this number regardless of how tall its host sign is, so widening the
 	-- road is what let the numbers grow, not just a bigger sign. See
 	-- RunwayBuilder.server.luau and the written report.
-	RUNWAY_WIDTH_STUDS = 240,
+	--
+	-- WIDENED AGAIN, 240 -> 360, AND THIS TIME IT IS NOT COSMETIC (see
+	-- REPORT.md -- the plot-gap pass). It is now the ONLY input to the lane
+	-- pitch: LaneConfig.laneCenterX divides this by LANE_COUNT, and since the
+	-- last pass the PLOTS ride that same pitch so each one sits directly above
+	-- its own swing. A plot's true footprint is 40 studs (BaseConfig's 38-wide
+	-- mat plus a 1-stud trim each side), so at the old 240 the pitch was
+	-- exactly 40 and the plots came out FLUSH -- one solid block with no bare
+	-- ground between neighbours. The gap is pitch minus footprint, so the only
+	-- way to open one is to widen the pitch, and the only way to widen the
+	-- pitch is to widen this:
+	--
+	--   360 / 6 lanes = 60 pitch;  60 - 40 footprint = 20 studs of gap
+	--
+	-- The gap therefore FALLS OUT of this number -- there is no separate gap
+	-- constant to keep in step, and retuning this is how you retune the gap.
+	--
+	-- STILL NOT LOAD-BEARING FOR THE FLIGHT. The trajectory's X is fixed at
+	-- the launch origin's X for the whole arc (see LaunchFormulas.
+	-- trajectoryPosition -- only Z advances), and bandLuckForLandingZ reads Z
+	-- alone, so no width here can move a landing, a distance, or a band. What
+	-- it does move is every LANE, and everything derived from a lane's X:
+	-- swings, spawns, mount markers, return positions, plots, and the shops.
+	RUNWAY_WIDTH_STUDS = 360,
 	-- Band COUNT and each band's LUCK value are no longer authored here at all
 	-- -- see ReplicatedStorage/Config/LuckCurve.luau. The road is now as long
 	-- as the generated curve says it is (#LuckCurve.VALUES bands), not a fixed

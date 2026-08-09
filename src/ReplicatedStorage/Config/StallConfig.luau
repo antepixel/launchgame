@@ -10,6 +10,14 @@
 -- faces inward toward the swings regardless of which stall (left or
 -- right) is being built. STALL_SHOPKEEPER placeholder is a plain coloured
 -- torso+head, to be replaced with a real NPC later -- see MapBuilder.
+--
+-- READS LaneConfig for its X positions -- see STALL_X_POSITIONS below. That
+-- is the only cross-config dependency here, and it points DOWN the same
+-- chain everything else uses (LaneConfig -> LaunchConfig), so there is no
+-- cycle to worry about: nothing in either of those requires this file.
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
 
 export type StallConfig = {
 	STALL_X_POSITIONS: { number },
@@ -73,7 +81,25 @@ export type StallConfig = {
 }
 
 local StallConfig: StallConfig = {
-	STALL_X_POSITIONS = { -222, 222 },
+	-- NOW DERIVED, NOT LITERAL (see REPORT.md -- the plot-gap pass). These
+	-- used to be +-222, then +-140; both were hand-computed against whatever
+	-- the lane pitch happened to be at the time, which meant every pitch
+	-- change silently stranded the shops until someone noticed.
+	--
+	-- THE SHOPS ARE SIMPLY THE NEXT TWO LANE POSITIONS. laneCenterX is a
+	-- plain linear map with no clamp, so index -1 and index LANE_COUNT return
+	-- the grid slots just beyond each end of the plot row -- which is exactly
+	-- where a shop belongs if it is to read as another station in the same
+	-- rhythm rather than an outrigger. That makes them track the pitch for
+	-- free: at the old 240-wide road this evaluates to +-140, reproducing the
+	-- previous pass's hand-picked number exactly, and at the current 360 it
+	-- gives +-210 with no edit here.
+	--
+	-- What it buys at the current pitch: the plot row's outer trim ends at
+	-- +-170, the stall's innermost structure (its counter) sits at x0 - 4.1 =
+	-- 205.9, and each shop's own sign at x0 - 12.5 = 197.5 stays clear of the
+	-- row -- so no part of a stall ever crowds the outermost player's plot.
+	STALL_X_POSITIONS = { LaneConfig.laneCenterX(-1), LaneConfig.laneCenterX(LaneConfig.LANE_COUNT) },
 	-- Moved from 174 (behind every plot) to level with the walkway -- see
 	-- PathConfig.BACK_WALKWAY_Z -- when the shop walkway moved from behind
 	-- the bases to between the swings and the bases -- see the written
