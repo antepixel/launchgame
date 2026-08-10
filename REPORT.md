@@ -1,965 +1,478 @@
-# Does raising the slot count fix the dead time? No.
+# The swing ladder, renumbered from eleven tiers to ten
 
-**Measurement only. This pass changed nothing in `src/`, `assets/`, `dev/rbxshim.luau`,
-`default.project.json`, `dev/analysis/common.luau`, the four earlier analysis scripts, or either
-source JSON** — it added `dev/analysis/slot_sweep.luau`, `dev/analysis/sweep_tables.luau` and their
-`dev/out/` output, and rewrote this file. Studio was never opened; no playtest was run.
+**Branch: `ladder-renumber`. Pre-change commit: `8ea8f408adcb918523301a5dc44aef2f99be17e3`.**
 
-**Join check passed.** `dev/out/roll_economics.json` and `dev/out/cycle_economics.json` both record
-`e12ca51476a0f5e724b06f09231fe5c45516b045`, which is the current HEAD; `slot_sweep.luau` re-checks
-both itself and `error()`s rather than joining against a stale file. One pre-existing uncommitted
-change is present and was not made here: `MapBuilder.server.luau`'s `asGround` call on the belt
-halves, which sets a `TopSurface` and moves no geometry.
+That commit is a snapshot of the tree exactly as the three measurement passes describe it, taken
+before anything here was edited. To undo the whole change:
 
-**Reproduction check passed** (this was a stop condition). At K = 10 this harness produces
-**1.98 h of content against 113.3 h of dead time unlevelled, 8.3 h maxed**, against the prior pass's
-2.04 h / 113.3 h / 8.6 h. Scored under the *prior pass's own* exhaustion definition instead of this
-brief's, the same run gives **2.01 h** of content — a 1.5% difference on a different seed, a
-different grid and a horizon twice as long. Nothing here contradicts the earlier result.
+```
+git reset --hard 8ea8f408adcb918523301a5dc44aef2f99be17e3
+```
 
-Machine-readable output: **`dev/out/slot_sweep.json`**.
+Three commits on the branch, in the order the brief asked for:
+
+| commit | what |
+|---|---|
+| `8ea8f40` | baseline (pre-change), nothing of this task in it |
+| `4d972fc` | step 3 — the renumber itself |
+| `526bda0` | step 5 — the migration statement, after step 4's verification |
+
+Studio was never opened, no playtest was run, and nothing in `dev/out/roll_economics.json`,
+`dev/out/cycle_economics.json`, `dev/out/slot_sweep.json` or the five earlier analysis scripts was
+regenerated or edited.
 
 ## Reproduce every number
 
 ```
-lune run dev/analysis/slot_sweep.luau                                # steps 0-7, writes the JSON (~75 s)
-lune run dev/analysis/sweep_tables.luau > dev/out/sweep_tables.md    # every table below
+lune run dev/analysis/solve_ladder.luau     # step 2: the solve (also prints the current-ladder offsets)
+lune run dev/analysis/verify_ladder.luau    # step 4 + step 5: read-back through the real formulas
+lune run dev/analysis/clamp_effect.luau     # step 3f: what the luck-anchor change did
+lune run dev/run_gallery.luau               # smoke test: builds every tier through the real SwingBuilder
 ```
 
-Both from the **repo root**. Seeds: **20260812** for the sweep (10,000 runs per cell, horizon 20,000
-rolls, K in {10, 11, 15, 16, 20, 21, 30, 31, 50, 51} x 11 tiers), **20260813** for the modelled
-mutation arm (2,000 runs per cell). Deterministic: a rerun reproduces these numbers exactly.
+All from the repo root. Deterministic — no sampling and no seeds anywhere in this pass.
 
-The roll distribution is the real `SlimeRoll` — `common.rollPmfForBandLuck` integrates the real
-`SlimeRoll.distributionForLuck` over the mystery box's doubling chain exactly, and tier 11 uses the
-chest table. Nothing is reimplemented. `dev/analysis/common.luau` is required read-only; the new
-helpers all live in the new script.
+## The one thing that needs a second pass
 
-## The answer, up front
-
-1. **Exhaustion is invariant in K.** Raising the slot count fivefold moves tier-10 exhaustion from
-   **13.7 to 16.2 minutes** and tier-5 from 12.6 to 12.6. Summed over tiers 1-10, total content is
-   **1.98 h at K = 10 and 2.03 h at K = 50** — a 2% change for five times the slots.
-
-2. **Dead time does fall — for a different reason.** 113 h at K = 10 to 50 h at K = 50, entirely
-   because more slots mean more income and the next tier arrives sooner. Not one minute of that
-   comes from the tier staying interesting longer.
-
-3. **No K closes the gap.** Solving dead time = 0 needs K = 20 at tier 2 (it is already negative
-   there), and K in the **hundreds to trillions** for tiers 3-10, every one extrapolated well past
-   the swept range. At the largest K swept, tiers 8, 9 and 10 still carry 560, 775 and 1,331 minutes
-   of dead time against 14, 16 and 16 minutes of content — overshooting zero by **36x, 48x and 82x**.
-   Slot growth alone cannot close the gap; it is not close to closing it.
-
-4. **The modelled mutation arm does not close it either.** Not one of the 16 (p, m) pairs pushes
-   tier-10 exhaustion past **15 minutes**, let alone the 60 asked about. The two levers also do not
-   compose: at K = 20 the best mutation configuration produces exactly the K = 20 baseline.
-
-5. **Why, in one sentence:** exhaustion is a *relative* criterion — gain rate against income already
-   held — and both K and a mutation multiplier scale the numerator and the denominator together. The
-   only thing that would move it is a distribution whose tail keeps producing improvements after the
-   set has filled, which is a property of the roll table's shape, not of how many slots hold it.
-
-6. **A saturated slot has an exact price: $6,011,287,000.** At any tier whose set reaches the
-   ceiling, one more slot is worth one more top-Divine slime at max level, and the economy's own
-   exchange rate prices it at `350,000 x 28.6252 x 600`. That is 23x the tier-9 swing price and
-   under a quarter of tier 11's.
+**Raising `SLIME_LUCK_ANCHOR_HIGH` to 1,000,000 did what it was asked to do at the top of the road
+and cost about 10x of base roll value on the way.** The dead box is gone — the band the new tier 9
+lands on went from a 1.01x box to a 2.55x box — but stretching the anchor also slowed how fast the
+window advances with luck, so the same band that used to roll `$8.87K` of expected base income now
+rolls `$877`. Net, at the same band and including the box, a roll is **4.0x worse than it was**
+(`$8.98K` -> `$2.23K`). Prices were not rebalanced, by instruction. §3f has the measurement; §"What
+this leaves" has the consequence.
 
 ---
 
-# Step 0 — the facts that decide whether the sweep is valid
+# Step 1 — what the source actually says
 
-## 0a. Can one slime occupy several slots at once? **Yes. Duplicates are permitted.**
+Nothing found here contradicts the brief in a way that blocks the change, so I proceeded. Three
+answers came back *smaller* than the brief assumed, and one came back structurally different; all
+four are called out below rather than quietly absorbed.
 
-Both write paths scan only for an *empty* slot and never compare against what is already held:
+## 1a. Everything indexed by swing tier
 
-- `PlayerProfile.receiveSlime:865-873` — `for i = 1, SLOT_COUNT do if not profile.slots[i] then
-  profile.slots[i] = slime.globalIndex ...` — the condition is emptiness, nothing else.
-- `PlayerProfile.placeFromInventory:907-919` — the same loop, the same condition. Its only ownership
-  test is `profile.inventory[globalIndex] > 0`.
+| what | file:line | length before | length after |
+|---|---|---|---|
+| `SWING_TIER_DISTANCE_SCALE` | `LaunchConfig.luau:1044` (now `:1073`) | 11 | 10 |
+| `SWING_TIER_SNAP_THRESHOLD` | `LaunchConfig.luau:1068` (now `:1097`) | 11 | 10 |
+| `SwingTierVisuals.TIERS` | `SwingTierVisuals.luau:143` | 11 records | 10 records |
+| `SWING_TIER_PRICES` | `ShopConfig.luau:108` | 11 | 10 |
+| design-target list | `ShopConfig.luau:39-43` | 10 targets (tiers 2-11) | 9 targets (tiers 2-10) |
 
-Nothing else in the tree writes `profile.slots` (checked: the only other touches are
-`removeToInventory:939`, which clears, and `applyLoadedData:624`, which restores whatever was
-saved). The inventory itself is a *stacked count* per `globalIndex`
-(`PlayerProfile.luau:43-52`), which only makes sense if several copies can be held and placed.
+**Structural difference from the brief's assumption:** there is no "visual scale array". Visual
+scale is one field (`scale`) inside `SwingTierVisuals.TIERS`, an array of 11 full art records —
+frame material, colours, chain style, trail and burst settings. Deleting a tier means deleting a
+whole record, not an entry in a number list. Old tier 10's record (obsidian, energy tether) is the
+one that went; the surviving records keep their own art and only their `scale` moved.
 
-**Therefore the K-slot ceiling is `K x $350,000`** — the top Divine slime, `SlimeConfig.
-SLIME_INCOME_BY_TIER[8][8]`, in every slot. Every sweep below uses that. Had duplicates been
-blocked, the ceiling would have been the sum of the top K distinct slimes and every number here
-would differ.
+**The design-target list is a comment block, not code** (`ShopConfig.luau:39-43`) — it documents how
+the prices were derived. It was updated with the same care as the array it describes.
 
-## 0b. Everything a change to `SLOT_COUNT` would drag with it
+**Rope length is not an array at all** — see 1c.
 
-`BaseConfig.SLOT_COUNT = 10` (`BaseConfig.luau:151`) is read in exactly these places:
+**There is no explicit ladder bound anywhere.** Every consumer derives the count from
+`#LaunchConfig.SWING_TIER_DISTANCE_SCALE`: `PlayerProfile.buyNextTier:1134`,
+`applyLoadedData:641`, `devSetSwingTier:1325`, `ShopClient.client.luau:86`,
+`DevPanelClient.client.luau:362`. That is why this change is as small as it is.
 
-| site | what it does | survives a raise? |
+## 1b. Literal `10`s and `11`s that mean a swing tier
+
+**In `src/`: none that are functional.** I checked every site the brief named:
+
+| site | what it does | literal? |
 |---|---|---|
-| `BaseGeometry.slotPositions:66-72` | builds the K pad positions from `slotPosition` | **geometry-bound** — see 0c |
-| `BaseGeometry.slotPosition:50-61` | 2-column grid, `col = (i-1) % 2`, `row = (i-1) // 2`, `z = 117 + 14*row` | yes, but marches off the mat |
-| `MapBuilder.server.luau:168-182` | builds one pad per position, named `string.format("Slot%02d", n)` | yes up to **99** slots; `%02d` silently widens past that |
-| `PlayerProfile.getSlotPad:153-156` | `WaitForChild(string.format("Slot%02d", n))` | must match the builder's format exactly |
-| `PlayerProfile.syncClientState:537-546` | JSON-encodes one `{slot, globalIndex, level}` record per filled slot into a `Slots` attribute | grows ~40 bytes per slot; at K = 50 that is ~2 KB. Roblox's attribute-string limit is not documented in this repo — **flagged, not verified** |
-| `PlayerProfile.toSaveShape:578-584` | `table.create(SLOT_COUNT, 0)` positional arrays for `slots` and `levels` | yes |
-| `PlayerProfile.applyLoadedData:621-634` | reads `slots[i]` for `i = 1..SLOT_COUNT`, ignoring missing entries | yes — **an old 10-entry save loads into a larger base with the extra slots empty**, no migration needed |
-| `PlayerProfile.removeToInventory:931`, `upgradeSlime:1020`, `:1340` | range validation `slotNumber <= SLOT_COUNT` | yes |
-| `PlayerProfile` income loop `:1164` and visual rebuild `:758` | iterate all slots | yes |
-| `DevPanelClient.client.luau:410-413` | walks slots to find a free one | yes |
+| `LaunchServer.server.luau:2253` chest branch | branches on `flight.zone == "past"` | no — zone, never a tier number |
+| `PlayerProfile.buyNextTier:1134-1137` | `nextTier > #SWING_TIER_DISTANCE_SCALE` | no |
+| `PlayerProfile.applyLoadedData:641` | clamps to `#SWING_TIER_DISTANCE_SCALE` | no |
+| `ShopClient.client.luau:86` | `TIER_COUNT = #SWING_TIER_DISTANCE_SCALE`, rows built `1..TIER_COUNT` | no |
+| `DevPanelClient.client.luau:362` | `swingTierCount = #SWING_TIER_DISTANCE_SCALE`, buttons in rows of 4 | no |
+| `SwingTierVisuals.forTier:535` | `math.clamp(tier, 1, #tiers)` | no |
 
-The `Profile` type itself (`PlayerProfile.luau:41-65`) is keyed maps, not fixed-width arrays, so it
-needs no change at all. **No UI grid is K-bound**: the inventory panel lists slimes, not slots.
+So 3d turned out to be a comment job, not a code job. **34 comment references to "tier 11" or
+"tier 10" did name an index whose meaning changed**, across 14 files, and those were updated — a
+comment that says "tier 11 is the only tier this can fire on" is false the moment the ladder has
+ten. They are listed in §3d.
 
-## 0c. The largest K the existing serialisation and layout can carry
+**Outside `src/`, one real literal:** `gallery/SwingGallery.server.luau:25` held
+`local TIER_COUNT = 11`. The gallery is dev-only tooling and outside the brief's `src/` scope, but
+after the renumber it rendered a phantom eleventh swing that `forTier` silently clamped to the top
+tier — the gallery drew the same swing twice and labelled the copy a tier. It now reads
+`#LaunchConfig.SWING_TIER_DISTANCE_SCALE` like every other consumer. Reported here because it is a
+change outside the named scope.
 
-**Serialisation: unbounded in practice.** The save shape is positional arrays sized from
-`SLOT_COUNT`, written and read by the same loop, and DataStore's per-key limit is megabytes against
-a few hundred bytes here. Growth is also *backward-compatible* — see `applyLoadedData` above.
+## 1c. Visual scale and rope length are not independent
 
-**Geometry: 12.** The binding constraint is the plot mat. Slot pads start at
-`BASE_SLOT_Z_START = 117`, step `BASE_SLOT_ROW_SPACING_STUDS = 14` per row, and are
-`BASE_SLOT_PAD_SIZE.Z = 8` deep, so row r's far edge is `117 + 14r + 4`. The mat is
-`BASE_MAT_SIZE.Z = 84` centred on `BASE_PLOT_CENTER_Z = 150`, so it ends at **192**, where the back
-edge part also sits (`BASE_BACK_EDGE_Z = 192`). `117 + 14r + 4 <= 192` gives `r <= 5.07`, i.e. rows
-0-5, and at `BASE_GRID_COLUMNS = 2` that is **12 slots**. K = 13 puts the seventh row's pads through
-the back edge and off the mat.
+Rope is **derived**, one line, no table:
 
-So: **K = 12 without touching anything but `SLOT_COUNT`; beyond that the mat, the row pitch or the
-column count has to move too** — none of which is a schema change, just a layout one. The naming
-format caps at 99 regardless.
+```lua
+-- SwingGeometry.luau:71-73
+function SwingGeometry.ropeLengthForScale(scale: number): number
+	return LaunchConfig.SWING_ROPE_LENGTH * scale     -- SWING_ROPE_LENGTH = 10
+end
+```
 
-## 0d. Does income sum all slots, uncapped? **Yes — re-verified.**
+`SwingBuilder` calls it with the tier's own `visual.scale`; `swingSeatPosition` recovers the same
+number at runtime from the pivot's live Y via `ropeLengthForPivotY` (the inverse of
+`pivotYForScale`). So choosing a visual scale sets the rope, and the rope sets the seat — which is
+exactly why the solve has to run in that order.
 
-`PlayerProfile.totalIncomePerSecond:1162-1174` walks `1..SLOT_COUNT`, adds
-`SlimeUpgrade.incomeForLevel(slime.incomePerSecond, levels[i] or 1)` per filled slot, and returns
-the sum. There is no cap, no per-slot multiplier, no diminishing term, and no dependence on how many
-slots are filled. The payout loop (`:1176-1187`) multiplies that sum by the tick length.
+## 1d. The seat offset, and what it is on the current ladder
 
-## 0e. The level-reset rule, re-verified
+The launch does not start at band 0 and does not start at the pivot. At sweet-spot phase
+(`SWEET_SPOT_PHASE = 0.25`, where `sin(2*pi*phase) = 1` so theta is the full 35-degree arc):
 
-Unchanged from the first pass: level is per **slot** (`levels: { [number]: number }`,
-`PlayerProfile.luau:54-65`), set to 1 on every placement (`receiveSlime:868`,
-`placeFromInventory:910`), and destroyed on removal (`removeToInventory:942`).
+```
+-- LaunchServer.server.luau:591-594 (swingTheta), :602-610 (swingSeatPosition)
+seatZ  = SWING_PIVOT_Z - ropeLength * sin(SWING_ARC_HALF_ANGLE_DEGREES)
+-- :683-688 trajectoryPosition at u = 1, then :736-746 bandLuckForLandingZ
+offset = seatZ - RUNWAY_START_Z        -- studs of the flight spent before band 0
+```
 
-`SlimeUpgrade.totalUpgradeCost:81-89` takes `(baseIncomePerSecond, fromLevel, count)` and reads
-nothing else — no slot count, no held-set size. **The re-max cost therefore depends on K only
-through the total base income of the set**, which is exactly how this sweep charges it. The derived
-constant is `SlimeUpgrade.totalUpgradeCost(1, 1, 25)` = **16,575.1057** seconds of base income,
-computed in the script rather than typed in.
+`SWING_PIVOT_Z = 30`, `RUNWAY_START_Z = -4.26`. Measured on the **pre-change** ladder:
+
+| tier | visual scale | rope | seat Z | offset from band 0 |
+|---|---|---|---|---|
+| 1 | 1.00 | 10.00 | 24.264 | **28.524** |
+| 2 | 1.12 | 11.20 | 23.576 | 27.836 |
+| 3 | 1.28 | 12.80 | 22.658 | 26.918 |
+| 4 | 1.55 | 15.50 | 21.110 | 25.370 |
+| 5 | 1.75 | 17.50 | 19.962 | 24.222 |
+| 6 | 2.00 | 20.00 | 18.528 | 22.788 |
+| 7 | 2.30 | 23.00 | 16.808 | 21.068 |
+| 8 | 2.55 | 25.50 | 15.374 | 19.634 |
+| 9 | 2.80 | 28.00 | 13.940 | 18.200 |
+| 10 | 3.15 | 31.50 | 11.932 | 16.192 |
+| 11 | 3.60 | 36.00 | 9.351 | **13.611** |
+
+The offset shrinks by 14.9 studs across the ladder — more than a third of a band — which is the
+coupling the brief warns about and `ECONOMY_DUMP.md` got wrong.
+
+## 1e. A saved `swingTier` of 10 or 11 against a 10-entry ladder
+
+**It already clamps, and always did.** `PlayerProfile.applyLoadedData:640-643`:
+
+```lua
+if typeof(data.swingTier) == "number" then
+	local tierCount = #LaunchConfig.SWING_TIER_DISTANCE_SCALE
+	profile.swingTier = math.clamp(math.floor(data.swingTier), 1, tierCount)
+end
+```
+
+It does not error, and it cannot persist out of range: `toSaveShape:604` writes
+`profile.swingTier`, which is the already-clamped value. Nothing else assigns the field except
+`buyNextTier` (bounded) and `devSetSwingTier` (clamped the same way). See §5 for what that means for
+real saves and for the one consequence it carries.
+
+## 1f. The luck clamp and everything that reads it
+
+| constant | value before | read at |
+|---|---|---|
+| `SLIME_LUCK_ANCHOR_LOW` | 220 | `SlimeRoll.luau:68` |
+| `SLIME_LUCK_ANCHOR_HIGH` | **120,000** | `SlimeRoll.luau:69` |
+| `SLIME_EXTRAPOLATION_T_MIN` | -0.5 | `SlimeRoll.luau:72` |
+| `SLIME_EXTRAPOLATION_T_MAX` | 1.0 | `SlimeRoll.luau:72` |
+
+Those four are read in exactly one function, `SlimeRoll.distributionForLuck` (`:67-109`), and
+nowhere else in `src/`. The consuming logic:
+
+```
+t = (ln(luck) - ln(LOW)) / (ln(HIGH) - ln(LOW))          -- :68-71, log scale
+t = clamp(t, T_MIN, T_MAX)                                -- :72
+windowStart = clamp(round(lerp(1, 5, t)), 1, 5)           -- :76-77, whole-tier jumps
+peak/spreadDown/spreadUp/shape = lerp(..., t)             -- :79-93, each with a floor
+```
+
+Because `windowStart` **rounds**, the window advances in whole-tier jumps at fixed values of `t`,
+and `t` is a pure function of `ln(luck)` between the two anchors. Moving the high anchor therefore
+moves every one of those jumps, not just the clamp point — which is the whole of §3f.
 
 ---
 
-# Step 1 — the slot sweep
+# Step 2 — the solve
 
-**Method.** The same event-driven construction `dev/analysis/slot_sim.luau` uses (read, not edited):
-the held set only changes when a roll beats the current worst slot, so the wait for the next
-improvement is geometric with `q = P(income > worst)` and is sampled directly. That is exact, not an
-approximation of rolling one at a time. One thing is new, and it is what makes K = 51 affordable:
-the held set is carried as a **count vector over the distribution's distinct income values**, with
-the worst-held value as a pointer that only ever moves up — an improvement is two increments and an
-amortised bump, O(1) instead of O(K). The sampled process is unchanged.
+`dev/analysis/solve_ladder.luau`. Visual scale first, geometric between the two fixed ends
+(`3.60^((tier-1)/9)`, rounded to the 2 dp every existing entry is written at — the old 11-entry
+series was itself geometric, ratios 1.10-1.21 with a geometric mean of 1.1372, so this keeps the
+ladder's existing character). Then rope, then seat offset, then the distance scale that puts the
+perfect-launch landing on the **centre** of the target band, rounded to 4 dp (0.02 studs).
 
-**Exhaustion is defined once, and used everywhere below**: the first roll N at which the mean
-forward gain rate over `[N, 2N)` falls under 1% of the mean income held at N. Every doubled point is
-on the measurement grid by construction (the grid is ~9% geometric plus the exact double of every
-point), so no interpolation enters. The "1% of equilibrium" definition from the first pass is
-degenerate and is not reported. Exhaustion resolves to the nearest grid point, so figures are quoted
-to about +/-5%.
-
-**"Rolls to 50 / 90 / 99%" are percentages OF THE CEILING** — `K x $350,000` — not of a
-horizon value. The first pass's T2 reported against its 10,000-roll value and that was read as if it
-were the ceiling; it was not.
-
-### K1a. Rolls to exhaustion, by slot count and tier
-
-| tier | K=10 | K=15 | K=20 | K=30 | K=50 | change 10 -> 50 |
-|---|---|---|---|---|---|---|
-| 1 | 68 | 68 | 68 | 68 | 62 | -6 rolls (0.91x) |
-| 2 | 88 | 81 | 74 | 81 | 81 | -7 rolls (0.92x) |
-| 3 | 88 | 88 | 88 | 81 | 88 | +0 rolls (1.00x) |
-| 4 | 74 | 88 | 96 | 81 | 88 | +14 rolls (1.19x) |
-| 5 | 88 | 88 | 88 | 88 | 88 | +0 rolls (1.00x) |
-| 6 | 96 | 88 | 88 | 88 | 88 | -8 rolls (0.92x) |
-| 7 | 96 | 96 | 96 | 96 | 88 | -8 rolls (0.92x) |
-| 8 | 88 | 88 | 96 | 96 | 88 | +0 rolls (1.00x) |
-| 9 | 81 | 88 | 96 | 96 | 96 | +15 rolls (1.19x) |
-| 10 | 81 | 88 | 88 | 96 | 96 | +15 rolls (1.19x) |
-| 11 | 50 | 62 | 68 | 81 | 88 | +38 rolls (1.76x) |
-
-**Read the first column against the last.** Five times the slots buys between -9% and +76% of
-exhaustion, with no trend worth calling one: tier 5 does not move at all, tier 1 gets *worse*, and
-the only tier that genuinely responds is **tier 11** (50 to 88 rolls, +76%) — because the chest
-table is the one distribution whose upper tail keeps producing improvements for a set that large.
-Everywhere else the answer is flat.
-
-That is the whole finding, and the rest of this report is its consequences. What K *does* buy is
-income: tier 10's median at 10,000 rolls goes from $3.5M/s to $17.5M/s, exactly 5x, because the set
-saturates at the ceiling and the ceiling is linear in K. **More slots make you richer at the same
-speed; they do not make the tier last longer.**
-
-Also visible in K1b: the number of rolls to reach 90% of the ceiling grows roughly linearly in K
-(tier 10: 1,292 rolls at K = 10, 6,700 at K = 50), which is the mirror image — a bigger ceiling
-takes proportionally longer to fill, so the *fraction* filled at any given roll count is nearly
-K-invariant, and the exhaustion criterion sees the same curve shape either way.
-
-### K1b. The sweep in full (median held-set base income/s)
-
-Ceiling = K x $350,000, the top Divine slime in every slot -- duplicates are permitted (step 0a). `rolls to X%` are percentages **of that ceiling**, not of any horizon value.
-
-| K | tier | ceiling | p50 @100 | p50 @1k | p50 @10k | p50 @20k | rolls to 50% | to 90% | to 99% | exhaustion (rolls) | levelling capacity @10k |
+| tier | visual | rope | seat offset | distance scale | distance | landing Z | from band 0 | band | target | margin low | margin high |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 10 | 1 | $3.5M | $1.07K | $5.4K | $53K | $107K | nil | nil | nil | 68 | $878M |
-| 10 | 2 | $3.5M | $1.97K | $12.7K | $204K | $377K | nil | nil | nil | 88 | $3.39B |
-| 10 | 3 | $3.5M | $3.54K | $31.6K | $405K | $663K | nil | nil | nil | 88 | $6.71B |
-| 10 | 4 | $3.5M | $7.65K | $106K | $1.09M | $1.7M | nil | nil | nil | 74 | $18.1B |
-| 10 | 5 | $3.5M | $28.1K | $418K | $2.34M | $2.85M | 6144 | nil | nil | 88 | $38.8B |
-| 10 | 6 | $3.5M | $50.3K | $711K | $2.93M | $3.5M | 3350 | 13400 | 18950 | 96 | $48.6B |
-| 10 | 7 | $3.5M | $117K | $1.18M | $3.5M | $3.5M | 1826 | 7968 | 10000 | 96 | $58B |
-| 10 | 8 | $3.5M | $254K | $1.8M | $3.5M | $3.5M | 996 | 4344 | 5634 | 88 | $58B |
-| 10 | 9 | $3.5M | $448K | $2.44M | $3.5M | $3.5M | 543 | 2368 | 3072 | 81 | $58B |
-| 10 | 10 | $3.5M | $754K | $2.98M | $3.5M | $3.5M | 296 | 1292 | 1675 | 81 | $58B |
-| 10 | 11 | $3.5M | $2.22M | $3.5M | $3.5M | $3.5M | 68 | 272 | 352 | 50 | $58B |
-| 15 | 1 | $5.25M | $1.31K | $6.03K | $55.4K | $110K | nil | nil | nil | 68 | $918M |
-| 15 | 2 | $5.25M | $2.25K | $14.2K | $208K | $403K | nil | nil | nil | 81 | $3.46B |
-| 15 | 3 | $5.25M | $3.91K | $34.1K | $431K | $740K | nil | nil | nil | 88 | $7.14B |
-| 15 | 4 | $5.25M | $8.7K | $104K | $1.15M | $1.94M | nil | nil | nil | 88 | $19.1B |
-| 15 | 5 | $5.25M | $29.8K | $439K | $2.86M | $3.8M | 8688 | nil | nil | 88 | $47.4B |
-| 15 | 6 | $5.25M | $52.9K | $758K | $3.75M | $4.6M | 5000 | nil | nil | 88 | $62.2B |
-| 15 | 7 | $5.25M | $117K | $1.25M | $4.6M | $5.25M | 2817 | 11268 | 15936 | 96 | $76.2B |
-| 15 | 8 | $5.25M | $252K | $2.04M | $5.25M | $5.25M | 1536 | 6144 | 8688 | 88 | $87B |
-| 15 | 9 | $5.25M | $454K | $3M | $5.25M | $5.25M | 838 | 3350 | 4738 | 88 | $87B |
-| 15 | 10 | $5.25M | $784K | $3.88M | $5.25M | $5.25M | 456 | 1826 | 2583 | 88 | $87B |
-| 15 | 11 | $5.25M | $2.66M | $5.25M | $5.25M | $5.25M | 100 | 418 | 592 | 62 | $87B |
-| 20 | 1 | $7M | $1.5K | $6.63K | $58.5K | $117K | nil | nil | nil | 68 | $970M |
-| 20 | 2 | $7M | $2.47K | $15.4K | $211K | $420K | nil | nil | nil | 74 | $3.5B |
-| 20 | 3 | $7M | $4.21K | $36.1K | $442K | $796K | nil | nil | nil | 88 | $7.33B |
-| 20 | 4 | $7M | $9.35K | $105K | $1.22M | $2.06M | nil | nil | nil | 96 | $20.2B |
-| 20 | 5 | $7M | $31.6K | $447K | $3.16M | $4.5M | 12288 | nil | nil | 88 | $52.4B |
-| 20 | 6 | $7M | $55K | $786K | $4.41M | $5.65M | 6700 | nil | nil | 88 | $73.1B |
-| 20 | 7 | $7M | $121K | $1.3M | $5.57M | $6.74M | 3653 | 15936 | nil | 96 | $92.3B |
-| 20 | 8 | $7M | $256K | $2.13M | $6.74M | $7M | 1992 | 8688 | 11268 | 96 | $112B |
-| 20 | 9 | $7M | $459K | $3.36M | $7M | $7M | 1086 | 4738 | 6144 | 96 | $116B |
-| 20 | 10 | $7M | $802K | $4.6M | $7M | $7M | 592 | 2583 | 3653 | 88 | $116B |
-| 20 | 11 | $7M | $2.93M | $7M | $7M | $7M | 136 | 592 | 768 | 68 | $116B |
-| 30 | 1 | $10.5M | $1.79K | $7.75K | $63K | $129K | nil | nil | nil | 68 | $1.04B |
-| 30 | 2 | $10.5M | $2.85K | $17.4K | $214K | $438K | nil | nil | nil | 81 | $3.54B |
-| 30 | 3 | $10.5M | $4.68K | $39.6K | $461K | $858K | nil | nil | nil | 81 | $7.64B |
-| 30 | 4 | $10.5M | $10.4K | $117K | $1.3M | $2.22M | nil | nil | nil | 81 | $21.6B |
-| 30 | 5 | $10.5M | $34.1K | $450K | $3.44M | $5.51M | 18950 | nil | nil | 88 | $57.1B |
-| 30 | 6 | $10.5M | $57.6K | $818K | $5.33M | $7.36M | 10000 | nil | nil | 88 | $88.3B |
-| 30 | 7 | $10.5M | $121K | $1.4M | $7.18M | $8.94M | 5634 | nil | nil | 96 | $119B |
-| 30 | 8 | $10.5M | $258K | $2.27M | $8.81M | $10.5M | 3072 | 13400 | 17378 | 96 | $146B |
-| 30 | 9 | $10.5M | $462K | $3.73M | $10.5M | $10.5M | 1675 | 7306 | 9475 | 96 | $174B |
-| 30 | 10 | $10.5M | $807K | $5.61M | $10.5M | $10.5M | 913 | 3984 | 5634 | 96 | $174B |
-| 30 | 11 | $10.5M | $3.11M | $9.98M | $10.5M | $10.5M | 200 | 838 | 1184 | 81 | $174B |
-| 50 | 1 | $17.5M | $2.23K | $9.57K | $70.8K | $143K | nil | nil | nil | 62 | $1.17B |
-| 50 | 2 | $17.5M | $3.35K | $19.6K | $233K | $464K | nil | nil | nil | 81 | $3.86B |
-| 50 | 3 | $17.5M | $5.3K | $45K | $478K | $913K | nil | nil | nil | 88 | $7.92B |
-| 50 | 4 | $17.5M | $11.9K | $124K | $1.39M | $2.48M | nil | nil | nil | 88 | $23B |
-| 50 | 5 | $17.5M | $37.2K | $468K | $3.77M | $6.54M | nil | nil | nil | 88 | $62.5B |
-| 50 | 6 | $17.5M | $62.7K | $843K | $6.15M | $9.69M | 17378 | nil | nil | 88 | $102B |
-| 50 | 7 | $17.5M | $132K | $1.49M | $9.28M | $12.7M | 9475 | nil | nil | 88 | $154B |
-| 50 | 8 | $17.5M | $269K | $2.52M | $12.3M | $15.3M | 5000 | nil | nil | 88 | $204B |
-| 50 | 9 | $17.5M | $475K | $4.05M | $15M | $17.5M | 2817 | 12288 | 15936 | 96 | $249B |
-| 50 | 10 | $17.5M | $815K | $6.61M | $17.5M | $17.5M | 1536 | 6700 | 8688 | 96 | $290B |
-| 50 | 11 | $17.5M | $3.28M | $14.2M | $17.5M | $17.5M | 352 | 1536 | 1992 | 88 | $290B |
+| 1 | 1.00 | 10.00 | 28.524 | **1.0000** | 200.00 | -175.74 | 171.48 | 4 | 4 | 11.48 | 28.52 |
+| 2 | 1.15 | 11.50 | 27.664 | 2.6383 | 527.66 | -504.26 | 500.00 | 12 | 12 | 20.00 | 20.00 |
+| 3 | 1.33 | 13.30 | 26.631 | 4.2332 | 846.64 | -824.27 | 820.01 | 20 | 20 | 20.01 | 19.99 |
+| 4 | 1.53 | 15.30 | 25.484 | 5.8274 | 1165.48 | -1144.26 | 1140.00 | 28 | 28 | 20.00 | 20.00 |
+| 5 | 1.77 | 17.70 | 24.108 | 7.4205 | 1484.10 | -1464.25 | 1459.99 | 36 | 36 | 19.99 | 20.01 |
+| 6 | 2.04 | 20.40 | 22.559 | 9.0128 | 1802.56 | -1784.26 | 1780.00 | 44 | 44 | 20.00 | 20.00 |
+| 7 | 2.35 | 23.50 | 20.781 | 10.6039 | 2120.78 | -2104.26 | 2100.00 | 52 | 52 | 20.00 | 20.00 |
+| 8 | 2.71 | 27.10 | 18.716 | 12.1936 | 2438.72 | -2424.26 | 2420.00 | 60 | 60 | 20.00 | 20.00 |
+| 9 | 3.12 | 31.20 | 16.364 | 13.7818 | 2756.36 | -2744.26 | 2740.00 | 68 | 68 | 20.00 | 20.00 |
+| 10 | 3.60 | 36.00 | 13.611 | **15.3552** | 3071.04 | -3061.69 | 3057.43 | past | past | 17.43 | 22.57 |
+
+**No tier is flagged.** Every solved tier sits dead centre with 20 studs to either boundary. Tier 1
+is off-centre (11.48 / 28.52) because its scale is fixed at 1.0000 and cannot be moved — still four
+times the 5-stud flag threshold. Tier 10's margins are measured against the platform edge rather
+than a band and are shown for completeness.
 
 ---
 
-# Step 2 — the percentile spread
+# Step 3 — what was edited
 
-The first pass reported p90/p10 only at 10,000 rolls, where tiers 8-11 came out at exactly **1.00**:
-every simulated player, lucky or unlucky, ended with an identical base. That is real, and it is the
-saturation showing through — at those tiers the set reaches the ceiling well inside the horizon, and
-a ceiling has no variance.
+## 3a. The tier-indexed arrays
 
-### K2. Percentile spread of held-set base income/s
-
-| K | tier | p10 @100 | p50 @100 | p90 @100 | p90/p10 | p10 @1k | p50 @1k | p90 @1k | p90/p10 | p10 @10k | p50 @10k | p90 @10k | p90/p10 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 10 | 1 | $720 | $1.07K | $2.27K | 3.15 | $3.2K | $5.4K | $22.1K | 6.89 | $21.6K | $53K | $251K | 11.64 |
-| 10 | 2 | $1.14K | $1.97K | $4.25K | 3.73 | $6.65K | $12.7K | $71.3K | 10.73 | $66.5K | $204K | $527K | 7.92 |
-| 10 | 3 | $1.98K | $3.54K | $14.1K | 7.11 | $12.6K | $31.6K | $167K | 13.23 | $166K | $405K | $798K | 4.82 |
-| 10 | 4 | $4.74K | $7.65K | $29.4K | 6.20 | $35.4K | $106K | $399K | 11.28 | $623K | $1.09M | $1.71M | 2.75 |
-| 10 | 5 | $11.2K | $28.1K | $172K | 15.37 | $160K | $418K | $830K | 5.20 | $1.8M | $2.34M | $2.85M | 1.58 |
-| 10 | 6 | $18.5K | $50.3K | $262K | 14.15 | $339K | $711K | $1.22M | 3.59 | $2.44M | $2.93M | $3.37M | 1.38 |
-| 10 | 7 | $37.8K | $117K | $402K | 10.64 | $666K | $1.18M | $1.79M | 2.69 | $2.98M | $3.5M | $3.5M | 1.17 |
-| 10 | 8 | $84.8K | $254K | $590K | 6.97 | $1.25M | $1.8M | $2.39M | 1.91 | $3.5M | $3.5M | $3.5M | 1.00 |
-| 10 | 9 | $170K | $448K | $859K | 5.07 | $1.9M | $2.44M | $2.97M | 1.56 | $3.5M | $3.5M | $3.5M | 1.00 |
-| 10 | 10 | $362K | $754K | $1.28M | 3.53 | $2.54M | $2.98M | $3.5M | 1.38 | $3.5M | $3.5M | $3.5M | 1.00 |
-| 10 | 11 | $1.7M | $2.22M | $2.74M | 1.61 | $3.5M | $3.5M | $3.5M | 1.00 | $3.5M | $3.5M | $3.5M | 1.00 |
-| 15 | 1 | $945 | $1.31K | $2.5K | 2.64 | $3.75K | $6.03K | $21.7K | 5.79 | $25.6K | $55.4K | $249K | 9.70 |
-| 15 | 2 | $1.41K | $2.25K | $4.55K | 3.24 | $8.2K | $14.2K | $67K | 8.17 | $72K | $208K | $523K | 7.26 |
-| 15 | 3 | $2.35K | $3.91K | $13.2K | 5.62 | $15.4K | $34.1K | $156K | 10.14 | $198K | $431K | $816K | 4.12 |
-| 15 | 4 | $5.47K | $8.7K | $29.6K | 5.40 | $39.8K | $104K | $399K | 10.03 | $672K | $1.15M | $1.79M | 2.66 |
-| 15 | 5 | $13.4K | $29.8K | $156K | 11.68 | $182K | $439K | $856K | 4.70 | $2.17M | $2.86M | $3.56M | 1.64 |
-| 15 | 6 | $22.3K | $52.9K | $258K | 11.55 | $384K | $758K | $1.25M | 3.27 | $3.13M | $3.75M | $4.34M | 1.39 |
-| 15 | 7 | $42.9K | $117K | $408K | 9.50 | $731K | $1.25M | $1.89M | 2.59 | $4.03M | $4.6M | $5.12M | 1.27 |
-| 15 | 8 | $87.4K | $252K | $590K | 6.75 | $1.37M | $2.04M | $2.76M | 2.02 | $4.99M | $5.25M | $5.25M | 1.05 |
-| 15 | 9 | $178K | $454K | $864K | 4.84 | $2.33M | $3M | $3.66M | 1.57 | $5.25M | $5.25M | $5.25M | 1.00 |
-| 15 | 10 | $386K | $784K | $1.31M | 3.39 | $3.27M | $3.88M | $4.47M | 1.37 | $5.25M | $5.25M | $5.25M | 1.00 |
-| 15 | 11 | $2.03M | $2.66M | $3.34M | 1.65 | $5.25M | $5.25M | $5.25M | 1.00 | $5.25M | $5.25M | $5.25M | 1.00 |
-| 20 | 1 | $1.12K | $1.5K | $2.69K | 2.41 | $4.39K | $6.63K | $22.5K | 5.13 | $29.1K | $58.5K | $246K | 8.48 |
-| 20 | 2 | $1.61K | $2.47K | $4.69K | 2.90 | $9.25K | $15.4K | $67.5K | 7.30 | $75.8K | $211K | $528K | 6.97 |
-| 20 | 3 | $2.61K | $4.21K | $13.4K | 5.12 | $17.1K | $36.1K | $155K | 9.06 | $210K | $442K | $840K | 4.00 |
-| 20 | 4 | $6.04K | $9.35K | $29.2K | 4.83 | $45K | $105K | $391K | 8.71 | $730K | $1.22M | $1.83M | 2.50 |
-| 20 | 5 | $15.2K | $31.6K | $157K | 10.36 | $186K | $447K | $866K | 4.65 | $2.39M | $3.16M | $3.99M | 1.67 |
-| 20 | 6 | $24.5K | $55K | $262K | 10.68 | $414K | $786K | $1.29M | 3.11 | $3.65M | $4.41M | $5.17M | 1.42 |
-| 20 | 7 | $46.5K | $121K | $408K | 8.76 | $796K | $1.3M | $1.94M | 2.44 | $4.9M | $5.57M | $6.22M | 1.27 |
-| 20 | 8 | $93.6K | $256K | $587K | 6.27 | $1.44M | $2.13M | $2.94M | 2.04 | $6.09M | $6.74M | $7M | 1.15 |
-| 20 | 9 | $183K | $459K | $874K | 4.77 | $2.58M | $3.36M | $4.19M | 1.62 | $7M | $7M | $7M | 1.00 |
-| 20 | 10 | $412K | $802K | $1.33M | 3.23 | $3.85M | $4.6M | $5.34M | 1.39 | $7M | $7M | $7M | 1.00 |
-| 20 | 11 | $2.18M | $2.93M | $3.71M | 1.70 | $7M | $7M | $7M | 1.00 | $7M | $7M | $7M | 1.00 |
-| 30 | 1 | $1.38K | $1.79K | $2.92K | 2.12 | $5.52K | $7.75K | $23.6K | 4.28 | $33.4K | $63K | $244K | 7.31 |
-| 30 | 2 | $1.98K | $2.85K | $5.18K | 2.62 | $10.7K | $17.4K | $74.8K | 7.00 | $86K | $214K | $528K | 6.14 |
-| 30 | 3 | $3.09K | $4.68K | $14.4K | 4.67 | $21.1K | $39.6K | $158K | 7.47 | $221K | $461K | $854K | 3.86 |
-| 30 | 4 | $7.08K | $10.4K | $29.9K | 4.23 | $52.9K | $117K | $403K | 7.61 | $810K | $1.3M | $1.93M | 2.38 |
-| 30 | 5 | $18K | $34.1K | $162K | 9.03 | $194K | $450K | $861K | 4.43 | $2.54M | $3.44M | $4.47M | 1.76 |
-| 30 | 6 | $28.2K | $57.6K | $260K | 9.21 | $436K | $818K | $1.33M | 3.05 | $4.38M | $5.33M | $6.29M | 1.43 |
-| 30 | 7 | $52.1K | $121K | $409K | 7.84 | $873K | $1.4M | $2.04M | 2.34 | $6.25M | $7.18M | $8.07M | 1.29 |
-| 30 | 8 | $102K | $258K | $591K | 5.80 | $1.58M | $2.27M | $3.09M | 1.95 | $8.07M | $8.81M | $9.59M | 1.19 |
-| 30 | 9 | $191K | $462K | $877K | 4.59 | $2.78M | $3.73M | $4.75M | 1.71 | $9.72M | $10.5M | $10.5M | 1.08 |
-| 30 | 10 | $422K | $807K | $1.34M | 3.18 | $4.66M | $5.61M | $6.58M | 1.41 | $10.5M | $10.5M | $10.5M | 1.00 |
-| 30 | 11 | $2.3M | $3.11M | $4.03M | 1.75 | $9.2M | $9.98M | $10.5M | 1.14 | $10.5M | $10.5M | $10.5M | 1.00 |
-| 50 | 1 | $1.81K | $2.23K | $3.36K | 1.86 | $7.09K | $9.57K | $25K | 3.52 | $40.8K | $70.8K | $254K | 6.24 |
-| 50 | 2 | $2.46K | $3.35K | $5.47K | 2.23 | $13.1K | $19.6K | $69.3K | 5.28 | $102K | $233K | $543K | 5.30 |
-| 50 | 3 | $3.64K | $5.3K | $14.3K | 3.92 | $25.8K | $45K | $160K | 6.19 | $242K | $478K | $873K | 3.61 |
-| 50 | 4 | $8.49K | $11.9K | $31.6K | 3.72 | $62.1K | $124K | $410K | 6.60 | $865K | $1.39M | $2.04M | 2.36 |
-| 50 | 5 | $20.8K | $37.2K | $168K | 8.09 | $219K | $468K | $869K | 3.96 | $2.87M | $3.77M | $4.81M | 1.68 |
-| 50 | 6 | $32.9K | $62.7K | $267K | 8.12 | $462K | $843K | $1.37M | 2.95 | $4.92M | $6.15M | $7.46M | 1.52 |
-| 50 | 7 | $59.4K | $132K | $417K | 7.02 | $954K | $1.49M | $2.17M | 2.27 | $8.08M | $9.28M | $10.6M | 1.31 |
-| 50 | 8 | $115K | $269K | $599K | 5.23 | $1.79M | $2.52M | $3.33M | 1.86 | $11.2M | $12.3M | $13.5M | 1.20 |
-| 50 | 9 | $209K | $475K | $888K | 4.25 | $3.09M | $4.05M | $5.1M | 1.65 | $14.1M | $15M | $15.9M | 1.13 |
-| 50 | 10 | $433K | $815K | $1.34M | 3.10 | $5.35M | $6.61M | $7.94M | 1.48 | $17.1M | $17.5M | $17.5M | 1.02 |
-| 50 | 11 | $2.44M | $3.28M | $4.21M | 1.72 | $13.2M | $14.2M | $15.2M | 1.15 | $17.5M | $17.5M | $17.5M | 1.00 |
-
-### K2b. Where outcome variance has effectively vanished (p90/p10 < 1.5)
-
-| roll budget | K=10 | K=15 | K=20 | K=30 | K=50 |
-|---|---|---|---|---|---|
-| 100 rolls | none | none | none | none | none |
-| 1000 rolls | tiers 10, 11 | tiers 10, 11 | tiers 10, 11 | tiers 10, 11 | tiers 10, 11 |
-| 10000 rolls | tiers 6, 7, 8, 9, 10, 11 | tiers 6, 7, 8, 9, 10, 11 | tiers 6, 7, 8, 9, 10, 11 | tiers 6, 7, 8, 9, 10, 11 | tiers 7, 8, 9, 10, 11 |
-
-**Raising K does push that boundary back, but by one tier, not by several.** At 10,000 rolls the
-variance-dead set is tiers 6-11 at K = 10 through K = 30, and tiers 7-11 at K = 50 — tier 6 is the
-only tier bought back, and it takes a 5x slot increase to do it. At 1,000 rolls the boundary does
-not move at all (tiers 10 and 11 at every K). At 100 rolls no tier is variance-dead at any K.
-
-The per-tier numbers say the same thing more precisely. Tier 8's ratio goes 1.00 -> 1.05 -> 1.15 ->
-1.19 -> 1.20 across the sweep; tier 9 goes 1.00 -> 1.00 -> 1.00 -> 1.08 -> 1.13; tier 10 reaches
-1.02 only at K = 50; tier 11 stays at exactly 1.00 throughout. **More slots restore a little
-outcome variance at tier 8 and almost none at tiers 10-11**, because the reachable value set at
-those tiers is so top-heavy that fifty slots fill with the same handful of slimes.
-
-The low tiers are the opposite and worth noting: tier 1's ratio *falls* from 11.64 to 6.24 as K
-rises, because averaging over more slots is exactly what a larger sample does to a spread. Raising K
-makes low-tier outcomes more uniform and high-tier outcomes marginally less so.
-
----
-
-# Step 3 — real time
-
-Roll counts multiplied by the cycle time measured in the previous pass and read from
-`dev/out/cycle_economics.json` — 5.25 s to 11.85 s per launch at perfect play, rising with tier
-because the flight does. **Cycle time does not depend on K**, so this is a straight multiplication.
-
-**Two assumptions ride along, from that pass, and they are load-bearing here**: the bar hit rate
-(the three player models are assumptions, not measurements — the `perfect` column assumes the
-sweet spot is hit on the first pass every time) and the character walk speed (never configured
-anywhere in the repo; the engine default of 16 studs/s is assumed, affecting the 4-stud remount and
-tier 11's 29.6-stud chest walk).
-
-### K3-perfect. Real time -- perfect
-
-| tier | K=10 exhaust | K=15 | K=20 | K=30 | K=50 | K=10 to 90% ceiling | K=15 | K=20 | K=30 | K=50 |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 6.0 min | 6.0 min | 6.0 min | 6.0 min | 5.4 min | n/a | n/a | n/a | n/a | n/a |
-| 2 | 9.6 min | 8.9 min | 8.1 min | 8.9 min | 8.9 min | n/a | n/a | n/a | n/a | n/a |
-| 3 | 10.6 min | 10.6 min | 10.6 min | 9.8 min | 10.6 min | n/a | n/a | n/a | n/a | n/a |
-| 4 | 9.9 min | 11.7 min | 12.8 min | 10.8 min | 11.7 min | n/a | n/a | n/a | n/a | n/a |
-| 5 | 12.6 min | 12.6 min | 12.6 min | 12.6 min | 12.6 min | n/a | n/a | n/a | n/a | n/a |
-| 6 | 14.3 min | 13.1 min | 13.1 min | 13.1 min | 13.1 min | 1990 min | n/a | n/a | n/a | n/a |
-| 7 | 15.0 min | 15.0 min | 15.0 min | 15.0 min | 13.7 min | 1244 min | 1759 min | 2487 min | n/a | n/a |
-| 8 | 14.1 min | 14.1 min | 15.3 min | 15.3 min | 14.1 min | 694 min | 981 min | 1387 min | 2140 min | n/a |
-| 9 | 13.3 min | 14.4 min | 15.7 min | 15.7 min | 15.7 min | 388 min | 549 min | 777 min | 1198 min | 2015 min |
-| 10 | 13.7 min | 14.9 min | 14.9 min | 16.2 min | 16.2 min | 218 min | 308 min | 436 min | 673 min | 1132 min |
-| 11 | 9.9 min | 12.2 min | 13.4 min | 16.0 min | 17.4 min | 54 min | 83 min | 117 min | 166 min | 303 min |
-
-### K3-hit50. Real time -- hit50
-
-| tier | K=10 exhaust | K=15 | K=20 | K=30 | K=50 | K=10 to 90% ceiling | K=15 | K=20 | K=30 | K=50 |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 8.7 min | 8.7 min | 8.7 min | 8.7 min | 7.9 min | n/a | n/a | n/a | n/a | n/a |
-| 2 | 13.2 min | 12.1 min | 11.1 min | 12.1 min | 12.1 min | n/a | n/a | n/a | n/a | n/a |
-| 3 | 14.1 min | 14.1 min | 14.1 min | 13.0 min | 14.1 min | n/a | n/a | n/a | n/a | n/a |
-| 4 | 12.8 min | 15.3 min | 16.6 min | 14.0 min | 15.3 min | n/a | n/a | n/a | n/a | n/a |
-| 5 | 16.1 min | 16.1 min | 16.1 min | 16.1 min | 16.1 min | n/a | n/a | n/a | n/a | n/a |
-| 6 | 18.1 min | 16.6 min | 16.6 min | 16.6 min | 16.6 min | 2526 min | n/a | n/a | n/a | n/a |
-| 7 | 18.8 min | 18.8 min | 18.8 min | 18.8 min | 17.3 min | 1562 min | 2210 min | 3125 min | n/a | n/a |
-| 8 | 17.6 min | 17.6 min | 19.2 min | 19.2 min | 17.6 min | 867 min | 1227 min | 1735 min | 2676 min | n/a |
-| 9 | 16.5 min | 18.0 min | 19.6 min | 19.6 min | 19.6 min | 483 min | 683 min | 967 min | 1490 min | 2507 min |
-| 10 | 16.9 min | 18.4 min | 18.4 min | 20.1 min | 20.1 min | 270 min | 382 min | 540 min | 832 min | 1400 min |
-| 11 | 11.9 min | 14.7 min | 16.2 min | 19.2 min | 20.9 min | 65 min | 99 min | 141 min | 199 min | 365 min |
-
-### K3-hit20. Real time -- hit20
-
-| tier | K=10 exhaust | K=15 | K=20 | K=30 | K=50 | K=10 to 90% ceiling | K=15 | K=20 | K=30 | K=50 |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 16.8 min | 16.8 min | 16.8 min | 16.8 min | 15.3 min | n/a | n/a | n/a | n/a | n/a |
-| 2 | 23.7 min | 21.8 min | 19.9 min | 21.8 min | 21.8 min | n/a | n/a | n/a | n/a | n/a |
-| 3 | 24.7 min | 24.7 min | 24.7 min | 22.7 min | 24.7 min | n/a | n/a | n/a | n/a | n/a |
-| 4 | 21.7 min | 25.8 min | 28.2 min | 23.8 min | 25.8 min | n/a | n/a | n/a | n/a | n/a |
-| 5 | 26.7 min | 26.7 min | 26.7 min | 26.7 min | 26.7 min | n/a | n/a | n/a | n/a | n/a |
-| 6 | 29.6 min | 27.1 min | 27.1 min | 27.1 min | 27.1 min | 4134 min | n/a | n/a | n/a | n/a |
-| 7 | 30.3 min | 30.3 min | 30.3 min | 30.3 min | 27.8 min | 2519 min | 3562 min | 5037 min | n/a | n/a |
-| 8 | 28.1 min | 28.1 min | 30.7 min | 30.7 min | 28.1 min | 1389 min | 1964 min | 2777 min | 4284 min | n/a |
-| 9 | 26.2 min | 28.5 min | 31.1 min | 31.1 min | 31.1 min | 767 min | 1085 min | 1535 min | 2367 min | 3981 min |
-| 10 | 26.6 min | 28.9 min | 28.9 min | 31.6 min | 31.6 min | 425 min | 601 min | 850 min | 1311 min | 2204 min |
-| 11 | 17.9 min | 22.2 min | 24.3 min | 29.0 min | 31.5 min | 97 min | 149 min | 212 min | 300 min | 549 min |
-
----
-
-# Step 4 — dead time at each K
-
-Affordability is the prior pass's **non-circular** method, unchanged: integrate income along the
-measured held-set growth curve from an empty base (medians at 0 / 100 / 1,000 / 10,000 rolls,
-linearly interpolated, flat past the last point), banking at the measured cadence, until the next
-tier's price is met. Two brackets: **unlevelled** (base income, no drain) and **fully maxed**
-(28.6252x, less the re-max drain measured at that (K, tier) over the `[10,000, 20,000]` window).
-Price / equilibrium income is not used anywhere.
-
-### K4. Dead time by slot count (perfect play)
-
-Positive = dead time (tier exhausted, still grinding). Negative = skipped content.
-
-| K | tier | exhaustion (min) | afford next: unlevelled | dead: unlevelled | afford next: maxed | dead: maxed |
-|---|---|---|---|---|---|---|
-| 10 | 1 | 6.0 | 5.2 | -0.7 | 14.3 | +8.3 |
-| 10 | 2 | 9.6 | 9.2 | -0.4 | 20.4 | +10.7 |
-| 10 | 3 | 10.6 | 24.2 | +13.6 | 19.1 | +8.6 |
-| 10 | 4 | 9.9 | 31.9 | +22.0 | 20.8 | +10.9 |
-| 10 | 5 | 12.6 | 57.1 | +44.5 | 17.1 | +4.4 |
-| 10 | 6 | 14.3 | 146.7 | +132.5 | 32.2 | +18.0 |
-| 10 | 7 | 15.0 | 162.8 | +147.8 | 30.9 | +15.9 |
-| 10 | 8 | 14.1 | 910.0 | +895.9 | 102.4 | +88.3 |
-| 10 | 9 | 13.3 | 1563.0 | +1549.7 | 134.8 | +121.5 |
-| 10 | 10 | 13.7 | 4008.6 | +3994.9 | 227.7 | +214.1 |
-| 15 | 1 | 6.0 | 4.7 | -1.2 | 12.1 | +6.1 |
-| 15 | 2 | 8.9 | 8.5 | -0.3 | 19.0 | +10.2 |
-| 15 | 3 | 10.6 | 23.0 | +12.4 | 20.2 | +9.6 |
-| 15 | 4 | 11.7 | 30.9 | +19.2 | 21.9 | +10.1 |
-| 15 | 5 | 12.6 | 55.8 | +43.2 | 18.9 | +6.3 |
-| 15 | 6 | 13.1 | 142.3 | +129.2 | 32.8 | +19.7 |
-| 15 | 7 | 15.0 | 158.9 | +143.9 | 31.7 | +16.7 |
-| 15 | 8 | 14.1 | 772.4 | +758.3 | 97.7 | +83.7 |
-| 15 | 9 | 14.4 | 1232.2 | +1217.8 | 123.5 | +109.1 |
-| 15 | 10 | 14.9 | 2838.3 | +2823.4 | 195.8 | +180.9 |
-| 20 | 1 | 6.0 | 4.4 | -1.6 | 11.1 | +5.2 |
-| 20 | 2 | 8.1 | 8.1 | +0.0 | 18.1 | +10.0 |
-| 20 | 3 | 10.6 | 22.2 | +11.6 | 20.2 | +9.6 |
-| 20 | 4 | 12.8 | 30.1 | +17.3 | 22.3 | +9.5 |
-| 20 | 5 | 12.6 | 54.9 | +42.3 | 20.1 | +7.5 |
-| 20 | 6 | 13.1 | 139.7 | +126.7 | 33.3 | +20.2 |
-| 20 | 7 | 15.0 | 155.6 | +140.6 | 32.0 | +17.0 |
-| 20 | 8 | 15.3 | 710.9 | +695.6 | 96.3 | +81.0 |
-| 20 | 9 | 15.7 | 1068.4 | +1052.6 | 117.7 | +102.0 |
-| 20 | 10 | 14.9 | 2274.7 | +2259.8 | 179.4 | +164.6 |
-| 30 | 1 | 6.0 | 4.0 | -1.9 | 10.2 | +4.3 |
-| 30 | 2 | 8.9 | 7.6 | -1.3 | 17.0 | +8.1 |
-| 30 | 3 | 9.8 | 21.1 | +11.3 | 19.1 | +9.4 |
-| 30 | 4 | 10.8 | 28.7 | +17.9 | 22.1 | +11.3 |
-| 30 | 5 | 12.6 | 54.2 | +41.6 | 21.2 | +8.6 |
-| 30 | 6 | 13.1 | 137.1 | +124.0 | 34.2 | +21.1 |
-| 30 | 7 | 15.0 | 150.6 | +135.6 | 32.9 | +18.0 |
-| 30 | 8 | 15.3 | 648.1 | +632.8 | 95.2 | +79.8 |
-| 30 | 9 | 15.7 | 904.6 | +888.8 | 113.0 | +97.2 |
-| 30 | 10 | 16.2 | 1745.7 | +1729.5 | 163.7 | +147.5 |
-| 50 | 1 | 5.4 | 3.6 | -1.8 | 8.8 | +3.3 |
-| 50 | 2 | 8.9 | 7.0 | -1.9 | 15.2 | +6.3 |
-| 50 | 3 | 10.6 | 19.8 | +9.2 | 17.9 | +7.3 |
-| 50 | 4 | 11.7 | 27.2 | +15.5 | 21.9 | +10.1 |
-| 50 | 5 | 12.6 | 52.8 | +40.2 | 21.7 | +9.0 |
-| 50 | 6 | 13.1 | 134.8 | +121.8 | 35.0 | +22.0 |
-| 50 | 7 | 13.7 | 145.9 | +132.2 | 33.4 | +19.7 |
-| 50 | 8 | 14.1 | 574.2 | +560.1 | 92.3 | +78.2 |
-| 50 | 9 | 15.7 | 790.4 | +774.7 | 110.5 | +94.8 |
-| 50 | 10 | 16.2 | 1347.3 | +1331.1 | 152.2 | +136.0 |
-
-### K4b. Totals over tiers 1-10, perfect play
-
-| K | content (h) | dead: unlevelled (h) | content : dead | dead: maxed (h) | content : dead (maxed) |
-|---|---|---|---|---|---|
-| 10 | 1.98 | 113.3 | 1 : 57 | 8.3 | 1 : 4.2 |
-| 15 | 2.02 | 85.8 | 1 : 42 | 7.5 | 1 : 3.7 |
-| 20 | 2.07 | 72.4 | 1 : 35 | 7.1 | 1 : 3.4 |
-| 30 | 2.06 | 59.6 | 1 : 29 | 6.8 | 1 : 3.3 |
-| 50 | 2.03 | 49.7 | 1 : 24 | 6.4 | 1 : 3.2 |
-
-### K4c. Tiers 8-10 alone (the 107 hours), perfect play
-
-| K | content (min) | dead: unlevelled (h) | dead: maxed (h) |
-|---|---|---|---|
-| 10 | 41.0 | 107.3 | 7.1 |
-| 15 | 43.3 | 80.0 | 6.2 |
-| 20 | 45.9 | 66.8 | 5.8 |
-| 30 | 47.3 | 54.2 | 5.4 |
-| 50 | 46.0 | 44.4 | 5.2 |
-
-**Content is flat and dead time halves.** Between K = 10 and K = 50 the content total moves 1.98 h
--> 2.03 h (+2.5%, inside the grid's own resolution) while dead time falls 113.3 h -> 49.7 h (-56%).
-The ratio improves from 1 : 57 to 1 : 24, and every minute of that improvement is the *denominator*
-shrinking. A player at K = 50 does not get a more interesting tier 8; they get out of it sooner.
-
-Diminishing, too: the first five slots (10 -> 15) buy 27.5 h of the reduction, the last twenty
-(30 -> 50) buy 9.9 h. Dead time falls roughly linearly in **log K**, which is what makes step 5's
-answer come out the way it does.
-
-For the maxed bracket the whole effect is small — 8.3 h -> 6.4 h — because levelling already
-collapses affordability to a fraction of the unlevelled figure, and K cannot collapse it much
-further.
-
----
-
-# Step 5 — solve for K
-
-Dead time is close to linear in **log K** (step 4), so the solve interpolates on log K between swept
-points and, where the curve does not cross zero inside K <= 50, extrapolates from the slope of the
-last swept segment (30 -> 50). Extrapolated rows are flagged. **They should be read as "the curve
-does not get there", not as engineering targets** — where the last segment is nearly flat, the
-extrapolation is numerically unstable and blows up to absurd values (tier 6's 6.7e13 is that, not a
-finding).
-
-### K5. The K at which dead time reaches zero
-
-Interpolated on log K between swept points; **extrapolated** where the curve does not cross inside K <= 50, using the slope of the last swept segment (30 -> 50).
-
-| tier | unlevelled: required K | extrapolated? | dead @K=10 (min) | dead @K=50 (min) | maxed: required K | extrapolated? | dead @K=10 | dead @K=50 |
-|---|---|---|---|---|---|---|---|---|
-| 1 | 2.3e+06 | yes | -0.7 | -1.8 | 292 | yes | +8.3 | +3.3 |
-| 2 | 20 | no | -0.4 | -1.9 | 319 | yes | +10.7 | +6.3 |
-| 3 | 432 | yes | +13.6 | +9.2 | 313 | yes | +8.6 | +7.3 |
-| 4 | 1345 | yes | +22.0 | +15.5 | 3736 | yes | +10.9 | +10.1 |
-| 5 | 8.1e+07 | yes | +44.5 | +40.2 | 0 | yes | +4.4 | +9.0 |
-| 6 | 6.7e+13 | yes | +132.5 | +121.8 | 0 | yes | +18.0 | +22.0 |
-| 7 | 1.7e+10 | yes | +147.8 | +132.2 | 0 | yes | +15.9 | +19.7 |
-| 8 | 2567 | yes | +895.9 | +560.1 | 3.7e+12 | yes | +88.3 | +78.2 |
-| 9 | 1602 | yes | +1549.7 | +774.7 | 1.8e+10 | yes | +121.5 | +94.8 |
-| 10 | 276 | yes | +3994.9 | +1331.1 | 21148 | yes | +214.1 | +136.0 |
-
-## Is there a single K that zeroes tiers 8, 9 and 10 together?
-
-**No, and not within two orders of magnitude.** The three tiers hold 107.3 of the 113.3 dead hours
-at K = 10. Taking the largest K swept as the best available single answer:
-
-| tier | content at K = 50 | dead at K = 50 | dead as a multiple of content | +/-20% of zero would be |
-|---|---|---|---|---|
-| 8 | 14.1 min | **560 min** | 40x | +/- 2.8 min |
-| 9 | 15.7 min | **775 min** | 49x | +/- 3.1 min |
-| 10 | 16.2 min | **1,331 min** | 82x | +/- 3.2 min |
-
-The per-tier solves put the crossing at K = 2,567 / 1,602 / 276 for tiers 8 / 9 / 10 respectively,
-all extrapolated, and they do not even agree with each other to within a factor of nine — so there
-is no single K, and there is not a narrow band of K either. Note the ordering is inverted from
-intuition: tier 10 needs the *fewest* extra slots of the three, because its ceiling-linear income
-growth attacks the largest price.
-
-**Stated plainly: slot growth alone cannot close the gap.** Going from 10 slots to 50 removes 63 of
-the 113 dead hours, which is real and worth having, but it leaves 50 hours against 2 hours of
-content and it does so by making the player richer rather than by giving them anything to do. The
-gap is between a flat exhaustion curve and a geometric price ladder; K moves neither. The two levers
-that would are the price ladder itself (tiers 8-10 are where 95% of the dead time is) and the shape
-of the roll table's upper tail (what would actually extend exhaustion).
-
----
-
-# Step 6 — pricing the Kth slot
-
-The exchange rate is the one verified exactly in the first pass: **$600 buys +1 income/s
-permanently**, at any tier, any level, any purchase size (worst deviation 1.5e-12 across all 65
-slimes x every level and count). A slot's break-even price is therefore
-`600 x (realised income/s with K+1 slots - realised income/s with K slots)` — the point where a
-player is indifferent between buying the slot and spending the same money on levels.
-
-`realised` here is maxed gross (28.6252x the held base) less the re-max drain measured at that
-(K, tier), at perfect-play cadence. K and K+1 were **both simulated** rather than sloping between
-swept points, so these are true one-slot differences.
-
-### K6. Marginal value of one more slot, and its break-even price
-
-Break-even price = delta realised income/s x $600. Realised = maxed gross (28.6252x median base) less the measured re-max drain at that (K, tier), at perfect-play cadence. **Mean** columns are the stable estimator; the median difference between K and K+1 is quantised onto the distribution's own value grid and can read as zero or as noise of either sign.
-
-| K -> K+1 | tier | delta realised @1k (mean) | break-even @1k | delta realised @10k (mean) | break-even @10k | median-based @10k | levelling capacity at K |
-|---|---|---|---|---|---|---|---|
-| 10 -> 11 | 1 | -$14.6K | -$8.78M | -$54.7K | -$32.8M | -$4.31M | $878M |
-| 10 -> 11 | 2 | $18.4K | $11M | $35.9K | $21.5M | $58.8M | $3.39B |
-| 10 -> 11 | 3 | -$27.4K | -$16.5M | $179K | $107M | $123M | $6.71B |
-| 10 -> 11 | 4 | -$64.4K | -$38.6M | $592K | $355M | $326M | $18.1B |
-| 10 -> 11 | 5 | $190K | $114M | $3.4M | $2.04B | $1.87B | $38.8B |
-| 10 -> 11 | 6 | $397K | $238M | $5.48M | $3.29B | $2.9B | $48.6B |
-| 10 -> 11 | 7 | $607K | $364M | $7.94M | $4.77B | $3.76B | $58B |
-| 10 -> 11 | 8 | $2.11M | $1.27B | $9.91M | $5.95B | $6.01B | $58B |
-| 10 -> 11 | 9 | $3.76M | $2.25B | $10M | $6.01B | $6.01B | $58B |
-| 10 -> 11 | 10 | $5.82M | $3.49B | $10M | $6.01B | $6.01B | $58B |
-| 10 -> 11 | 11 | $10M | $6.01B | $10M | $6.01B | $6.01B | $58B |
-| 15 -> 16 | 1 | $32.3K | $19.4M | -$27.2K | -$16.3M | $12.5M | $918M |
-| 15 -> 16 | 2 | $25K | $15M | $128K | $76.8M | $106M | $3.46B |
-| 15 -> 16 | 3 | $29.5K | $17.7M | $93.7K | $56.2M | $58.9M | $7.14B |
-| 15 -> 16 | 4 | -$11.2K | -$6.72M | $404K | $243M | $298M | $19.1B |
-| 15 -> 16 | 5 | -$84.3K | -$50.6M | $1.92M | $1.15B | $1.02B | $47.4B |
-| 15 -> 16 | 6 | $144K | $86.3M | $4.42M | $2.65B | $2.9B | $62.2B |
-| 15 -> 16 | 7 | $210K | $126M | $6.14M | $3.69B | $3.75B | $76.2B |
-| 15 -> 16 | 8 | $766K | $460M | $8.97M | $5.38B | $6B | $87B |
-| 15 -> 16 | 9 | $2.3M | $1.38B | $10M | $6.01B | $6.01B | $87B |
-| 15 -> 16 | 10 | $4.54M | $2.73B | $10M | $6.01B | $6.01B | $87B |
-| 15 -> 16 | 11 | $9.96M | $5.97B | $10M | $6.01B | $6.01B | $87B |
-| 20 -> 21 | 1 | $5.28K | $3.17M | $20.4K | $12.2M | $3.84M | $970M |
-| 20 -> 21 | 2 | $5.26K | $3.15M | $61K | $36.6M | $31M | $3.5B |
-| 20 -> 21 | 3 | $68.6K | $41.2M | $167K | $100M | $141M | $7.33B |
-| 20 -> 21 | 4 | $168K | $101M | $306K | $184M | $123M | $20.2B |
-| 20 -> 21 | 5 | -$24K | -$14.4M | $1.71M | $1.03B | $1.28B | $52.4B |
-| 20 -> 21 | 6 | $76.8K | $46.1M | $3.29M | $1.97B | $2.04B | $73.1B |
-| 20 -> 21 | 7 | $521K | $313M | $5.36M | $3.22B | $3.42B | $92.3B |
-| 20 -> 21 | 8 | $343K | $206M | $7.03M | $4.22B | $3.75B | $112B |
-| 20 -> 21 | 9 | $1.41M | $845M | $9.93M | $5.96B | $6.01B | $116B |
-| 20 -> 21 | 10 | $3.32M | $1.99B | $10M | $6.01B | $6.01B | $116B |
-| 20 -> 21 | 11 | $9.49M | $5.69B | $10M | $6.01B | $6.01B | $116B |
-| 30 -> 31 | 1 | $25.6K | $15.4M | $64.7K | $38.8M | $23.6M | $1.04B |
-| 30 -> 31 | 2 | $5.49K | $3.29M | $59.1K | $35.5M | $49.8M | $3.54B |
-| 30 -> 31 | 3 | $3.92K | $2.35M | $99.8K | $59.9M | $59M | $7.64B |
-| 30 -> 31 | 4 | $17.9K | $10.8M | $172K | $103M | $66.3M | $21.6B |
-| 30 -> 31 | 5 | $33.5K | $20.1M | $944K | $567M | $671M | $57.1B |
-| 30 -> 31 | 6 | -$62K | -$37.2M | $2.02M | $1.21B | $1.02B | $88.3B |
-| 30 -> 31 | 7 | $304K | $183M | $4.17M | $2.5B | $2.22B | $119B |
-| 30 -> 31 | 8 | $459K | $275M | $5.81M | $3.49B | $3.75B | $146B |
-| 30 -> 31 | 9 | $661K | $396M | $8.59M | $5.15B | $6B | $174B |
-| 30 -> 31 | 10 | $2.26M | $1.36B | $10M | $6.01B | $6.01B | $174B |
-| 30 -> 31 | 11 | $7.35M | $4.41B | $10M | $6.01B | $6.01B | $174B |
-| 50 -> 51 | 1 | -$9.74 | -$5.84K | -$69K | -$41.4M | -$7.64M | $1.17B |
-| 50 -> 51 | 2 | $26.9K | $16.1M | -$30.2K | -$18.1M | -$79.3M | $3.86B |
-| 50 -> 51 | 3 | -$628 | -$377K | $14.5K | $8.68M | $38.4M | $7.92B |
-| 50 -> 51 | 4 | -$76.2K | -$45.7M | -$207K | -$124M | -$91.8M | $23B |
-| 50 -> 51 | 5 | $80.2K | $48.1M | -$2.72K | -$1.63M | -$193M | $62.5B |
-| 50 -> 51 | 6 | $99.6K | $59.7M | $814K | $489M | $340M | $102B |
-| 50 -> 51 | 7 | -$56.6K | -$34M | $2.22M | $1.33B | $1.54B | $154B |
-| 50 -> 51 | 8 | $105K | $62.8M | $4.12M | $2.47B | $3.08B | $204B |
-| 50 -> 51 | 9 | $785K | $471M | $6.61M | $3.96B | $3.75B | $249B |
-| 50 -> 51 | 10 | $311K | $187M | $9.14M | $5.48B | $6B | $290B |
-| 50 -> 51 | 11 | $5.66M | $3.4B | $10M | $6.01B | $6.01B | $290B |
-
-**The saturated slot has an exact closed-form price.** Wherever the set reaches the ceiling inside
-the budget — tiers 10 and 11 at every K, tier 9 at small K — one more slot is worth exactly one more
-top-Divine slime at max level:
-
-```
-350,000 x 28.6252 x 600  =  $6,011,287,000
+```lua
+-- LaunchConfig.luau
+SWING_TIER_DISTANCE_SCALE = { 1.0, 2.6383, 4.2332, 5.8274, 7.4205, 9.0128, 10.6039, 12.1936, 13.7818, 15.3552 },
+-- SwingTierVisuals.TIERS[n].scale
+                            { 1.00, 1.15,   1.33,   1.53,   1.77,   2.04,   2.35,    2.71,    3.12,    3.60 }
 ```
 
-Every such cell in K6 reads $6.01B, and that is a derivation, not an artefact of the sample. For
-scale, that is **almost exactly the tier-8 swing price ($6B)**, twice tier 7's ($3B), and 5.5% of
-tier 9's ($110B) — so at the top of the ladder a slot is worth about one mid-ladder swing tier, and
-the top three swing tiers each cost more than eighteen saturated slots would.
+Tier 1's entries are byte-identical (`1.0`, `scale = 1.0,`). Tier 10's are old tier 11's,
+byte-identical (`15.3552`, `scale = 3.6,`) — including its whole art record, which was moved by
+deleting the record above it rather than by rewriting it.
 
-**Below saturation the marginal slot is worth far less, and at tier 1 it is worth nothing
-measurable.** At tier 1 the 11th slot is worth about -$0.03B to +$0.04B — statistically zero, and
-the sign flips with the sample, because a tier-1 roll almost never produces a slime good enough to
-occupy a marginal slot. The marginal value climbs steeply with tier ($0.11B at tier 3, $2.04B at
-tier 5, $5.95B at tier 8, $6.01B at tier 10) and *falls* with K at a fixed tier (tier 8: $5.95B at
-the 11th slot, $2.47B at the 51st), which is ordinary diminishing returns: later slots hold worse
-slimes.
+## 3b. The snap-threshold override
 
-**The competing sink grows too.** The `levelling capacity` column is `16,575.1 x` held base income —
-what it costs to max everything currently held. At tier 10 it goes from $58B at K = 10 to $290B at
-K = 50, so buying slots makes the levelling sink five times deeper at the same time. A slot priced
-at break-even is, by construction, exactly as good as pouring the same money into that sink.
+`{ 1.90 x9, 1.95 }` — the 1.95 moved from index 11 to index 10. **Read back from the loaded module
+by `verify_ladder.luau`, not assumed:** `tier 10 = 1.95, every other tier = 1.90`, and the verifier
+fails hard if any entry disagrees. This is the one that fails silently if missed —
+`snapThresholdForTier` falls back to the global 1.90 for a missing entry, which would double the
+chest window from 0.072 s to 0.144 s with nothing on screen to say so.
 
-### K6b. Candidate price ladder for slots 11-30 (mean-based, 10,000-roll budget)
+## 3c. Prices and targets, indices moved and nothing else
 
-**Tier assignment is an assumption**: two slots per swing tier from tier 3 upward, which is roughly the rate the measured progression moves through tiers. The full (K, tier) matrix is in K6 and in the JSON, so any other assignment can be read off it.
+| tier | price | was |
+|---|---|---|
+| 1-9 | 0 / 100K / 450K / 5M / 20M / 250M / 3B / 6B / 110B | the same, at the same indices |
+| 10 | **800B** | old tier 11's price |
+| — | — | old tier 10's **260B is deleted** |
 
-| slot | assumed tier | measured at K | break-even price | that tier's swing price, for scale |
+Design targets likewise: tiers 2-9 unchanged (6 min / 12 / 24 / 40 / 70 / 3 h / 6 h / 12 h), the
+80-hour target moved to tier 10, the 28-hour target deleted with the tier it priced. No number
+changed value.
+
+## 3d. Literals and comments
+
+No functional literals existed in `src/` (§1b). 34 comment references naming a tier index whose
+meaning changed were updated across `LaunchConfig`, `ShopConfig`, `SwingTierVisuals`, `LaneConfig`,
+`PathConfig`, `MoneyFormat`, `TreasureConfig`, `LaunchFormulas`, `LaunchServer`, `MapBuilder`,
+`PlayerProfile`, `SwingBuilder`, `BaseClient` and `DevPanelClient`, plus the gallery's hardcoded
+count. Where a comment quoted a *measurement* of the top tier (footprint 35.01 studs, the
+20.649-stud seat offset, the 0.52 : 1 ring ratio) the measurement was left alone and only the
+tier's name changed — those numbers describe the top tier, which is unchanged. One pre-existing
+inaccuracy was deliberately **not** corrected: `LaunchConfig`'s flight-duration comment calls the
+top tier "14.8x farther" when the array says 15.3552x. It predates this pass and correcting it is
+not this pass's business.
+
+## 3e. The luck clamp
+
+`SLIME_LUCK_ANCHOR_HIGH = 120000` -> `1000000`, with the reasoning written into the constant's own
+comment block.
+
+## 3f. What raising the clamp did — reported, not fixed
+
+**The distribution is defined out to 1,000,000 and beyond, and it is well-formed there.** Probed
+through the real module: at luck 100K / 200K / 500K / 1M / 2M / 10M / 1B the weights sum to
+`1.000000000000` with no NaN anywhere, and everything at or above 1,000,000 is bit-identical
+(t clamps at `T_MAX = 1.0`). Expected base income per roll at the clamp is `$9.06K`, which is what
+the *old* clamped distribution paid at 120,000 — the top of the curve did not change shape, it moved
+to require 8.3x more luck to reach.
+
+**The NaN safety floors still hold, and are still not load-bearing.** Each lerp's zero crossing
+against `T_MAX = 1.0`:
+
+| lerp | low | high | crosses zero at t | reachable? |
 |---|---|---|---|---|
-| 11 | 3 | 10 | $107M | $450K |
-| 12 | 3 | 10 | $107M | $450K |
-| 13 | 4 | 10 | $355M | $5M |
-| 14 | 4 | 10 | $355M | $5M |
-| 15 | 5 | 10 | $2.04B | $20M |
-| 16 | 5 | 15 | $1.15B | $20M |
-| 17 | 6 | 15 | $2.65B | $250M |
-| 18 | 6 | 15 | $2.65B | $250M |
-| 19 | 7 | 15 | $3.69B | $3B |
-| 20 | 7 | 15 | $3.69B | $3B |
-| 21 | 8 | 20 | $4.22B | $6B |
-| 22 | 8 | 20 | $4.22B | $6B |
-| 23 | 9 | 20 | $5.96B | $110B |
-| 24 | 9 | 20 | $5.96B | $110B |
-| 25 | 10 | 20 | $6.01B | $260B |
-| 26 | 10 | 20 | $6.01B | $260B |
-| 27 | 10 | 20 | $6.01B | $260B |
-| 28 | 10 | 20 | $6.01B | $260B |
-| 29 | 10 | 20 | $6.01B | $260B |
-| 30 | 10 | 20 | $6.01B | $260B |
+| `spreadDown` | 0.5400 | 0.3780 | 3.3333 | no |
+| `spreadUp` | 0.6900 | 0.6400 | 13.8000 | no |
+| `shape` | 1.0800 | 0.9000 | 6.0000 | no |
+
+`T_MAX` is unchanged at 1.0 and every crossing is far above it, so `SLIME_SPREAD_FLOOR` and
+`SLIME_SHAPE_FLOOR` remain unreachable — exactly the property `SlimeConfig` claims for them. Raising
+the anchor did not put them in play; it moved `t` **down** at every real luck value, away from the
+crossings, not toward them.
+
+**But the window transitions all moved down the road, and that is the cost.** `t` at a given luck is
+now `ln(luck/220) / ln(1000000/220)` instead of `/ ln(120000/220)` — the same log scale stretched
+over 8.3x more range, so every luck value maps to a smaller `t` and the window advances more slowly:
+
+| | before (anchor 120,000) | after (anchor 1,000,000) |
+|---|---|---|
+| window transitions, at band | 0, 27, 40, 56, **64** | 0, **30, 46, 62** |
+| windows reachable on the road | Common-Epic ... **Legendary-Divine** | Common-Epic ... **Epic-Secret** |
+| `t` at the top of the road (luck 100,000) | 1.0000 (clamped) | **0.7266** (not clamped) |
+| E[base income] per roll at band 68 (luck 75,000), no box | $8.87K | **$877** |
+| box multiple at band 68 | **1.01x** | **2.55x** |
+| E[base income] per roll at band 68, with the box | $8.98K | **$2.23K** |
+
+So: **the dead box is genuinely fixed** — from the top band the chain now needs four doublings to
+reach the clamp (P(D >= 4) = 9.15%) where it used to need one, and every band on the road has a live
+box. **And the road itself got poorer**: the Legendary-Divine window is no longer reachable by
+landing at all, only by doubling into it, and a top-of-road roll is worth about a tenth of what it
+was before the box is applied, four times less after. Prices were not rebalanced, by instruction, so
+the ladder is now materially more expensive in time than the three prior passes measured. This is
+the part the brief expected to need a second pass, and it does.
 
 ---
 
-# Step 7 — the mutation arm (MODELLED)
+# Step 4 — verification, by reading the edited tree back
 
-**No mutation system exists in this codebase.** Nothing was added, stubbed or modified in `src/`;
-this arm lives entirely inside `dev/analysis/slot_sweep.luau`. The model: at roll time, independently
-of which slime was rolled, with probability **p** the slime is worth **m** times its base income.
-That splits every value in the distribution into an unmutated copy at mass `1-p` and a mutated copy
-at `p x m` the value, and the ceiling becomes `K x 350,000 x m`. 2,000 sims per cell, seed 20260813,
-exploratory precision. **Every number in the next table is a model output.**
+`dev/analysis/verify_ladder.luau` loads the arrays the way the game loads them and re-derives every
+landing through the real formulas — the distance, the seat, `trajectoryPosition` at `u = 1` and
+`bandLuckForLandingZ`. It shares no code with the solver. `LaunchServer.server.luau` is a `.server`
+script and cannot be required, so those four formulas are mirrored with their source lines cited at
+each use site; everything else (`LaunchConfig`, `SwingTierVisuals`, `SwingGeometry`, `LuckCurve`,
+`ShopConfig`, `SlimeConfig`, `SlimeData`, `SlimeRoll`) is required for real through
+`dev/rbxshim.luau`.
 
-### K7. The mutation arm -- MODELLED, no such system exists in the source
+**Every tier's read-back agrees with the step-2 solve exactly.** No disagreement to explain.
 
-At roll time, independently of the slime rolled, with probability p the slime is worth m times its base income. 2,000 sims per cell, seed 20260813. Every figure in this table is a model output, not a measurement of the game.
+| tier | dist scale | distance | landing Z | from band 0 | band | target | match | pre-box luck | flight (s) | arch | angle |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 1.0000 | 200.00 | -175.74 | 171.48 | 4 | 4 | yes | 25 | 1.8000 | 68.06 | 25.00 |
+| 2 | 2.6383 | 527.66 | -504.26 | 500.00 | 12 | 12 | yes | 65 | 2.9237 | 110.55 | 25.00 |
+| 3 | 4.2332 | 846.64 | -824.27 | 820.01 | 20 | 20 | yes | 150 | 3.7035 | 140.03 | 25.00 |
+| 4 | 5.8274 | 1165.48 | -1144.26 | 1140.00 | 28 | 28 | yes | 550 | 4.3452 | 164.29 | 25.00 |
+| 5 | 7.4205 | 1484.10 | -1464.25 | 1459.99 | 36 | 36 | yes | 950 | 4.9033 | 185.40 | 25.00 |
+| 6 | 9.0128 | 1802.56 | -1784.26 | 1780.00 | 44 | 44 | yes | 4,500 | 5.4038 | 204.32 | 24.08 |
+| 7 | 10.6039 | 2120.78 | -2104.26 | 2100.00 | 52 | 52 | yes | 8,500 | 5.8615 | 221.62 | 22.38 |
+| 8 | 12.1936 | 2438.72 | -2424.26 | 2420.00 | 60 | 60 | yes | 35,000 | 6.2855 | 237.66 | 20.99 |
+| 9 | 13.7818 | 2756.36 | -2744.26 | 2740.00 | 68 | 68 | yes | 75,000 | 6.6823 | 252.66 | 19.82 |
+| 10 | 15.3552 | 3071.04 | -3061.69 | 3057.43 | past | past | yes | — (chest) | 7.0534 | 266.69 | 18.83 |
 
-| K | tier | p | m | E[multiplier] | ceiling | exhaustion (rolls) | exhaustion (min, perfect) | p50 income @10k |
-|---|---|---|---|---|---|---|---|---|
-| 10 | 5 | 0.50 | 2 | 1.50x | $7M | 74 | 10.6 | $3.62M |
-| 10 | 5 | 0.50 | 5 | 3.00x **>2x** | $17.5M | 96 | 13.8 | $8.1M |
-| 10 | 5 | 0.50 | 10 | 5.50x **>2x** | $35M | 96 | 13.8 | $16.1M |
-| 10 | 5 | 0.50 | 50 | 25.50x **>2x** | $175M | 88 | 12.6 | $81M |
-| 10 | 5 | 0.10 | 2 | 1.10x | $7M | 96 | 13.8 | $2.6M |
-| 10 | 5 | 0.10 | 5 | 1.40x | $17.5M | 74 | 10.6 | $3.46M |
-| 10 | 5 | 0.10 | 10 | 1.90x | $35M | 81 | 11.6 | $5.19M |
-| 10 | 5 | 0.10 | 50 | 5.90x **>2x** | $175M | 81 | 11.6 | $21.6M |
-| 10 | 5 | 0.02 | 2 | 1.02x | $7M | 88 | 12.6 | $2.39M |
-| 10 | 5 | 0.02 | 5 | 1.08x | $17.5M | 88 | 12.6 | $2.52M |
-| 10 | 5 | 0.02 | 10 | 1.18x | $35M | 100 | 14.3 | $2.65M |
-| 10 | 5 | 0.02 | 50 | 1.98x | $175M | 88 | 12.6 | $4.04M |
-| 10 | 5 | 0.01 | 2 | 1.01x | $7M | 88 | 12.6 | $2.36M |
-| 10 | 5 | 0.01 | 5 | 1.04x | $17.5M | 81 | 11.6 | $2.4M |
-| 10 | 5 | 0.01 | 10 | 1.09x | $35M | 88 | 12.6 | $2.46M |
-| 10 | 5 | 0.01 | 50 | 1.49x | $175M | 124 | 17.8 | $3.03M |
-| 10 | 8 | 0.50 | 2 | 1.50x | $7M | 88 | 14.1 | $6.74M |
-| 10 | 8 | 0.50 | 5 | 3.00x **>2x** | $17.5M | 96 | 15.3 | $16.9M |
-| 10 | 8 | 0.50 | 10 | 5.50x **>2x** | $35M | 88 | 14.1 | $33.7M |
-| 10 | 8 | 0.50 | 50 | 25.50x **>2x** | $175M | 88 | 14.1 | $168M |
-| 10 | 8 | 0.10 | 2 | 1.10x | $7M | 88 | 14.1 | $4.38M |
-| 10 | 8 | 0.10 | 5 | 1.40x | $17.5M | 88 | 14.1 | $9.15M |
-| 10 | 8 | 0.10 | 10 | 1.90x | $35M | 88 | 14.1 | $18.2M |
-| 10 | 8 | 0.10 | 50 | 5.90x **>2x** | $175M | 96 | 15.3 | $91.2M |
-| 10 | 8 | 0.02 | 2 | 1.02x | $7M | 81 | 12.9 | $3.68M |
-| 10 | 8 | 0.02 | 5 | 1.08x | $17.5M | 88 | 14.1 | $4.8M |
-| 10 | 8 | 0.02 | 10 | 1.18x | $35M | 88 | 14.1 | $7.1M |
-| 10 | 8 | 0.02 | 50 | 1.98x | $175M | 88 | 14.1 | $25.8M |
-| 10 | 8 | 0.01 | 2 | 1.01x | $7M | 81 | 12.9 | $3.5M |
-| 10 | 8 | 0.01 | 5 | 1.04x | $17.5M | 88 | 14.1 | $4.15M |
-| 10 | 8 | 0.01 | 10 | 1.09x | $35M | 81 | 12.9 | $5.35M |
-| 10 | 8 | 0.01 | 50 | 1.49x | $175M | 81 | 12.9 | $13.8M |
-| 10 | 10 | 0.50 | 2 | 1.50x | $7M | 81 | 13.7 | $7M |
-| 10 | 10 | 0.50 | 5 | 3.00x **>2x** | $17.5M | 81 | 13.7 | $17.5M |
-| 10 | 10 | 0.50 | 10 | 5.50x **>2x** | $35M | 81 | 13.7 | $35M |
-| 10 | 10 | 0.50 | 50 | 25.50x **>2x** | $175M | 88 | 14.9 | $175M |
-| 10 | 10 | 0.10 | 2 | 1.10x | $7M | 81 | 13.7 | $5.96M |
-| 10 | 10 | 0.10 | 5 | 1.40x | $17.5M | 81 | 13.7 | $14.9M |
-| 10 | 10 | 0.10 | 10 | 1.90x | $35M | 88 | 14.9 | $29.8M |
-| 10 | 10 | 0.10 | 50 | 5.90x **>2x** | $175M | 88 | 14.9 | $149M |
-| 10 | 10 | 0.02 | 2 | 1.02x | $7M | 81 | 13.7 | $4.2M |
-| 10 | 10 | 0.02 | 5 | 1.08x | $17.5M | 81 | 13.7 | $7.3M |
-| 10 | 10 | 0.02 | 10 | 1.18x | $35M | 88 | 14.9 | $13.8M |
-| 10 | 10 | 0.02 | 50 | 1.98x | $175M | 88 | 14.9 | $68.2M |
-| 10 | 10 | 0.01 | 2 | 1.01x | $7M | 81 | 13.7 | $3.85M |
-| 10 | 10 | 0.01 | 5 | 1.04x | $17.5M | 81 | 13.7 | $5.6M |
-| 10 | 10 | 0.01 | 10 | 1.09x | $35M | 81 | 13.7 | $9.05M |
-| 10 | 10 | 0.01 | 50 | 1.49x | $175M | 81 | 13.7 | $37.5M |
-| 10 | 11 | 0.50 | 2 | 1.50x | $7M | 52 | 10.3 | $7M |
-| 10 | 11 | 0.50 | 5 | 3.00x **>2x** | $17.5M | 62 | 12.2 | $17.5M |
-| 10 | 11 | 0.50 | 10 | 5.50x **>2x** | $35M | 68 | 13.4 | $35M |
-| 10 | 11 | 0.50 | 50 | 25.50x **>2x** | $175M | 68 | 13.4 | $175M |
-| 10 | 11 | 0.10 | 2 | 1.10x | $7M | 52 | 10.3 | $7M |
-| 10 | 11 | 0.10 | 5 | 1.40x | $17.5M | 57 | 11.3 | $17.5M |
-| 10 | 11 | 0.10 | 10 | 1.90x | $35M | 68 | 13.4 | $35M |
-| 10 | 11 | 0.10 | 50 | 5.90x **>2x** | $175M | 88 | 17.4 | $175M |
-| 10 | 11 | 0.02 | 2 | 1.02x | $7M | 50 | 9.9 | $5.78M |
-| 10 | 11 | 0.02 | 5 | 1.08x | $17.5M | 52 | 10.3 | $14.4M |
-| 10 | 11 | 0.02 | 10 | 1.18x | $35M | 57 | 11.3 | $29.8M |
-| 10 | 11 | 0.02 | 50 | 1.98x | $175M | 74 | 14.6 | $146M |
-| 10 | 11 | 0.01 | 2 | 1.01x | $7M | 50 | 9.9 | $4.73M |
-| 10 | 11 | 0.01 | 5 | 1.04x | $17.5M | 50 | 9.9 | $11.1M |
-| 10 | 11 | 0.01 | 10 | 1.09x | $35M | 52 | 10.3 | $22.3M |
-| 10 | 11 | 0.01 | 50 | 1.49x | $175M | 62 | 12.2 | $112M |
-| 20 | 5 | 0.50 | 2 | 1.50x | $14M | 88 | 12.6 | $4.8M |
-| 20 | 5 | 0.50 | 5 | 3.00x **>2x** | $35M | 96 | 13.8 | $9.8M |
-| 20 | 5 | 0.50 | 10 | 5.50x **>2x** | $70M | 81 | 11.6 | $18.9M |
-| 20 | 5 | 0.50 | 50 | 25.50x **>2x** | $350M | 96 | 13.8 | $92.6M |
-| 20 | 5 | 0.10 | 2 | 1.10x | $14M | 96 | 13.8 | $3.5M |
-| 20 | 5 | 0.10 | 5 | 1.40x | $35M | 88 | 12.6 | $4.49M |
-| 20 | 5 | 0.10 | 10 | 1.90x | $70M | 96 | 13.8 | $6.3M |
-| 20 | 5 | 0.10 | 50 | 5.90x **>2x** | $350M | 96 | 13.8 | $22.7M |
-| 20 | 5 | 0.02 | 2 | 1.02x | $14M | 96 | 13.8 | $3.25M |
-| 20 | 5 | 0.02 | 5 | 1.08x | $35M | 88 | 12.6 | $3.44M |
-| 20 | 5 | 0.02 | 10 | 1.18x | $70M | 88 | 12.6 | $3.58M |
-| 20 | 5 | 0.02 | 50 | 1.98x | $350M | 88 | 12.6 | $5.21M |
-| 20 | 5 | 0.01 | 2 | 1.01x | $14M | 88 | 12.6 | $3.21M |
-| 20 | 5 | 0.01 | 5 | 1.04x | $35M | 88 | 12.6 | $3.29M |
-| 20 | 5 | 0.01 | 10 | 1.09x | $70M | 88 | 12.6 | $3.41M |
-| 20 | 5 | 0.01 | 50 | 1.49x | $350M | 81 | 11.6 | $4.02M |
-| 20 | 8 | 0.50 | 2 | 1.50x | $14M | 96 | 15.3 | $10.8M |
-| 20 | 8 | 0.50 | 5 | 3.00x **>2x** | $35M | 96 | 15.3 | $27.1M |
-| 20 | 8 | 0.50 | 10 | 5.50x **>2x** | $70M | 96 | 15.3 | $53.9M |
-| 20 | 8 | 0.50 | 50 | 25.50x **>2x** | $350M | 88 | 14.1 | $272M |
-| 20 | 8 | 0.10 | 2 | 1.10x | $14M | 88 | 14.1 | $7.69M |
-| 20 | 8 | 0.10 | 5 | 1.40x | $35M | 96 | 15.3 | $12.6M |
-| 20 | 8 | 0.10 | 10 | 1.90x | $70M | 96 | 15.3 | $22.6M |
-| 20 | 8 | 0.10 | 50 | 5.90x **>2x** | $350M | 96 | 15.3 | $105M |
-| 20 | 8 | 0.02 | 2 | 1.02x | $14M | 96 | 15.3 | $6.91M |
-| 20 | 8 | 0.02 | 5 | 1.08x | $35M | 96 | 15.3 | $7.83M |
-| 20 | 8 | 0.02 | 10 | 1.18x | $70M | 96 | 15.3 | $9.8M |
-| 20 | 8 | 0.02 | 50 | 1.98x | $350M | 88 | 14.1 | $28M |
-| 20 | 8 | 0.01 | 2 | 1.01x | $14M | 96 | 15.3 | $6.82M |
-| 20 | 8 | 0.01 | 5 | 1.04x | $35M | 96 | 15.3 | $7.1M |
-| 20 | 8 | 0.01 | 10 | 1.09x | $70M | 96 | 15.3 | $7.94M |
-| 20 | 8 | 0.01 | 50 | 1.49x | $350M | 88 | 14.1 | $17.6M |
-| 20 | 10 | 0.50 | 2 | 1.50x | $14M | 88 | 14.9 | $14M |
-| 20 | 10 | 0.50 | 5 | 3.00x **>2x** | $35M | 88 | 14.9 | $35M |
-| 20 | 10 | 0.50 | 10 | 5.50x **>2x** | $70M | 96 | 16.2 | $70M |
-| 20 | 10 | 0.50 | 50 | 25.50x **>2x** | $350M | 96 | 16.2 | $350M |
-| 20 | 10 | 0.10 | 2 | 1.10x | $14M | 88 | 14.9 | $9.64M |
-| 20 | 10 | 0.10 | 5 | 1.40x | $35M | 88 | 14.9 | $22.9M |
-| 20 | 10 | 0.10 | 10 | 1.90x | $70M | 88 | 14.9 | $46M |
-| 20 | 10 | 0.10 | 50 | 5.90x **>2x** | $350M | 96 | 16.2 | $228M |
-| 20 | 10 | 0.02 | 2 | 1.02x | $14M | 88 | 14.9 | $7.62M |
-| 20 | 10 | 0.02 | 5 | 1.08x | $35M | 88 | 14.9 | $10.8M |
-| 20 | 10 | 0.02 | 10 | 1.18x | $70M | 88 | 14.9 | $17.4M |
-| 20 | 10 | 0.02 | 50 | 1.98x | $350M | 96 | 16.2 | $74.8M |
-| 20 | 10 | 0.01 | 2 | 1.01x | $14M | 88 | 14.9 | $7.35M |
-| 20 | 10 | 0.01 | 5 | 1.04x | $35M | 88 | 14.9 | $9.05M |
-| 20 | 10 | 0.01 | 10 | 1.09x | $70M | 88 | 14.9 | $12.5M |
-| 20 | 10 | 0.01 | 50 | 1.49x | $350M | 88 | 14.9 | $40.5M |
-| 20 | 11 | 0.50 | 2 | 1.50x | $14M | 74 | 14.6 | $14M |
-| 20 | 11 | 0.50 | 5 | 3.00x **>2x** | $35M | 74 | 14.6 | $35M |
-| 20 | 11 | 0.50 | 10 | 5.50x **>2x** | $70M | 81 | 16.0 | $70M |
-| 20 | 11 | 0.50 | 50 | 25.50x **>2x** | $350M | 88 | 17.4 | $350M |
-| 20 | 11 | 0.10 | 2 | 1.10x | $14M | 74 | 14.6 | $14M |
-| 20 | 11 | 0.10 | 5 | 1.40x | $35M | 74 | 14.6 | $35M |
-| 20 | 11 | 0.10 | 10 | 1.90x | $70M | 74 | 14.6 | $70M |
-| 20 | 11 | 0.10 | 50 | 5.90x **>2x** | $350M | 96 | 19.0 | $350M |
-| 20 | 11 | 0.02 | 2 | 1.02x | $14M | 68 | 13.4 | $9.38M |
-| 20 | 11 | 0.02 | 5 | 1.08x | $35M | 68 | 13.4 | $22M |
-| 20 | 11 | 0.02 | 10 | 1.18x | $70M | 74 | 14.6 | $43.6M |
-| 20 | 11 | 0.02 | 50 | 1.98x | $350M | 81 | 16.0 | $220M |
-| 20 | 11 | 0.01 | 2 | 1.01x | $14M | 68 | 13.4 | $8.32M |
-| 20 | 11 | 0.01 | 5 | 1.04x | $35M | 68 | 13.4 | $15.3M |
-| 20 | 11 | 0.01 | 10 | 1.09x | $70M | 74 | 14.6 | $29.7M |
-| 20 | 11 | 0.01 | 50 | 1.49x | $350M | 81 | 16.0 | $148M |
+Flight duration, arch height and launch angle are all computed under the **unchanged** formulas
+(`FLIGHT_DURATION_SECONDS = 1.8`, exponent 0.5, `ARC_HEIGHT_SQRT_COEFFICIENT = 4.8125`, pitch clamp
+25 degrees). Tier 1's 1.8000 s confirms the normaliser is intact.
 
-## Which (p, m) pairs push tier-10 exhaustion past 60 minutes of perfect play?
+**Band steps: 8, every one of them.** 4 -> 12 -> 20 -> 28 -> 36 -> 44 -> 52 -> 60 -> 68, then tier 10
+leaves the road. Checked by the verifier, not by eye.
 
-**None of the sixteen.** At K = 10 the whole grid lands between **13.7 and 14.9 minutes** against a
-13.7-minute no-mutation baseline; at K = 20 it lands between 14.9 and 16.2 against a 14.9 baseline.
-The best cell in the entire arm is +1.3 minutes. Sixty minutes is not approached by any combination,
-including `p = 0.5, m = 50` — which multiplies average income by **25.5x** and inflates the ceiling
-to $175M/s while extending the tier by 1.2 minutes.
+## Roll value at the new clamp
 
-Average multiplier `E[mutation] = 1 + p(m-1)` per pair, with the ones that inflate the economy
-rather than extending it flagged:
-
-| p \ m | 2 | 5 | 10 | 50 |
+| tier | pre-box luck | E[base]/roll, no box | E[base]/roll, with box | box multiple |
 |---|---|---|---|---|
-| **0.50** | 1.50x | 3.00x **>2x** | 5.50x **>2x** | 25.50x **>2x** |
-| **0.10** | 1.10x | 1.40x | 1.90x | 5.90x **>2x** |
-| **0.02** | 1.02x | 1.08x | 1.18x | 1.98x |
-| **0.01** | 1.01x | 1.04x | 1.09x | 1.49x |
+| 1 | 25 | $25.6 | $31.7 | **1.24x** |
+| 2 | 65 | $25.8 | $36.7 | **1.42x** |
+| 3 | 150 | $26.0 | $45.7 | 1.76x |
+| 4 | 550 | $26.2 | $91.0 | 3.47x |
+| 5 | 950 | $66.5 | $144 | 2.16x |
+| 6 | 4,500 | $67.6 | $322 | 4.77x |
+| 7 | 8,500 | $190 | $530 | 2.79x |
+| 8 | 35,000 | $193 | $1.31K | 6.81x |
+| 9 | 75,000 | $877 | $2.23K | 2.55x |
+| 10 | — | chest table, no box on this path | | |
 
-Six of the sixteen exceed 2x average income. None of the six buys more exhaustion than the cheap
-cells do: `p = 0.02, m = 10` (1.18x average) reaches the same 14.9 minutes as `p = 0.5, m = 50`
-(25.5x average). **Mutation rarity and size trade off almost exactly in the exhaustion metric, and
-the trade is flat** — which is the same invariance the slot sweep found, for the same reason: a
-multiplier applied to the value scale moves the income held and the gain rate together, and
-exhaustion is the ratio of the two.
+**Two tiers are under the 1.5x floor: tier 1 at 1.24x and tier 2 at 1.42x. Saying it plainly, as
+asked — but the reading is not "the clamp fix has not worked".** The fix was aimed at the top of the
+road and it worked there: the band that carried a 1.01x box now carries 2.55x, and no band on the
+road is dead any more. Tiers 1 and 2 are under the floor for the opposite reason — the anchor
+stretch *diluted* low-luck doublings. At luck 25 the first few doublings (25 -> 50 -> 100) no longer
+move `t` far enough to cross a window boundary, so the box has almost nothing to buy; before the
+change the same doublings covered a larger share of a shorter scale and tier 1 measured 1.53x. This
+is the same mechanism as §3f, seen from the bottom of the road instead of the top, and it is a
+consequence of the anchor value, not of a mistake in applying it.
 
-## Head to head at tier 10
+**Monotonicity holds.** Expected income per roll is non-decreasing across all 74 band lucks under
+the new clamp — worst decreasing step `0.0000e+00`. The verifier treats a failure here as a stop
+condition; it did not fire.
 
-| lever | exhaustion, perfect play | gained | cost to the economy |
-|---|---|---|---|
-| baseline, K = 10 | 13.7 min | - | - |
-| **K 10 -> 30** | 16.2 min | **+2.5 min** | 3x the income ceiling ($3.5M/s -> $10.5M/s base) |
-| **best mutation under 1.5x average** (`p = 0.02, m = 10`, 1.18x) | 14.9 min | **+1.2 min** | 1.18x average income, 10x ceiling |
-| both together (K = 20, `p = 0.02, m = 10`) | 14.9 min | +1.2 min over K=10 | both of the above |
+## Before and after, per tier
 
-**Slots do roughly twice as much as the best cheap mutation, and they do not compose.** At K = 20
-the mutation adds exactly nothing over the K = 20 baseline (14.9 min either way) — the two levers
-overlap completely, because both work by enlarging the value set the held slots draw from, and the
-exhaustion criterion is blind to scale. Adding both gets you the better of the two, not the sum.
+Old figures are from the pre-change baseline artifacts (`dev/out/roll_ev.json`,
+`dev/out/nobox_ev.log`), which describe the tree at `e12ca51` and were not regenerated.
 
-For the record, the arm's one genuine positive: mutations do raise the **ceiling** (10x at m = 10,
-50x at m = 50) and therefore the income and the levelling capacity. If the aim is to give a
-late-game player something to spend money on, that works. If the aim is to make tier 10 interesting
-for more than a quarter of an hour, it does not.
+| new tier | new band / luck | new E/roll (with box) | old tier | old band / luck | old E/roll |
+|---|---|---|---|---|---|
+| 1 | 4 / 25 | $31.7 | 1 | 4 / 25 | $39.0 |
+| 2 | 12 / 65 | $36.7 | 2 | 14 / 75 | $65.2 |
+| 3 | 20 / 150 | $45.7 | 3 | 21 / 200 | $106 |
+| 4 | 28 / 550 | $91.0 | 4 | 31 / 700 | $263 |
+| 5 | 36 / 950 | $144 | 5 | 40 / 2,500 | $714 |
+| 6 | 44 / 4,500 | $322 | 6 | 45 / 5,000 | $1.14K |
+| 7 | 52 / 8,500 | $530 | 7 | 53 / 9,000 | $1.92K |
+| 8 | 60 / 35,000 | $1.31K | 8 | 57 / 20,000 | $3.34K |
+| 9 | 68 / 75,000 | $2.23K | 10 (deleted) | 68 / 75,000 | $8.98K |
+| 10 | chest | $33.6K (chest table, unchanged) | 11 | chest | $33.6K |
+
+Roll income is down at every road tier. Most of that is the anchor (§3f), not the respacing: at the
+identical band 68 with the identical luck 75,000, the drop is 4.0x and the only thing that changed
+is the clamp.
 
 ---
 
-# Assumptions carried into these tables
+# Step 5 — migration
 
-Stated here as well as at each table, per the brief:
+**What 1e found: the clamp already exists and is already correct.** A saved `swingTier` of 11 loads
+as 10, does not error, and cannot persist out of range. The minimum safe handling was therefore
+*already implemented*; adding a second clamp would have been redundant code pretending to be a fix.
+What was missing was the statement that this clamp is now load-bearing for the renumber, so that is
+what was added — a comment at `PlayerProfile.applyLoadedData:636-652`, no logic change. No migration
+table, no save version, exactly as instructed.
 
-1. **The best-of-K policy is hand play, not code.** The game has no replacement policy at all — a
-   roll arriving at a full base goes to inventory (`receiveSlime:874`), and swapping is a manual
-   remove-then-place. Every held-set figure is what an attentive player achieves, an upper bound.
-2. **Bar hit rate** (step 3): the three player models are assumptions. `perfect` means the sweet
-   spot is hit on the first pass, every launch, at every tier — including tier 11's 0.072 s window.
-3. **Walk speed** (step 3, via the cycle join): never configured anywhere in the repo; the engine
-   default of 16 studs/s is assumed.
-4. **The affordability curve** is interpolated from four measured points (0 / 100 / 1,000 / 10,000
-   rolls), matching the prior pass so the K = 10 arm is comparable.
-5. **The mutation arm is a model with no source behind it** (step 7), at reduced precision
-   (2,000 sims).
-6. **Exhaustion resolves to the nearest grid point** (~9% spacing), so single-cell differences of
-   one grid step are not significant; the flatness across K is, since it holds across all five
-   columns.
-7. **Duplicates permitted** (step 0a) sets the ceiling at `K x $350,000`. Had they been blocked,
-   every ceiling, every "% of ceiling", and every saturated-slot price would be different.
+Read back through the live array by the verifier:
 
-# Bugs and discrepancies found (reported, not fixed)
+| saved value | loads as | note |
+|---|---|---|
+| 1 | 1 | unchanged |
+| 9 | 9 | unchanged |
+| 10 | 10 | unchanged |
+| **11** | **10** | clamped down to the top tier |
+| 12 / 99 | 10 | clamped down to the top tier |
+| 0 / -3 | 1 | clamped up to tier 1 |
+| 10.7 | 10 | floored, then clamped |
 
-1. **`SLOT_COUNT` cannot be raised past 12 without moving the plot.** `BaseGeometry.slotPosition`
-   marches rows off the far edge of the mat at K = 13 (step 0c). Nothing warns, asserts or clamps:
-   the pads would simply be built past `BASE_BACK_EDGE_Z`, floating over the grass with the back
-   edge part through them. Given that `SLOT_COUNT` presents as a tunable config constant with a
-   comment inviting a change, this is a trap worth an assert.
-2. **The `Slots` sync attribute grows without a documented bound.** `syncClientState:537-546`
-   JSON-encodes one record per filled slot into an instance attribute. At K = 50 that is roughly
-   2 KB per player per sync. Roblox's attribute-string limit is not stated anywhere in this repo and
-   was not verified here — flagged, not measured.
-3. **`string.format("Slot%02d", n)` is width-limited by convention only.** Past 99 slots the name
-   widens to three digits and `getSlotPad`'s `WaitForChild` still matches, since both sides use the
-   same format — so this is safe, but only because one expression is used in both places
-   (`MapBuilder:180`, `PlayerProfile:155`). Worth keeping that way.
-4. **Nothing in the sweep contradicts the two prior passes.** The K = 10 arm reproduces the earlier
-   dead-time totals to 1.5% under the earlier definition, and to 3% under this brief's.
+**One accepted consequence, stated because it is a real player-visible effect and nobody should
+find it by surprise:** a profile saved at **old tier 10** keeps the number 10 and is therefore
+promoted to the new top tier — the chest tier — for free. Nothing in the save distinguishes it from
+an old tier 11, and the brief rules out the save version that would be needed to tell them apart.
+The alternative would be demoting real purchases, which is worse. Old tier 11 owners keep exactly
+the swing they bought.
 
-# What would actually move exhaustion (not measured, stated as the implication)
+---
 
-Exhaustion is `first N where mean gain over [N,2N) < 1% of income at N`. Both levers tested here
-scale income and gain together and leave the ratio alone. The quantity that does move it is the
-**shape of the reachable value distribution above the current worst slot** — specifically, how much
-probability mass sits in the band just above where the held set has reached. A roll table with a
-long, thin, continuously-populated upper tail keeps producing 1%-scale improvements for far longer
-than one that saturates on eight Divine values. Measuring that would mean sweeping tail shape
-(number of distinct values above the ceiling region, and their spacing) rather than K or m — the
-natural next pass, and it needs no new systems, only a different `SLIME_INCOME_BY_TIER`.
+# What this leaves
+
+1. **The three baseline measurement JSONs now describe a tree that no longer exists.**
+   `roll_economics.json`, `cycle_economics.json` and `slot_sweep.json` all record commit `e12ca51`
+   and were deliberately not regenerated. Every income, dead-time and pricing figure in them is
+   pre-change. They remain valid as the *baseline*; they are not valid as a description of this
+   branch.
+
+2. **The economy is not balanced for the new clamp, by instruction.** Roll income is down roughly
+   2-4x at every road tier while every price is unchanged, so measured progression times will be
+   materially longer than the three passes reported. The prices were explicitly out of scope. A
+   re-measurement pass against this branch is the obvious next step, and it should re-run
+   `roll_ev.luau`, `slot_sim.luau` and `cycle_time.luau` on the new tree before anything is retuned.
+
+3. **Two tiers now have a box worth under 1.5x** (tier 1, 1.24x; tier 2, 1.42x) — the mirror image
+   of the problem this pass removed from the top of the road. Whether that matters is a design call:
+   a tier-1 player pressing a box that nearly always resolves to the same window is exactly the
+   "dead interaction" the mystery box's own comment says it exists to avoid.
+
+4. **The footprint clamp now bites one tier earlier.** `FOOTPRINT_SCALE_MAX = 2.21` caps horizontal
+   size; with the respaced scales, tiers 7-10 all measure 35.01 studs wide instead of tiers 8-11
+   (measured through the real builder by `dev/run_gallery.luau`). Nothing exceeds the 40-stud lane,
+   which is what the clamp exists to guarantee, but the top four swings now differ only in height.
+
+5. **Untouched, as required:** tier 1's scales, the top tier's 15.3552 / 3.60 / 1.95, every price and
+   design-target value, `DISTANCE_PER_MULTIPLIER`, `SWEET_SPOT_*`, `SWING_PERIOD_SECONDS`, the flight
+   and arch formulas, `RUNWAY_BAND_LENGTH_STUDS`, `RUNWAY_START_Z`, the 74-band curve, the chest
+   table and the whole chest landing path, the upgrade curve, `SLOT_COUNT` and the base layout, the
+   ping compensation, the box mechanics (`BOX_DOUBLE_CHANCE`, `BOX_PRESS_COOLDOWN_SECONDS`, the
+   doubling chain), and `LaunchRewardScene`'s acquire/release structure — that file was not opened
+   for editing at all.
 
 # Files
 
-Created this pass (analysis only):
+**Edited (gameplay):** `LaunchConfig.luau` (both tier arrays + comments), `SwingTierVisuals.luau`
+(8 respaced scales, one record deleted, comments), `ShopConfig.luau` (price array, target list,
+comments), `SlimeConfig.luau` (`SLIME_LUCK_ANCHOR_HIGH`), `PlayerProfile.luau` (comment only),
+and comment-only changes in `LaneConfig`, `PathConfig`, `MoneyFormat`, `TreasureConfig`,
+`LaunchFormulas`, `LaunchServer`, `MapBuilder`, `SwingBuilder`, `BaseClient`, `DevPanelClient`.
 
-- `dev/analysis/slot_sweep.luau` — steps 0-7, writes `dev/out/slot_sweep.json`
-- `dev/analysis/sweep_tables.luau` — every table above
-- `dev/out/slot_sweep.json`, `dev/out/sweep_tables.md`, `dev/out/slot_sweep.log`
+**Edited (dev tooling):** `gallery/SwingGallery.server.luau` — hardcoded `TIER_COUNT = 11` now
+derived from the array.
 
-Read but not modified: `dev/analysis/common.luau`, the four earlier analysis scripts,
-`dev/out/roll_economics.json`, `dev/out/cycle_economics.json`, and every file on the
-must-not-change list.
-
-**`dev/out/slot_sweep.json` shape:** `gitCommit`; `sourceJson` (both joined files and their
-commits); `facts` (every step 0 answer, including `duplicatesAllowed: true`,
-`maxKWithoutSchemaChange: 12` and the binding constraint as prose); `sweep` (110 entries keyed by
-`slots` and `tier`, each with ceiling, income and percentiles at 100 / 1,000 / 10,000 / 20,000,
-`rollsToCeiling50/90/99`, `rollsToExhaustion`, the prior pass's definition alongside it,
-`minutesToExhaustion` and `minutesToCeiling90` per player model, the measured re-max drain,
-levelling capacity, and the affordability block per model); `deadTime` (`perSlotTier` and per-K
-`totals`); `requiredSlots` (step 5, per tier and bracket, with `extrapolated`); `slotPricing`
-(`marginal` per (K, tier) with both mean- and median-based deltas, and `candidateLadder` for slots
-11-30); `mutationArm` (`modelled: true` and the full 128-cell grid); `constants`; `seeds`;
-`sampleCounts`.
+**Created:** `dev/analysis/solve_ladder.luau`, `dev/analysis/verify_ladder.luau`,
+`dev/analysis/clamp_effect.luau`, and their logs in `dev/out/`.
