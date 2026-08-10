@@ -177,7 +177,41 @@ local LaunchConfig: LaunchConfig = {
 	-- see the written report for why and the proposed fix (scale
 	-- FLIGHT_DURATION_SECONDS by the same factor to restore the original
 	-- per-tier speeds exactly).
-	FLIGHT_DURATION_EXPONENT = 0.5,
+	--
+	-- ===== LOWERED 0.5 -> 0.35, AND THE PARAGRAPHS ABOVE ARE THE REASONING FOR
+	-- THE OLD VALUE, kept because the trade-off they describe is still the
+	-- right frame -- only the point chosen on it moved. What changed is a
+	-- measurement the earlier passes did not have: the flight is not a cost
+	-- paid once, it is paid on EVERY roll, and at 0.5 it was 60% of the top
+	-- tier's whole launch cycle (7.05s of 11.85s). Buying a tier made every
+	-- roll slower, so the ladder charged for a downgrade in pace.
+	--
+	-- 0.35 keeps the shape and shortens the tail: the top tier's flight goes
+	-- 7.05s -> 4.68s (its cycle 11.85s -> 9.48s, 5.06 -> 6.33 launches/min),
+	-- while tier 1 is UNCHANGED BY CONSTRUCTION -- its distance IS
+	-- baseDistance, so the ratio is 1 and 1^anything is 1. No exponent can
+	-- move tier 1; that is what makes this constant safe to retune without
+	-- touching FLIGHT_DURATION_SECONDS. Speed still climbs with distance
+	-- (111 studs/sec at tier 1 to 656 at the top, against 427 before), so a
+	-- bigger tier still reads as more powerful, just less patiently.
+	--
+	-- WHY NOT LOWER STILL. The floor is the 0.0 case the paragraph above
+	-- describes -- a top-tier flight crossing 3,000 studs in tier 1's 1.8s
+	-- reads as a teleport. 0.35 puts the top tier at 4.68s, comfortably inside
+	-- "a big flight" and roughly the length of the reward scene that follows
+	-- it; below about 0.25 the top tiers start to feel like a cut rather than
+	-- a journey. That is a taste judgement and it has not been playtested.
+	--
+	-- NOTHING DOWNSTREAM DEPENDS ON THE VALUE, verified rather than assumed
+	-- (see REPORT.md): the landing position, the band it resolves to and the
+	-- short/road/past zone are all computed at RELEASE from
+	-- trajectoryPosition(u = 1), a closed form of distance and start position
+	-- with no time term at all, so a faster flight lands in exactly the same
+	-- place as a slower one. Every consumer of the duration -- the server's
+	-- own landing check, the FlightDuration attribute the other lanes render
+	-- from, the client's own render loop -- divides elapsed time BY it, so all
+	-- three scale automatically.
+	FLIGHT_DURATION_EXPONENT = 0.35,
 	-- ===== PEAK ARC HEIGHT: k * sqrt(distance), NOT a fraction of distance.
 	--
 	-- WHAT WAS WRONG WITH THE FRACTION (see REPORT.md). It was 0.35 of the
