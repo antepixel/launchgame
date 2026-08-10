@@ -1,0 +1,28 @@
+anchors: LOW 220, HIGH 1000000   |   T_MIN -0.5, T_MAX 1   |   window width 4
+
+== window transitions across the 74 road bands ==
+band  luck        t        window start  window                       E[base]/roll
+   0  5           -0.4493             1  Common-Epic                  $25.3
+  30  650          0.1286             2  Uncommon-Legendary           $66.3
+  46  5,500        0.3822             3  Rare-Mythic                  $189
+  62  45,000       0.6318             4  Epic-Secret                  $867
+
+bottom of the road (luck 5): t = -0.4493, window start 1
+top of the road (luck 100,000):    t = 0.7266, window start 4
+from the top band, the box needs 4 doublings (luck 1.6M) to reach the T_MAX clamp; P(D >= 4) = 9.1506%
+
+== NaN safety floors: the t at which each lerp would cross zero ==
+lerp          low        high       zero crossing at t   reachable at T_MAX?
+spreadDown       0.5400     0.3780              3.3333   no
+spreadUp         0.6900     0.6400             13.8000   no
+shape            1.0800     0.9000              6.0000   no
+
+== the distribution above the road, where only the box can reach ==
+luck        t        window                       E[base]/roll  sums to 1?
+100K         0.7266  Epic-Secret                  $883           1.000000000000
+200K         0.8089  Epic-Secret                  $897           1.000000000000
+500K         0.9177  Legendary-Divine             $8.85K         1.000000000000
+1M           1.0000  Legendary-Divine             $9.06K         1.000000000000
+2M           1.0000  Legendary-Divine             $9.06K         1.000000000000
+10M          1.0000  Legendary-Divine             $9.06K         1.000000000000
+1B           1.0000  Legendary-Divine             $9.06K         1.000000000000

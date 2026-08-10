@@ -637,6 +637,19 @@ local function applyLoadedData(profile: Profile, data: { [string]: any }?)
 	-- otherwise-malformed save value can never leave a player with a
 	-- fractional or out-of-range tier -- see buyNextTier for the same
 	-- tierCount source (#LaunchConfig.SWING_TIER_DISTANCE_SCALE).
+	--
+	-- THIS IS ALSO THE LADDER-SHRINK MIGRATION, and it needs no code of its
+	-- own. The ladder went from eleven tiers to ten (see LaunchConfig.
+	-- SWING_TIER_DISTANCE_SCALE); every profile saved with swingTier = 11 loads
+	-- as 10, which is the same swing it always was -- old tier 11 IS the new
+	-- top tier, unchanged. The value is re-clamped on every load and toSaveShape
+	-- only ever writes what is already clamped, so an out-of-range tier cannot
+	-- persist. Deliberately a clamp and nothing more: no migration table and no
+	-- save version. The one accepted consequence is that a profile saved at old
+	-- tier 10 keeps the number 10 and is therefore promoted to the new top tier
+	-- for free -- nothing in the save distinguishes it from an old tier 11, and
+	-- adding a version field to recover a demotion nobody asked for would cost
+	-- more than the promotion does. See REPORT.md.
 	if typeof(data.swingTier) == "number" then
 		local tierCount = #LaunchConfig.SWING_TIER_DISTANCE_SCALE
 		profile.swingTier = math.clamp(math.floor(data.swingTier), 1, tierCount)

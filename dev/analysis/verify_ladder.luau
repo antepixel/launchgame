@@ -185,6 +185,27 @@ print(string.format("\nmonotonicity over %d band lucks: worst decreasing step %.
 	#LuckCurve.VALUES, worstDrop, if worstAt then string.format(" at luck %d", worstAt) else " (none)"))
 check(worstDrop <= 1e-9, string.format("expected income per roll is NOT monotonic in luck: worst drop %.4e at luck %s", worstDrop, tostring(worstAt)))
 
+--============================ Step 5: the clamp ============================--
+-- PlayerProfile.applyLoadedData:640-643 is
+--     profile.swingTier = math.clamp(math.floor(data.swingTier), 1, tierCount)
+-- with tierCount = #LaunchConfig.SWING_TIER_DISTANCE_SCALE. PlayerProfile
+-- itself cannot be required under the shim (it reaches for Players, HttpService
+-- and DataStores), so what is exercised here is that exact expression against
+-- the same live array -- not a copy of the rule with its own constant.
+print("\n== saved swingTier on load (PlayerProfile.applyLoadedData:640-643) ==")
+print("saved  loads as  note")
+for _, saved in { 1, 9, 10, 11, 12, 99, 0, -3, 10.7 } do
+	local loaded = math.clamp(math.floor(saved), 1, tierCount)
+	local note = if saved > tierCount then "clamped down to the top tier"
+		elseif saved < 1 then "clamped up to tier 1"
+		elseif saved ~= math.floor(saved) then "floored"
+		else "unchanged"
+	print(string.format("%5s  %8d  %s", tostring(saved), loaded, note))
+end
+check(math.clamp(math.floor(11), 1, tierCount) == tierCount, "a saved tier 11 does not land on the top tier")
+check(math.clamp(math.floor(99), 1, tierCount) == tierCount, "a wildly out-of-range saved tier does not clamp to the top tier")
+check(math.clamp(math.floor(0), 1, tierCount) == 1, "a saved tier below 1 does not clamp to 1")
+
 --=============================== The verdict ===============================--
 if #failures == 0 then
 	print("\nVERIFY PASSED: every stop-condition check agrees with the edited tree.")
