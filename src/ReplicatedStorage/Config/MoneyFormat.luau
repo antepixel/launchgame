@@ -13,7 +13,7 @@
 -- for why staying local is fine at their scale.
 --
 -- The suffix table below reaches Qi (10^18). It USED to need to: the old
--- price ladder topped out at 2.5e20 for tier 11. After the repricing (see
+-- price ladder topped out at 2.5e20 for its top tier. After the repricing (see
 -- ShopConfig) the highest price in the game is $800B, so the upper suffixes
 -- are now headroom rather than a requirement. They are kept because MONEY is
 -- not bounded by prices -- a long idle session at a maxed base can bank far
@@ -24,7 +24,7 @@ local MoneyFormat = {}
 
 -- Short-scale suffixes, checked high to low -- matches LuckCurve.formatLuck's
 -- own style (one decimal, trimmed ".0") for everything under 1000, extended
--- to comfortably cover tier 11's price (2.5e20, i.e. "$250Qi").
+-- to comfortably cover that old top price (2.5e20, i.e. "$250Qi").
 local TIERS = {
 	{ scale = 1e18, suffix = "Qi" }, -- Quintillion
 	{ scale = 1e15, suffix = "Qa" }, -- Quadrillion

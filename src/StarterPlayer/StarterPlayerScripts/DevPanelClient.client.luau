@@ -352,8 +352,8 @@ end)
 
 -- ===== Swing tier -- NOT the same "tier" as the slime rarity buttons
 -- above (SlimeConfig's Common..Divine, 8 of them). This is the shop's
--- swing progression tier (LaunchConfig.SWING_TIER_DISTANCE_SCALE, 11 of
--- them). Sets it directly via PlayerProfile.devSetSwingTier -- bypasses
+-- swing progression tier (LaunchConfig.SWING_TIER_DISTANCE_SCALE, 10 of
+-- them -- the row count is read from that array, never hardcoded here). Sets it directly via PlayerProfile.devSetSwingTier -- bypasses
 -- price and the buy-in-order rule entirely, for testing a tier's feel
 -- without grinding or faking money. =====
 makeSectionLabel("SET SWING TIER (testing -- skips price/order)")

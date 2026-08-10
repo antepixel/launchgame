@@ -1119,7 +1119,7 @@ end
 
 -- Buys EXACTLY the next tier after this player's current one -- there is no
 -- "which tier" argument anywhere in this call chain (see ShopServer's
--- onBuyTier), so a modified client cannot ask to buy tier 11 while sitting
+-- onBuyTier), so a modified client cannot ask to buy the top tier while sitting
 -- on tier 1: the tier being bought is always `profile.swingTier + 1`,
 -- decided here, not supplied over the wire. Returns (true, nil) on success,
 -- or (false, reason) on failure -- ShopServer forwards `reason` to the

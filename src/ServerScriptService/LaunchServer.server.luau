@@ -566,7 +566,7 @@ end
 -- Release is one network hop later than the phase the player was looking at
 -- when they clicked. That error is one-directional -- the server is always
 -- later, never earlier -- so it is a bias, not noise, and it scales with the
--- player's connection. At tier 11 the whole snap window is +-36ms, which put
+-- player's connection. At the top tier the whole snap window is +-36ms, which put
 -- the chest out of reach by SKILL for anyone above about 36ms one-way and left
 -- it reachable only by clicking early enough to guess their own latency.
 --
@@ -626,8 +626,8 @@ end
 -- reachable perfect instead of a vanishingly rare bullseye.
 -- SNAP THRESHOLD IS PER-TIER now (see LaunchConfig.SWING_TIER_SNAP_THRESHOLD).
 -- Every tier whose entry equals the global SWEET_SPOT_SNAP_THRESHOLD behaves
--- exactly as it did before that table existed -- tiers 1-10 all do, so this
--- change is invisible to them. Tier 11 raises it, which shrinks the dead gap
+-- exactly as it did before that table existed -- tiers 1-9 all do, so this
+-- change is invisible to them. The top tier raises it, which shrinks the dead gap
 -- between the threshold and 2.0x and is what hands band 73 back as a hittable
 -- outcome; see that constant's own comment. A missing/short table entry falls
 -- back to the global value rather than erroring.
@@ -723,7 +723,7 @@ end
 -- PAST THE ROAD USED TO CLAMP, AND THAT IS NOW A BUG RATHER THAN A
 -- SAFETY NET. This function's own comment used to say overshooting the road
 -- was "still impossible today... but must survive the road shrinking or
--- distances growing later", and clamped to the last band accordingly. Tier 11
+-- distances growing later", and clamped to the last band accordingly. The top tier
 -- now deliberately overshoots (see LaunchConfig.SWING_TIER_DISTANCE_SCALE), so
 -- a clamp would silently report the platform landing as luck 100,000 -- the
 -- best possible band -- fire the normal mystery box, and make the chest
@@ -1349,7 +1349,7 @@ local function scheduleLucklessReturn(landedPlayer: Player, landedCharacter: Mod
 end
 
 -- ===== THE CHEST LANDING (see TreasureConfig.luau and REPORT.md) =====
--- A perfect tier-11 launch clears the road and lands on the giant slime's
+-- A perfect top-tier launch clears the road and lands on the giant slime's
 -- platform. No box fires (the landing's zone is "past", which carries luck 0
 -- by construction), so none of the box/reveal machinery above runs. Instead:
 -- the player is UNFROZEN, walks to the chest, and opens it.
@@ -1881,7 +1881,7 @@ local function onRelease(player: Player)
 	applySwingVisualForTier(riderTier, pivot, structureFolder)
 	local distance = LaunchConfig.DISTANCE_PER_MULTIPLIER * multiplier * tierScale
 	-- SQUARE ROOT, not a fraction of distance (see the constant's own comment
-	-- and REPORT.md): the linear version had tier 11 flying 15x higher than
+	-- and REPORT.md): the linear version had the top tier flying 15x higher than
 	-- tier 1 and put every mid-tier flight 650 studs up, above everything there
 	-- was to look at. Still exactly zero at u = 1, so no value here can move a
 	-- landing -- see trajectoryPosition.
@@ -2084,7 +2084,7 @@ end)
 -- mounting into a fixed circle on the ground around the frame's own
 -- footprint (see LaunchConfig.SWING_MOUNT_RADIUS_STUDS's own comment for the
 -- exact sizing against that footprint and the 40-stud lane pitch) -- standing
--- anywhere near your own swing now works, and dropping Y means a tier-11
+-- anywhere near your own swing now works, and dropping Y means a top-tier
 -- frame (whose pivot sits far higher above the ground than tier 1's) is
 -- exactly as easy to mount as tier 1, since height was never meant to be
 -- part of "are you standing at your swing" in the first place.
@@ -2475,7 +2475,7 @@ task.spawn(function()
 	local hinge = if chest then ChestBuilder.lidHinge(chest :: Model) else nil
 	local lidTopCentre = if chest then ChestBuilder.lidTopCentre(chest :: Model) else nil
 	if not (prompt and prompt:IsA("ProximityPrompt") and lid and lid:IsA("Model") and hinge and lidTopCentre) then
-		warn("[LaunchServer] treasure chest never appeared -- the tier-11 platform landing will still work, but the chest cannot be opened this session.")
+		warn("[LaunchServer] treasure chest never appeared -- the top-tier platform landing will still work, but the chest cannot be opened this session.")
 		return
 	end
 

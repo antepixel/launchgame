@@ -112,7 +112,7 @@ local LaunchConfig: LaunchConfig = {
 	-- 1.5->1.8 jump are untouched.
 	--
 	-- THIS IS THE FALLBACK, NOT THE VALUE EVERY TIER USES: SWING_TIER_SNAP_
-	-- THRESHOLD below overrides it per tier, and tier 11 does. It also does NOT
+	-- THRESHOLD below overrides it per tier, and the top tier does. It also does NOT
 	-- double as the top OUTCOME_BANDS cutoff any more -- see that table's own
 	-- comment for why a second, separately-written copy of "what counts as
 	-- perfect" is exactly how the HUD came to disagree with the launch.
@@ -158,21 +158,21 @@ local LaunchConfig: LaunchConfig = {
 	-- DISTANCE_PER_MULTIPLIER/RUNWAY_BAND_LENGTH_STUDS), this ratio -- and
 	-- therefore duration -- is UNAFFECTED by that scaling; only the
 	-- illustrative stud numbers below changed. 1.0 would hold SPEED constant
-	-- across every tier -- a tier-11 perfect launch (14.8x farther) would
+	-- across every tier -- a top-tier perfect launch (14.8x farther) would
 	-- take 14.8x as long, ~27s, which drags badly. 0.0 would hold DURATION
-	-- constant regardless of distance -- the same tier-11 flight would cross
+	-- constant regardless of distance -- the same top-tier flight would cross
 	-- ~2960 studs in the same 1.8s as tier 1's 200 studs, over 1600
 	-- studs/sec, reading as a teleport, not a flight. 0.5 (square root) is
 	-- the middle ground: speed still climbs noticeably with distance (a
 	-- bigger tier reads as more powerful), but duration grows far slower
-	-- than distance does -- that same 14.8x-farther tier-11 flight takes
+	-- than distance does -- that same 14.8x-farther top-tier flight takes
 	-- only ~3.8x as long (~6.9s): long enough to register as a big flight
 	-- without dragging.
 	--
 	-- SPEED DOUBLED AS OF THE BAND-DEPTH-DOUBLING PASS (see the written
 	-- report): duration only depends on the distance/baseDistance RATIO,
 	-- which is unchanged, so every flight now covers twice the studs (~111
-	-- studs/sec at tier 1, ~427 studs/sec at tier 11, up from ~55/~214) in
+	-- studs/sec at tier 1, ~427 studs/sec at the top tier, up from ~55/~214) in
 	-- the SAME duration as before. Left unadjusted deliberately this pass --
 	-- see the written report for why and the proposed fix (scale
 	-- FLIGHT_DURATION_SECONDS by the same factor to restore the original
@@ -181,12 +181,12 @@ local LaunchConfig: LaunchConfig = {
 	-- ===== PEAK ARC HEIGHT: k * sqrt(distance), NOT a fraction of distance.
 	--
 	-- WHAT WAS WRONG WITH THE FRACTION (see REPORT.md). It was 0.35 of the
-	-- flight's own distance, which is linear, which means tier 11 flew FIFTEEN
+	-- flight's own distance, which is linear, which means the top tier flew FIFTEEN
 	-- TIMES higher than tier 1 -- 1,075 studs against 70. Measured: a tier-6
 	-- flight apexed at 650 studs, and from up there the ground does not enter
 	-- the camera's frame until 928 studs ahead, so the whole map was a ribbon
 	-- far below and the flight was 86-94% sky. No single fraction fixes that:
-	-- quartering it would have brought tier 11 down to a sensible 279 and
+	-- quartering it would have brought the top tier down to a sensible 279 and
 	-- turned tier 1 into a 17-stud shuffle.
 	--
 	-- WHY A SQUARE ROOT. It is the shape that grows without keeping pace: the
@@ -204,7 +204,7 @@ local LaunchConfig: LaunchConfig = {
 	-- RAISED 25% since (see REPORT.md): 3.85 * 1.25 = 4.8125, exactly. Scaling k
 	-- scales the arch by the same factor at EVERY tier, because arch is linear
 	-- in k -- so this is a uniform 25% lift of the whole curve, not a reshaping,
-	-- and the 3.9x spread between tier 1 and tier 11 is unchanged.
+	-- and the 3.9x spread between tier 1 and the top tier is unchanged.
 	--
 	-- 4.8125 AND NOT 4.8082, which is what re-deriving from a scaled target
 	-- (165 * 1.25 = 206.25, over sqrt(1840)) would give. The two differ because
@@ -212,7 +212,8 @@ local LaunchConfig: LaunchConfig = {
 	-- above current", and current means the value actually in this file, so the
 	-- multiply is the honest reading. The mid-ladder arch it produces is 206.4.
 	--
-	-- The resulting ladder is 68 studs at tier 1, 206 at tier 6, 267 at tier 11.
+	-- The resulting ladder is 68 studs at tier 1, 206 studs at scale 9.2, 267 at
+	-- the top tier.
 	-- This coefficient is the one free choice here; everything else follows.
 	--
 	-- THE CAMERA NO LONGER MOVES WITH THIS. Pullback used to be computed off
@@ -343,7 +344,7 @@ local LaunchConfig: LaunchConfig = {
 	-- touches its Y -- see SwingGeometry.pivotYForScale) -- measuring
 	-- against that instead, with Y dropped, turns mounting into a fixed
 	-- circle on the ground around the frame's own footprint, and makes a
-	-- tier-11 frame (whose pivot sits far higher off the ground than tier
+	-- top-tier frame (whose pivot sits far higher off the ground than tier
 	-- 1's) exactly as easy to mount as tier 1, since height was never part
 	-- of the check to begin with.
 	--
@@ -439,7 +440,7 @@ local LaunchConfig: LaunchConfig = {
 	--
 	-- WHY 0.12s. Two bounds, and the smaller one wins:
 	--   * it must comfortably cover real one-way latency. Roblox players on a
-	--     distant region sit in the 20-120ms band, and at tier 11 the whole snap
+	--     distant region sit in the 20-120ms band, and at the top tier the whole snap
 	--     window is +-36ms, so anything less than ~100ms would leave the worst-
 	--     connected players still systematically short.
 	--   * it must stay BELOW the sweet spot's own half-width
@@ -506,7 +507,7 @@ local LaunchConfig: LaunchConfig = {
 	-- multiplier alone. This one is a function of WHERE THE FLIGHT LANDS, which
 	-- is the multiplier scaled by the tier's own SWING_TIER_DISTANCE_SCALE and
 	-- measured against the road -- so the same 1.92x that is one band short at
-	-- tier 11 is barely a third of the way down the road at tier 5. Deriving it
+	-- the top tier is barely a third of the way down the road at tier 5. Deriving it
 	-- from the landing (see LaunchClient's landsOnLastBand, which mirrors
 	-- LaunchServer's own bandLuckForLandingZ) is also what keeps this honest for
 	-- free: it reads the same seat position, the same tier scale and the same
@@ -515,10 +516,11 @@ local LaunchConfig: LaunchConfig = {
 	--
 	-- WHERE IT APPLIES. Only where the flight can reach the last band at all,
 	-- and that falls out of the same arithmetic rather than needing a per-tier
-	-- flag: at tiers 1-10 even a snapped 2.0x stops at band 68 (tier 10's best),
-	-- so this word is unreachable there and those tiers label EXACTLY as they
-	-- did before it existed -- verified over 4,000,000 sampled phases per tier,
-	-- see REPORT.md. Tier 11 is the only tier this can fire on today.
+	-- flag: at tiers 1-9 even a snapped 2.0x stops at band 68 (tier 9's own
+	-- target band), so this word is unreachable there and those tiers label
+	-- EXACTLY as they did before it existed -- verified over 4,000,000 sampled
+	-- phases per tier, see REPORT.md. The top tier is the only one this can
+	-- fire on today.
 	--
 	-- THE WORDING. This is the one outcome in the game that is a near miss and a
 	-- maximum at the same time: band 73 pays the top of the luck curve (100,000)
@@ -977,37 +979,72 @@ local LaunchConfig: LaunchConfig = {
 	-- tier instead. This array itself is UNCHANGED -- still just the
 	-- distance-feel curve, nothing about who owns which tier. =====
 	-- One distance multiplier per swing tier -- indexed straight by tier
-	-- number (tier 1 reads index 1, tier 11 reads index 11; Luau arrays are
+	-- number (tier 1 reads index 1, tier 10 reads index 10; Luau arrays are
 	-- 1-indexed, so tier number IS the index, no off-by-one). Applied on top
 	-- of DISTANCE_PER_MULTIPLIER * multiplier, before
 	-- ARC_HEIGHT_SQRT_COEFFICIENT/duration -- everything downstream (arc height,
 	-- camera pull-back, flight duration) already scales off the resulting
 	-- distance, so scaling distance here is the ONLY change needed to make a
 	-- whole flight bigger. Bands themselves stay uniform length -- all of the
-	-- progression lives in this array, not in the road's geometry. Tier 1 is
-	-- fixed at 1.0x by definition (the reference DISTANCE_PER_MULTIPLIER/
-	-- FLIGHT_DURATION_SECONDS are both anchored to it); tiers 2-11 were each
-	-- derived by picking the reference game's target luck value, finding the
-	-- band on THIS game's generated curve (see LuckCurve.luau) closest to
-	-- that target, then solving for the scale that lands a perfect (2.0x)
-	-- launch safely inside that band's stud range -- see the written report
-	-- for the full table and the arithmetic behind each entry. Must stay
-	-- exactly 11 entries long (one per tier).
+	-- progression lives in this array, not in the road's geometry. Must stay
+	-- exactly as many entries as SwingTierVisuals.TIERS and
+	-- SWING_TIER_SNAP_THRESHOLD; #this array is what every consumer reads as
+	-- the tier count (see PlayerProfile.buyNextTier, ShopClient, DevPanelClient).
 	--
-	-- ===== TIER 11 IS NO LONGER "just inside the last band" -- it OVERSHOOTS
-	-- THE ROAD ENTIRELY and lands on the giant slime's platform (see
-	-- TreasureConfig.luau and REPORT.md). Its 15.3552 is DERIVED, not picked,
-	-- and the rule is worth stating because it is the only entry in this array
-	-- that is not a hand-tuned feel number:
+	-- ===== ELEVEN TIERS BECAME TEN (see REPORT.md). Old tier 10 is GONE. It
+	-- rolled a distribution all but identical to old tier 11's -- both sat past
+	-- the luck clamp -- and its mystery box was worth 1.01x, because its band
+	-- luck of 75,000 doubled straight past the clamp and bought nothing. The
+	-- new top tier (10) IS old tier 11, byte-identical: same 15.3552, same 3.60
+	-- visual scale, same 1.95 snap threshold, same chest landing.
 	--
-	--   scale_11 = (SWING_PIVOT_Z - roadFarEdgeZ)
-	--              / (DISTANCE_PER_MULTIPLIER * snapThreshold_11)
+	-- ===== THE LADDER IS NOW EVENLY SPACED IN BANDS, and that is the whole
+	-- design: tier 1 lands on band 4 and every tier after it adds exactly 8
+	-- bands, to tier 9 on band 68, with tier 10 leaving the road entirely.
+	-- Even band spacing is GEOMETRIC luck progression, not linear, because
+	-- LuckCurve's road is four decades of luck laid across 74 bands (see
+	-- LuckCurve.luau -- each decade is 20 bands wide). Do not "improve" this by
+	-- front-loading the early tiers; the spacing IS the curve.
 	--
-	-- i.e. the scale at which a launch AT tier 11's own snap threshold lands
-	-- exactly on the road's far edge. That single equation gives the whole
+	-- ===== TIERS 2-9 ARE SOLVED, NOT HAND-TUNED -- see
+	-- dev/analysis/solve_ladder.luau, which is the only place the arithmetic
+	-- lives. The rule, and the ORDER matters:
+	--
+	--   ropeLength   = SWING_ROPE_LENGTH * visualScale      (SwingGeometry)
+	--   seatOffset   = SWING_PIVOT_Z - ropeLength * sin(SWING_ARC_HALF_ANGLE)
+	--                  - RUNWAY_START_Z
+	--   distance     = (targetBand * RUNWAY_BAND_LENGTH_STUDS
+	--                  + RUNWAY_BAND_LENGTH_STUDS / 2) + seatOffset
+	--   scale        = distance / (DISTANCE_PER_MULTIPLIER * SWEET_SPOT_MULTIPLIER)
+	--
+	-- The visual scale has to be chosen FIRST because the rope hangs off it and
+	-- the seat -- not the pivot, and not band 0 -- is where a flight actually
+	-- starts. A bigger swing starts CLOSER to the road (28.5 studs of offset at
+	-- tier 1 down to 13.6 at tier 10), so it needs less distance to reach the
+	-- same band. Solve distance first and pick a visual scale afterwards and
+	-- every tier lands up to half a band out; ECONOMY_DUMP.md made exactly that
+	-- error by treating reach as raw launch distance. Each entry targets the
+	-- CENTRE of its band, leaving 20 studs of margin to either boundary.
+	--
+	-- Tier 1 is fixed at 1.0x BY DEFINITION and must stay byte-identical:
+	-- baseDistance in the flight-duration formula (LaunchServer.server.luau's
+	-- onRelease) is DISTANCE_PER_MULTIPLIER * SWEET_SPOT_MULTIPLIER and is
+	-- deliberately NOT tier-scaled, so tier 1 is the normaliser for every
+	-- tier's duration. Changing it rescales the entire flight-duration curve.
+	--
+	-- ===== THE TOP TIER OVERSHOOTS THE ROAD ENTIRELY and lands on the giant
+	-- slime's platform (see TreasureConfig.luau and REPORT.md). Its 15.3552 is
+	-- DERIVED, not picked, and the rule is worth stating because it is the only
+	-- entry in this array that is neither a feel number nor a band solve:
+	--
+	--   scale_top = (SWING_PIVOT_Z - roadFarEdgeZ)
+	--               / (DISTANCE_PER_MULTIPLIER * snapThreshold_top)
+	--
+	-- i.e. the scale at which a launch AT the top tier's own snap threshold
+	-- lands exactly on the road's far edge. That single equation gives the whole
 	-- three-outcome ladder for free:
 	--   * anything below the snap lands ON the road, shortest bands first, up
-	--     to and including band 73 (luck 100,000) right at the lip;
+	--     to and including band 73 (the top of the luck curve) right at the lip;
 	--   * the snap to 2.0x is a discontinuous jump of
 	--     (2.0 - 1.95) * 100 * 15.3552 = 77 studs, which carries the flight
 	--     clean off the end of the road and onto the platform.
@@ -1020,9 +1057,9 @@ local LaunchConfig: LaunchConfig = {
 	-- as the launch origin, and the launch origin is NOT the pivot: a flight
 	-- starts from the SEAT, which at the sweet spot hangs
 	-- ropeLength * sin(SWING_ARC_HALF_ANGLE_DEGREES) forward of the pivot --
-	-- 36 * sin(35) = 20.649 studs at tier 11. Every tier-11 flight therefore
-	-- travels 20.649 studs further down the road than this equation accounts
-	-- for, which is 0.516 of a band.
+	-- 36 * sin(35) = 20.649 studs at the top tier. Every top-tier flight
+	-- therefore travels 20.649 studs further down the road than this equation
+	-- accounts for, which is 0.516 of a band.
 	--
 	-- The ring is still exactly one band wide (the 0.52 : 1 ratio quoted under
 	-- SWING_TIER_SNAP_THRESHOLD below is right, and measures 0.519 : 1), but it
@@ -1033,29 +1070,31 @@ local LaunchConfig: LaunchConfig = {
 	-- does NOT sit entirely inside a distance no flight can occupy. That slice
 	-- is 0.0192s of every cycle against the perfect window's 0.0720s: roughly
 	-- one chest landing in five today is earned by a launch that never snapped.
-	-- Left as-is deliberately -- fixing it moves tier 11's reach. The outcome
-	-- readout does not depend on it either way (it reads the landing, see
-	-- LAST_BAND_OUTCOME_TEXT), so the HUD stays honest whichever way it goes.
-	--
-	-- Tiers 1-10 are untouched and must stay so: they are the feel curve, each
-	-- derived by picking the reference game's target luck value, finding the
-	-- closest band on THIS game's generated curve (see LuckCurve.luau), then
-	-- solving for the scale that lands a perfect launch safely inside it.
-	SWING_TIER_DISTANCE_SCALE = { 1.0, 3.0, 4.4, 6.4, 8.2, 9.2, 10.8, 11.6, 12.6, 13.8, 15.3552 },
+	-- Left as-is deliberately -- fixing it moves the top tier's reach. The
+	-- outcome readout does not depend on it either way (it reads the landing,
+	-- see LAST_BAND_OUTCOME_TEXT), so the HUD stays honest whichever way it goes.
+	SWING_TIER_DISTANCE_SCALE = { 1.0, 2.6383, 4.2332, 5.8274, 7.4205, 9.0128, 10.6039, 12.1936, 13.7818, 15.3552 },
 
 	-- ===== PER-TIER SWEET-SPOT SNAP THRESHOLD. Overrides
 	-- SWEET_SPOT_SNAP_THRESHOLD for one tier; every entry that equals the
-	-- global value is a no-op, and tiers 1-10 all do, so their behaviour is
+	-- global value is a no-op, and tiers 1-9 all do, so their behaviour is
 	-- BIT-IDENTICAL to before this table existed (verified numerically, see
 	-- REPORT.md).
 	--
-	-- WHY TIER 11 IS DIFFERENT. The snap is what makes the platform reachable:
-	-- nothing ever lands with a multiplier between the threshold and 2.0, so
-	-- that gap is a distance no flight can occupy, and the platform sits
+	-- THE OVERRIDE LIVES AT INDEX 10 NOW, not 11 -- it moved with the tier it
+	-- belongs to when old tier 10 was deleted (see SWING_TIER_DISTANCE_SCALE
+	-- above). If it is ever left behind at the wrong index the top tier
+	-- silently falls back to the global 1.90 and the chest window DOUBLES from
+	-- 0.072s to 0.144s, with nothing to warn you: the fallback in
+	-- snapThresholdForTier is deliberately silent for a missing entry.
+	--
+	-- WHY THE TOP TIER IS DIFFERENT. The snap is what makes the platform
+	-- reachable: nothing ever lands with a multiplier between the threshold and
+	-- 2.0, so that gap is a distance no flight can occupy, and the platform sits
 	-- inside it. But the gap is also dead space taken out of the top of the
-	-- road -- at the global 1.90 it swallowed 3.9 bands' worth of tier-11
+	-- road -- at the global 1.90 it swallowed 3.9 bands' worth of top-tier
 	-- distance, leaving band 73 reachable through a window half a frame wide.
-	-- Raising tier 11's threshold shrinks the gap, which hands band 73 back.
+	-- Raising the top tier's threshold shrinks the gap, which hands band 73 back.
 	--
 	-- WHY 1.95 AND NOT 1.97. 1.97 gives a perfect window of ~0.043s. That is
 	-- below the input-latency variance of touch devices -- a phone player
@@ -1065,7 +1104,7 @@ local LaunchConfig: LaunchConfig = {
 	-- and still comfortably above that floor. The cost is that band 73's ring
 	-- comes out narrower than the perfect window rather than wider (0.52 : 1);
 	-- see REPORT.md, where the measured numbers are set against both.
-	SWING_TIER_SNAP_THRESHOLD = { 1.90, 1.90, 1.90, 1.90, 1.90, 1.90, 1.90, 1.90, 1.90, 1.90, 1.95 },
+	SWING_TIER_SNAP_THRESHOLD = { 1.90, 1.90, 1.90, 1.90, 1.90, 1.90, 1.90, 1.90, 1.90, 1.95 },
 
 	-- ===== Remote-lane rendering (client only -- see LaunchClient.client.
 	-- luau's renderOtherLanes/rescanRemoteLanes) =====

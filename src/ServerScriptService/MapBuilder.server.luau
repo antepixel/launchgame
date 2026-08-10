@@ -488,14 +488,14 @@ do
 	-- WALKABLE, and this is a real behaviour change (see REPORT.md). It was
 	-- CanCollide = false because the landmark was purely decorative and
 	-- nothing could ever reach it -- the road is 2,960 studs and the longest
-	-- possible flight fell short of its far end. Tier 11 now overshoots the
+	-- possible flight fell short of its far end. The top tier now overshoots the
 	-- road and lands ON this slab, so it has to hold a character up.
 	--
 	-- NOTHING depended on it being non-colliding -- checked, not assumed: it
 	-- sits ~3,000 studs past the last band, no spawn, path, stall, plot or
 	-- swing is within a thousand studs of it, this project has no Touched
 	-- handler anywhere, and the only physics that ever happens out here is a
-	-- tier-11 character landing. The BODY stays non-colliding (SlimeBuilder
+	-- top-tier character landing. The BODY stays non-colliding (SlimeBuilder
 	-- sets CanCollide = false on all four MeshParts) -- a 1,050-stud collision
 	-- mesh would be expensive and pointless, and walking through the slime is
 	-- harmless.

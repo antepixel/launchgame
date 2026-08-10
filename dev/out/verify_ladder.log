@@ -1,0 +1,51 @@
+== array lengths and the moved override ==
+SWING_TIER_DISTANCE_SCALE  10 entries
+SWING_TIER_SNAP_THRESHOLD  10 entries
+SwingTierVisuals.TIERS     10 entries
+SWING_TIER_PRICES          10 entries
+snap threshold read back: tier 10 = 1.95, every other tier = 1.90
+
+== landing read back through the real formulas ==
+tier  visual  rope    distScale   distance   landingZ    fromStart  band  target  match  preBoxLuck  flight(s)  arch     angle
+   1    1.00   10.00     1.0000     200.00     -175.74     171.48     4       4    yes          25     1.8000    68.06   25.00
+   2    1.15   11.50     2.6383     527.66     -504.26     500.00    12      12    yes          65     2.9237   110.55   25.00
+   3    1.33   13.30     4.2332     846.64     -824.27     820.01    20      20    yes         150     3.7035   140.03   25.00
+   4    1.53   15.30     5.8274    1165.48    -1144.26    1140.00    28      28    yes         550     4.3452   164.29   25.00
+   5    1.77   17.70     7.4205    1484.10    -1464.25    1459.99    36      36    yes         950     4.9033   185.40   25.00
+   6    2.04   20.40     9.0128    1802.56    -1784.26    1780.00    44      44    yes       4,500     5.4038   204.32   24.08
+   7    2.35   23.50    10.6039    2120.78    -2104.26    2100.00    52      52    yes       8,500     5.8615   221.62   22.38
+   8    2.71   27.10    12.1936    2438.72    -2424.26    2420.00    60      60    yes      35,000     6.2855   237.66   20.99
+   9    3.12   31.20    13.7818    2756.36    -2744.26    2740.00    68      68    yes      75,000     6.6823   252.66   19.82
+  10    3.60   36.00    15.3552    3071.04    -3061.69    3057.43    76    past    yes  -- (chest)     7.0534   266.69   18.83
+
+-- band step between consecutive tiers --
+  tier 1 -> 2: 8 bands
+  tier 2 -> 3: 8 bands
+  tier 3 -> 4: 8 bands
+  tier 4 -> 5: 8 bands
+  tier 5 -> 6: 8 bands
+  tier 6 -> 7: 8 bands
+  tier 7 -> 8: 8 bands
+  tier 8 -> 9: 8 bands
+  tier 9 -> 10: leaves the road
+
+== roll value per tier (SLIME_LUCK_ANCHOR_HIGH = 1000000, T_MAX = 1) ==
+tier  preBoxLuck  E[base]/roll no box  E[base]/roll with box  box multiple
+   1          25  $25.6                $31.7                  1.24x
+   2          65  $25.8                $36.7                  1.42x
+   3         150  $26                  $45.7                  1.76x
+   4         550  $26.2                $91                    3.47x
+   5         950  $66.5                $144                   2.16x
+   6       4,500  $67.6                $322                   4.77x
+   7       8,500  $190                 $530                   2.79x
+   8      35,000  $193                 $1.31K                 6.81x
+   9      75,000  $877                 $2.23K                 2.55x
+  10          --  (chest table -- no box on this path)
+
+monotonicity over 74 band lucks: worst decreasing step 0.0000e+00 (none)
+
+VERIFY PASSED: every stop-condition check agrees with the edited tree.
+
+WARNINGS (2) -- reported, not fixed:
+  - tier 1 (luck 25) box multiple is 1.236x, under the 1.5x floor
+  - tier 2 (luck 65) box multiple is 1.423x, under the 1.5x floor

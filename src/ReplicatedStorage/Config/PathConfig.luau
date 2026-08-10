@@ -20,12 +20,12 @@
 -- Z = 76, NOT 62 (see the written report -- return position margin pass):
 -- an earlier pass put it at 62, which put its own front edge (53) only 1
 -- stud past the player's post-flight return position (LaunchConfig.
--- SWING_PIVOT_Z + SWING_RETURN_CLEARANCE_STUDS = 52) and left tier 11's own
+-- SWING_PIVOT_Z + SWING_RETURN_CLEARANCE_STUDS = 52) and left the top tier's own
 -- seat sweep (up to Z ~50.6) almost touching it too. Moved to 76 instead of
 -- touching SWING_RETURN_CLEARANCE_STUDS -- that constant is tuned against
 -- the mount radius (see its own comment in LaunchConfig.luau) and has
 -- nothing to do with the walkway. 76 puts the walkway's front edge at 67:
--- 15 studs clear of the return position, 16 clear of tier 11's furthest
+-- 15 studs clear of the return position, 16 clear of the top tier's furthest
 -- seat sweep.
 --
 -- ALL THREE PARTS NOW MEET EDGE-TO-EDGE, NOT CENTER-OVERLAPPING (see the

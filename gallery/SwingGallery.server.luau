@@ -1,5 +1,5 @@
 --!strict
--- DEV-ONLY tooling: renders all 11 swing tiers side by side, from the SAME
+-- DEV-ONLY tooling: renders every swing tier side by side, from the SAME
 -- SwingBuilder.luau the real game uses -- see SwingBuilder.luau's own
 -- written report for the refactor that made this possible (build() now
 -- takes an explicit pivot part + parent per call, no module-level
@@ -15,14 +15,22 @@
 -- all, regardless of Rojo version or config. See the written report.
 --
 -- No launching, no seat riding, no UI, no player logic, no persistence, no
--- remotes: this exists purely to look at and measure geometry, all 11
+-- remotes: this exists purely to look at and measure geometry, every
 -- tiers at once, against the real 40-stud lane pitch, in one screenshot.
 local Workspace = game:GetService("Workspace")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local SwingBuilder = require(ServerScriptService.SwingBuilder)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 
-local TIER_COUNT = 11
+-- DERIVED, not a literal (it used to be a hardcoded 11). The ladder went from
+-- eleven tiers to ten and this file kept rendering an eleventh, which
+-- SwingTierVisuals.forTier silently clamped -- so the gallery drew the top
+-- swing twice and called the copy a tier. Reading the same array every other
+-- consumer reads (PlayerProfile, ShopClient, DevPanelClient) means the gallery
+-- cannot fall behind the ladder again.
+local TIER_COUNT = #LaunchConfig.SWING_TIER_DISTANCE_SCALE
 -- The REAL lane pitch (see the written report on swing lanes), not a
 -- gallery-only convenience number -- this is exactly what makes a tier 7+
 -- swing overflowing into a neighbour's lane visible directly in the
@@ -133,7 +141,7 @@ local measurements: { Measurement } = {}
 
 print("===== Swing Gallery: measured bounding boxes (explicit world-axis AABB) =====")
 
--- ===== Eleven swings, tier 1..11 left to right, each built from the exact
+-- ===== One swing per tier, 1..TIER_COUNT left to right, each built from the exact
 -- SwingBuilder.build the real game calls -- not a copy, not a fork. Each
 -- gets its OWN pivot Part and its OWN Model (a Model, not a Folder, so the
 -- AABB below walks the actual parts SwingBuilder created, never a formula
@@ -157,7 +165,7 @@ for tier = 1, TIER_COUNT do
 
 	SwingBuilder.build(tier, pivot, swingModel)
 
-	-- ===== DIAGNOSTIC ONLY, tiers 1/5/11 -- NOT used for the measurement
+	-- ===== DIAGNOSTIC ONLY, tiers 1/5/top -- NOT used for the measurement
 	-- below. Prints swingModel's own PrimaryPart (expected nil: neither
 	-- this script nor SwingBuilder.build ever sets it -- only the SEPARATE
 	-- nested SwingSeat model gets a PrimaryPart, and that's a different
@@ -172,7 +180,7 @@ for tier = 1, TIER_COUNT do
 	-- permutation bug is real and is NOT simply "PrimaryPart is set" --
 	-- it's Studio's undocumented no-PrimaryPart fallback choosing some
 	-- other reference frame instead of true world axes. =====
-	if tier == 1 or tier == 5 or tier == 11 then
+	if tier == 1 or tier == 5 or tier == TIER_COUNT then
 		local diagnosticCFrame = swingModel:GetBoundingBox()
 		local primaryPartName = if swingModel.PrimaryPart then swingModel.PrimaryPart.Name else "nil"
 		print(string.format(
@@ -233,7 +241,7 @@ for tier = 1, TIER_COUNT do
 	--      distance, same as a player nametag. That's exactly why the
 	--      previous (Offset-sized) labels completely covered the swings at
 	--      the far framing: every label rendered the same pixel size no
-	--      matter how far back the camera pulled to fit all 11 tiers in
+	--      matter how far back the camera pulled to fit every tier in
 	--      frame. Using the SCALE component instead ties the label's real
 	--      on-screen size to labelAnchor's own Size (in STUDS), which DOES
 	--      shrink/grow under normal perspective with camera distance, same
@@ -389,11 +397,11 @@ local function buildCameraMarker(name: string, position: Vector3, target: Vector
 	marker.Parent = galleryFolder
 end
 
--- FAR camera: all 11 tiers, for comparing silhouettes side by side.
+-- FAR camera: every tier, for comparing silhouettes side by side.
 local farPosition, farTarget = frameRow(measurements)
 buildCameraMarker("GalleryCameraMarkerFar", farPosition, farTarget)
 
--- CLOSE camera: tiers 9-11 only, for judging one swing's own detail.
+-- CLOSE camera: the top three tiers only, for judging one swing's own detail.
 local closeTierMeasurements: { Measurement } = {}
 for _, measurement in measurements do
 	if measurement.tier >= 9 then
@@ -409,13 +417,13 @@ buildCameraMarker("GalleryCameraMarkerClose", closePosition, closeTarget)
 -- bar to snap the viewport camera to that framing; the two
 -- GalleryCameraMarker parts (red balls, above) hold the same CFrames in
 -- their own Properties panels if you'd rather select-and-align instead.
-print("===== FAR camera (all 11 tiers) -- paste into the Studio command bar =====")
+print("===== FAR camera (all tiers) -- paste into the Studio command bar =====")
 print(string.format(
 	"game.Workspace.CurrentCamera.CFrame = CFrame.lookAt(Vector3.new(%.2f, %.2f, %.2f), Vector3.new(%.2f, %.2f, %.2f))",
 	farPosition.X, farPosition.Y, farPosition.Z,
 	farTarget.X, farTarget.Y, farTarget.Z
 ))
-print("===== CLOSE camera (tiers 9-11 only) -- paste into the Studio command bar =====")
+print(string.format("===== CLOSE camera (tiers %d-%d only) -- paste into the Studio command bar =====", TIER_COUNT - 2, TIER_COUNT))
 print(string.format(
 	"game.Workspace.CurrentCamera.CFrame = CFrame.lookAt(Vector3.new(%.2f, %.2f, %.2f), Vector3.new(%.2f, %.2f, %.2f))",
 	closePosition.X, closePosition.Y, closePosition.Z,

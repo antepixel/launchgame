@@ -19,7 +19,7 @@ local ShopConfig: ShopConfig = {
 	-- Index 1 is unused (0): every player already starts at tier 1, nothing
 	-- is ever bought to reach it -- see PlayerProfile.buyNextTier, which
 	-- only ever prices tier `currentTier + 1`. Must stay exactly as many
-	-- entries as SWING_TIER_DISTANCE_SCALE (11) -- PlayerProfile reads
+	-- entries as SWING_TIER_DISTANCE_SCALE (10) -- PlayerProfile reads
 	-- #LaunchConfig.SWING_TIER_DISTANCE_SCALE as the authoritative tier
 	-- count, not a separately-authored number here, so the two can never
 	-- silently drift apart in length.
@@ -39,8 +39,15 @@ local ShopConfig: ShopConfig = {
 	--   tier 2:   6 min      tier 7:   3 h
 	--   tier 3:  12 min      tier 8:   6 h
 	--   tier 4:  24 min      tier 9:  12 h
-	--   tier 5:  40 min      tier 10: 28 h
-	--   tier 6:  70 min      tier 11: 80 h
+	--   tier 5:  40 min      tier 10: 80 h
+	--   tier 6:  70 min
+	--
+	-- THE 28-HOUR TARGET WENT WITH THE TIER IT PRICED. When the ladder went
+	-- from eleven tiers to ten (see LaunchConfig.SWING_TIER_DISTANCE_SCALE),
+	-- old tier 10 was deleted outright and old tier 11 became the new top
+	-- tier, so its 80-hour target moved down one index alongside its price and
+	-- old tier 10's 28-hour target was deleted with its $260B. Nothing was
+	-- retuned in that pass: indices moved, numbers did not.
 	--
 	-- Roughly doubling per tier through the early game, so each tier is a
 	-- session-shaped goal rather than a wall, and tiers 2-6 together fit
@@ -90,15 +97,20 @@ local ShopConfig: ShopConfig = {
 	-- is still comfortably inside the budget.
 	--
 	-- ===== THE MULTIPLIERS BETWEEN TIERS ARE DELIBERATELY LUMPY (about 4.5x,
-	-- 11x, 4x, 12.5x, 12x, 2x, 18x, 2.4x, 3.1x). That is not sloppiness and
-	-- should not be "cleaned up" into a smooth ladder. Income does not grow
-	-- smoothly: the roll window advances in discrete jumps, so expected income
-	-- leaps at a window crossing and is nearly flat between crossings. Pricing
-	-- smoothly against lumpy income is what produces lumpy TIMES -- some tiers
-	-- instant, others walls. Pricing lumpily against lumpy income is what
-	-- makes the times come out even, which is the thing the player actually
-	-- experiences. Tier 8 at 2x and tier 10 at 2.4x look too cheap next to
-	-- tier 9's 18x precisely because income barely moves across those steps.
+	-- 11x, 4x, 12.5x, 12x, 2x, 18x, 7.3x). That is not sloppiness and should
+	-- not be "cleaned up" into a smooth ladder. Income does not grow smoothly:
+	-- the roll window advances in discrete jumps, so expected income leaps at a
+	-- window crossing and is nearly flat between crossings. Pricing smoothly
+	-- against lumpy income is what produces lumpy TIMES -- some tiers instant,
+	-- others walls. Pricing lumpily against lumpy income is what makes the
+	-- times come out even, which is the thing the player actually experiences.
+	-- Tier 8 at 2x looks too cheap next to tier 9's 18x precisely because
+	-- income barely moves across that step.
+	--
+	-- THE LAST STEP IS THE ONE THE RENUMBER CHANGED, and only by deletion: it
+	-- used to be 2.4x (to old tier 10) then 3.1x (to old tier 11), and with old
+	-- tier 10 gone those two collapse into a single 7.3x from $110B to $800B.
+	-- Neither surviving price moved.
 	--
 	-- NOTE on scale: every value now sits far inside float64's exact-integer
 	-- range (2^53 ~= 9.007e15), unlike the old tiers 10 and 11 which exceeded
@@ -115,7 +127,6 @@ local ShopConfig: ShopConfig = {
 		3000000000,
 		6000000000,
 		110000000000,
-		260000000000,
 		800000000000,
 	},
 }

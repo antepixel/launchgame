@@ -134,8 +134,9 @@ SwingTierVisuals.BASE_LEG_SPLAY_HALF_DEPTH = 4.5
 -- getting taller (and its silhouette proportions stay internally
 -- consistent -- footprint scale still applies EQUALLY to width and depth,
 -- so an A-frame never reads deeper than it is wide) without spilling out
--- of its 40-stud road lane. 2.21 is tuned so tier 11 (the largest,
--- scale = 3.60) lands just under 35 studs wide -- tier 1 measures 15.84
+-- of its 40-stud road lane. 2.21 is tuned so the TOP tier (the largest,
+-- scale = 3.60 -- tier 10 since the ladder renumber, tier 11 before it)
+-- lands just under 35 studs wide -- tier 1 measures 15.84
 -- studs wide at scale 1.0, and 35.01 / 15.84 = 2.21 -- see the written
 -- report for the measured numbers this was tuned against.
 SwingTierVisuals.FOOTPRINT_SCALE_MAX = 2.21
@@ -178,7 +179,7 @@ SwingTierVisuals.TIERS = {
 	},
 	-- Tier 2: same playground kit, a size step up, warmer stain.
 	{
-		scale = 1.12,
+		scale = 1.15,
 		postAngleDegrees = 12,
 		postShape = Enum.PartType.Block,
 		beamShape = Enum.PartType.Block,
@@ -214,7 +215,7 @@ SwingTierVisuals.TIERS = {
 	-- first (subtle, short) trail appears here rather than snapping in at
 	-- the industrial jump.
 	{
-		scale = 1.28,
+		scale = 1.33,
 		postAngleDegrees = 11,
 		postShape = Enum.PartType.Block,
 		beamShape = Enum.PartType.Block,
@@ -249,7 +250,7 @@ SwingTierVisuals.TIERS = {
 	-- Tier 4: industrial steel begins -- diamond-plate frame, a real
 	-- chain-link seat chain. No X-bracing yet -- that starts at tier 5.
 	{
-		scale = 1.55,
+		scale = 1.53,
 		postAngleDegrees = 0,
 		postShape = Enum.PartType.Cylinder,
 		beamShape = Enum.PartType.Cylinder,
@@ -283,7 +284,7 @@ SwingTierVisuals.TIERS = {
 	},
 	-- Tier 5: industrial steel, darker frame, the first X-brace level.
 	{
-		scale = 1.75,
+		scale = 1.77,
 		postAngleDegrees = 0,
 		postShape = Enum.PartType.Cylinder,
 		beamShape = Enum.PartType.Cylinder,
@@ -319,7 +320,7 @@ SwingTierVisuals.TIERS = {
 	-- band, and the first tier with neon accent trim (glowAccent begins
 	-- here, not at the titanium band).
 	{
-		scale = 2.0,
+		scale = 2.04,
 		postAngleDegrees = 0,
 		postShape = Enum.PartType.Cylinder,
 		beamShape = Enum.PartType.Cylinder,
@@ -354,7 +355,7 @@ SwingTierVisuals.TIERS = {
 	-- Tier 7: engineered titanium begins -- bright silver frame, blue
 	-- accent, thick "rod" instead of a chain, the first beam collar.
 	{
-		scale = 2.3,
+		scale = 2.35,
 		postAngleDegrees = 0,
 		postShape = Enum.PartType.Cylinder,
 		beamShape = Enum.PartType.Cylinder,
@@ -388,7 +389,7 @@ SwingTierVisuals.TIERS = {
 	},
 	-- Tier 8: engineered titanium, brighter frame, second beam collar.
 	{
-		scale = 2.55,
+		scale = 2.71,
 		postAngleDegrees = 0,
 		postShape = Enum.PartType.Cylinder,
 		beamShape = Enum.PartType.Cylinder,
@@ -423,7 +424,7 @@ SwingTierVisuals.TIERS = {
 	-- Tier 9: the sleekest, largest engineered rig -- the last titanium
 	-- tier before obsidian takes over.
 	{
-		scale = 2.8,
+		scale = 3.12,
 		postAngleDegrees = 0,
 		postShape = Enum.PartType.Cylinder,
 		beamShape = Enum.PartType.Cylinder,
@@ -455,43 +456,12 @@ SwingTierVisuals.TIERS = {
 		burstSize = 2.6,
 		burstLifetime = 0.55,
 	},
-	-- Tier 10: obsidian begins -- near-black frame, violet accent, an
-	-- ENERGY tether instead of a chain, and a second layered trail.
-	{
-		scale = 3.15,
-		postAngleDegrees = 0,
-		postShape = Enum.PartType.Cylinder,
-		beamShape = Enum.PartType.Cylinder,
-		braceCount = 4,
-		collarCount = 4,
-		glowAccent = true,
-		glowTransparency = 0.22,
-		groundPadMaterial = Enum.Material.Slate,
-		chainSeatMaterial = Enum.Material.Metal,
-		chainStyle = "Energy",
-		chainLinkCount = 0,
-		frameMaterial = Enum.Material.Metal,
-		frameColor = Color3.fromRGB(38, 32, 52),
-		accentColor = Color3.fromRGB(178, 140, 246),
-		reflectance = 0.26,
-		trailEnabled = true,
-		trailLifetime = 1.05,
-		trailWidthStart = 3.0,
-		trailWidthEnd = 0.6,
-		trailColors = { Color3.fromRGB(120, 250, 255), Color3.fromRGB(40, 140, 255), Color3.fromRGB(120, 250, 255) },
-		trailMinTransparency = 0.05,
-		trailLightEmission = 1,
-		trailMinLength = 0.3,
-		secondTrailEnabled = true,
-		secondTrailColors = { Color3.fromRGB(255, 255, 255), Color3.fromRGB(120, 250, 255) },
-		secondTrailOffset = 1.2,
-		burstColor = Color3.fromRGB(100, 245, 255),
-		burstCount = 50,
-		burstSize = 3.0,
-		burstLifetime = 0.6,
-	},
-	-- Tier 11: the flex -- darkest obsidian frame, brightest violet neon,
-	-- the biggest single jump of the whole curve, everything at maximum.
+	-- Tier 10 (the top tier, and the old tier 11 unchanged -- see
+	-- LaunchConfig.SWING_TIER_DISTANCE_SCALE for what happened to the tier
+	-- that used to sit here): the flex -- darkest obsidian frame, brightest
+	-- violet neon, the biggest single jump of the whole curve, everything at
+	-- maximum. This is the tier that clears the road and lands on the chest
+	-- platform, which is the whole reason it survived the cut.
 	{
 		scale = 3.6,
 		postAngleDegrees = 0,

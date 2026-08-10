@@ -53,7 +53,7 @@ LaneConfig.SPAWN_Z = 55
 -- 0 at the previous 240. Nothing else expresses that gap; it is this
 -- subtraction and nothing more.
 --
--- The tier-11 swing footprint (35.01 studs, see SwingTierVisuals' own
+-- The top tier's swing footprint (35.01 studs, see SwingTierVisuals' own
 -- footprint clamp) now clears its neighbour by 24.99 studs, up from 4.99 at
 -- the old 40-stud pitch -- so the widening only ever relieves that
 -- constraint, never tightens it.

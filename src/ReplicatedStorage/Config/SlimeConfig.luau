@@ -208,7 +208,28 @@ local SlimeConfig: SlimeConfig = {
 	-- ~$3.07K to ~$8.69K per slot. That is a real economy change and the
 	-- swing prices above tier 7 were not retuned for it -- if the late game
 	-- now inflates, this is the number that did it, not the upgrade curve.
-	SLIME_LUCK_ANCHOR_HIGH = 120000,
+	--
+	-- ===== RAISED FROM 120,000 TO 1,000,000 BY THE LADDER RENUMBER, and it is
+	-- a prerequisite of that change rather than a companion to it (see
+	-- REPORT.md). The mystery box multiplies luck by 2^D with no ceiling
+	-- (LaunchServer's onBoxPress), but SLIME_EXTRAPOLATION_T_MAX clamps t at
+	-- this anchor, so every doubling PAST it buys exactly nothing. At 120,000
+	-- that made the box worth 1.01x at the band the old tier 10 landed on --
+	-- band 68, luck 75,000, one doubling from the clamp. Deleting old tier 10
+	-- moved the new tier 9 onto that same band, which would have moved the
+	-- dead box rather than removing it. At 1,000,000 the box is live at every
+	-- band on the road: a band-68 roll now needs four doublings to reach the
+	-- clamp instead of one.
+	--
+	-- THE VALUE IS NOW A CLAMP POINT, NOT AN OBSERVED ANCHOR. 120,000 was a
+	-- measured reference distribution; 1,000,000 is not. Everything between
+	-- 120,000 and 1,000,000 is EXTRAPOLATED along the same lerps that shape
+	-- the window, which is exactly what SLIME_EXTRAPOLATION_T_MIN/MAX exist to
+	-- keep sane -- and t no longer reaches 1.0 anywhere on the road, so the
+	-- shape at every band has moved. See REPORT.md for the measured
+	-- before/after and for what it does to the window at the top of the road;
+	-- that consequence is reported there, not fixed here.
+	SLIME_LUCK_ANCHOR_HIGH = 1000000,
 	-- How many consecutive tiers are ever eligible at once. 4 reproduces both
 	-- anchors exactly (Common-Epic at the low end, Legendary-Divine at the
 	-- high end are both 4-tier spans) -- see the written report.

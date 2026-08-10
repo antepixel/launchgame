@@ -1,9 +1,9 @@
 --!strict
 -- Every treasure-chest constant lives here, and ONLY here -- same rule as
 -- every other Config module in this project. The chest is what a PERFECT
--- tier-11 launch earns: that flight overshoots the road entirely and lands on
+-- top-tier launch earns: that flight overshoots the road entirely and lands on
 -- the giant slime's platform (see LaunchConfig.SWING_TIER_DISTANCE_SCALE's
--- tier-11 comment), where there is no mystery box, no box camera and no
+-- top-tier comment), where there is no mystery box, no box camera and no
 -- burst -- the player simply arrives somewhere, walks to a chest, and opens
 -- it. Deliberately unlike every other reward in the game, which plays a
 -- sequence at you.

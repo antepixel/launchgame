@@ -166,9 +166,9 @@ end
 
 -- Mirrors LaunchServer's snapThresholdForTier exactly -- same table, same
 -- typeof check, same fallback to the global for a missing/short entry. The
--- snap threshold has been per-tier since the tier-11 pass; this file did not
+-- snap threshold has been per-tier since the top-tier pass; this file did not
 -- get the memo, which is the whole of the bug in REPORT.md: the HUD snapped
--- tier 11's display to 2.00x at 1.90 while the server, on 1.95, sent the
+-- the top tier's display to 2.00x at 1.90 while the server, on 1.95, sent the
 -- graded value and the flight came down on the road. A launch is "perfect"
 -- when it SNAPPED, and only the tier's own threshold decides that.
 local function snapThresholdForTier(tier: number): number
@@ -285,7 +285,7 @@ end
 --   1. it read ARCH, so retuning the flight's HEIGHT silently reframed the
 --      launch -- which makes any arc change impossible to judge, since the
 --      camera moves at the same time and by a proportional amount;
---   2. it was unbounded. Tier 11 asked for 1,093 studs. The only thing stopping
+--   2. it was unbounded. The top tier asked for 1,093 studs. The only thing stopping
 --      it was Roblox's default CameraMaxZoomDistance of 400, which this project
 --      never sets -- an accident doing load-bearing work. And 400 was still too
 --      far: the release camera sat at Z 418.5 with the Baseplate ending at

@@ -123,7 +123,7 @@ saveWarningLabel.Parent = screenGui
 -- why this one specifically isn't a local copy like the smaller formatters
 -- elsewhere in this project): the money HUD and the shop's prices have to
 -- agree exactly on how a given amount reads, all the way up past a
--- quintillion for tier 10/11.
+-- quintillion for the top of the old eleven-tier ladder.
 local function refreshMoney()
 	local money = baseFolder:GetAttribute("Money")
 	moneyLabel.Text = MoneyFormat.format(if typeof(money) == "number" then money else 0)

@@ -347,7 +347,7 @@ function SwingBuilder.build(tier: number, pivotPart: BasePart, parentFolder: Ins
 	-- one along each of the four legs. Thickness SCALES with the frame
 	-- (postThickness), not a flat constant -- beam trim postThickness*0.35,
 	-- leg trim postThickness*0.28, so trim reads thin at tier 1 and thick
-	-- at tier 11 same as everything else, instead of the same 0.36 studs
+	-- at the top tier same as everything else, instead of the same 0.36 studs
 	-- at every scale. Tiers 1-5 (glowAccent = false): frameMaterial,
 	-- opaque, frame reflectance -- "trim uses the frame material in
 	-- accentColor," no neon at all. Tiers 6-11 (glowAccent = true): Neon,
