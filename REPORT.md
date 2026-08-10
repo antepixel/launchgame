@@ -263,9 +263,9 @@ leaves the top slightly ahead so chasing it is still worth something.
 | cost to max one top Divine | $5.80B | **$14.16B** |
 | cost to max a full ceiling base | $58.0B | **$141.6B** |
 
-The saturated-slot price is now **2.44x** what it was, and maxing a ceiling base costs more than the
-top swing tier ($800B) by a factor of... under one — $141.6B against $800B, so the swing ladder is
-still the larger sink at the very top.
+The saturated-slot price is now **2.44x** what it was. Maxing a full ceiling base costs $141.6B
+against the top swing tier's $800B, so the swing ladder is still the larger sink at the very top —
+by 5.65x, down from 13.8x before this change.
 
 ---
 
