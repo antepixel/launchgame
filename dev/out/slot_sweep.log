@@ -1,0 +1,32 @@
+runs/cell 10000, horizon 20000, grid points 133, costToMax 16575.1057
+  K=10 done (tier 10: p50@1k $2.98M, p50@10k $3.5M, exhaust 81 rolls)
+  K=11 done (tier 10: p50@1k $3.2M, p50@10k $3.85M, exhaust 81 rolls)
+  K=15 done (tier 10: p50@1k $3.88M, p50@10k $5.25M, exhaust 88 rolls)
+  K=16 done (tier 10: p50@1k $4.05M, p50@10k $5.6M, exhaust 88 rolls)
+  K=20 done (tier 10: p50@1k $4.6M, p50@10k $7M, exhaust 88 rolls)
+  K=21 done (tier 10: p50@1k $4.71M, p50@10k $7.35M, exhaust 88 rolls)
+  K=30 done (tier 10: p50@1k $5.61M, p50@10k $10.5M, exhaust 96 rolls)
+  K=31 done (tier 10: p50@1k $5.68M, p50@10k $10.8M, exhaust 96 rolls)
+  K=50 done (tier 10: p50@1k $6.61M, p50@10k $17.5M, exhaust 96 rolls)
+  K=51 done (tier 10: p50@1k $6.63M, p50@10k $17.9M, exhaust 96 rolls)
+
+K    content(h)  dead unlevelled(h)  dead maxed(h)  content:dead (unlev)
+10   1.98        113.3               8.3            1 : 57
+11   2.02        105.6               8.1            1 : 52
+15   2.02        85.8                7.5            1 : 42
+16   2.02        82.4                7.4            1 : 41
+20   2.07        72.4                7.1            1 : 35
+21   2.04        70.6                7.1            1 : 35
+30   2.06        59.6                6.8            1 : 29
+31   2.09        58.8                6.7            1 : 28
+50   2.03        49.7                6.4            1 : 24
+51   2.08        49.4                6.4            1 : 24
+
+mutation arm (MODELLED), tier 10, K=10 -- minutes to exhaustion at perfect play
+p \ m        2         5         10        50
+0.50    13.7      13.7      13.7      14.9    
+0.10    13.7      13.7      14.9      14.9    
+0.02    13.7      13.7      14.9      14.9    
+0.01    13.7      13.7      13.7      13.7    
+
+wrote dev/out/slot_sweep.json  (commit e12ca51476a0f5e724b06f09231fe5c45516b045)

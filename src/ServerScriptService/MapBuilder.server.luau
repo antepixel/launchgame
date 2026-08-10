@@ -279,22 +279,26 @@ for _, half in
 	}
 do
 	local beltZ = PathConfig.BACK_WALKWAY_Z + half.zSign * beltQuarterOffset
-	-- DELIBERATELY NOT asGround -- the belt is the one walkable surface in the
-	-- map that stays smooth, and it is the same call that dropped DiamondPlate
-	-- from this part: static relief under a SCROLLING texture gives the eye a
-	-- fixed reference that says the surface is not going anywhere, which is
-	-- exactly what the ridges exist to deny. Studs are a stronger fixed
-	-- reference than the tread was, so this matters more here, not less. If
-	-- you are studding ground and wondering why this one was skipped, that is
-	-- why -- it is not an oversight.
-	local belt = newBlock(
+	-- STUDDED DELIBERATELY, OVER A STANDING OBJECTION. The belt used to be the
+	-- one walkable surface left smooth, on the same call that dropped
+	-- DiamondPlate from it: static relief under a SCROLLING texture gives the
+	-- eye a fixed reference that says the surface is not going anywhere, which
+	-- is exactly what the ridges exist to deny, and studs are a stronger fixed
+	-- reference than the tread was. That argument was made, was not withdrawn,
+	-- and the studs were asked for anyway -- so every walkable surface in the
+	-- map now answers to GROUND_TOP_SURFACE with no exceptions.
+	--
+	-- TO REVERT: delete the asGround wrapper on this one call, nothing else.
+	-- It sets TopSurface and nothing more, so the ridge texture, the scroller,
+	-- the conveyor velocities and the geometry are untouched either way.
+	local belt = asGround(newBlock(
 		beltSize,
 		Vector3.new(LaneConfig.ROAD_CENTER_X, groundY + PathConfig.BACK_WALKWAY_Y_OFFSET, beltZ),
 		PathConfig.BELT_MATERIAL,
 		PathConfig.BELT_COLOR,
 		half.name,
 		mapFolder
-	)
+	))
 	-- Set AFTER parenting, and on the anchored part itself -- this is the
 	-- conveyor surface velocity, not motion of the part.
 	belt.AssemblyLinearVelocity = Vector3.new(half.direction * PathConfig.BELT_SPEED_STUDS_PER_SECOND, 0, 0)

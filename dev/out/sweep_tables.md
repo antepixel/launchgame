@@ -1,172 +1,4 @@
-# Does raising the slot count fix the dead time? No.
-
-**Measurement only. This pass changed nothing in `src/`, `assets/`, `dev/rbxshim.luau`,
-`default.project.json`, `dev/analysis/common.luau`, the four earlier analysis scripts, or either
-source JSON** — it added `dev/analysis/slot_sweep.luau`, `dev/analysis/sweep_tables.luau` and their
-`dev/out/` output, and rewrote this file. Studio was never opened; no playtest was run.
-
-**Join check passed.** `dev/out/roll_economics.json` and `dev/out/cycle_economics.json` both record
-`e12ca51476a0f5e724b06f09231fe5c45516b045`, which is the current HEAD; `slot_sweep.luau` re-checks
-both itself and `error()`s rather than joining against a stale file. One pre-existing uncommitted
-change is present and was not made here: `MapBuilder.server.luau`'s `asGround` call on the belt
-halves, which sets a `TopSurface` and moves no geometry.
-
-**Reproduction check passed** (this was a stop condition). At K = 10 this harness produces
-**1.98 h of content against 113.3 h of dead time unlevelled, 8.3 h maxed**, against the prior pass's
-2.04 h / 113.3 h / 8.6 h. Scored under the *prior pass's own* exhaustion definition instead of this
-brief's, the same run gives **2.01 h** of content — a 1.5% difference on a different seed, a
-different grid and a horizon twice as long. Nothing here contradicts the earlier result.
-
-Machine-readable output: **`dev/out/slot_sweep.json`**.
-
-## Reproduce every number
-
-```
-lune run dev/analysis/slot_sweep.luau                                # steps 0-7, writes the JSON (~75 s)
-lune run dev/analysis/sweep_tables.luau > dev/out/sweep_tables.md    # every table below
-```
-
-Both from the **repo root**. Seeds: **20260812** for the sweep (10,000 runs per cell, horizon 20,000
-rolls, K in {10, 11, 15, 16, 20, 21, 30, 31, 50, 51} x 11 tiers), **20260813** for the modelled
-mutation arm (2,000 runs per cell). Deterministic: a rerun reproduces these numbers exactly.
-
-The roll distribution is the real `SlimeRoll` — `common.rollPmfForBandLuck` integrates the real
-`SlimeRoll.distributionForLuck` over the mystery box's doubling chain exactly, and tier 11 uses the
-chest table. Nothing is reimplemented. `dev/analysis/common.luau` is required read-only; the new
-helpers all live in the new script.
-
-## The answer, up front
-
-1. **Exhaustion is invariant in K.** Raising the slot count fivefold moves tier-10 exhaustion from
-   **13.7 to 16.2 minutes** and tier-5 from 12.6 to 12.6. Summed over tiers 1-10, total content is
-   **1.98 h at K = 10 and 2.03 h at K = 50** — a 2% change for five times the slots.
-
-2. **Dead time does fall — for a different reason.** 113 h at K = 10 to 50 h at K = 50, entirely
-   because more slots mean more income and the next tier arrives sooner. Not one minute of that
-   comes from the tier staying interesting longer.
-
-3. **No K closes the gap.** Solving dead time = 0 needs K = 20 at tier 2 (it is already negative
-   there), and K in the **hundreds to trillions** for tiers 3-10, every one extrapolated well past
-   the swept range. At the largest K swept, tiers 8, 9 and 10 still carry 560, 775 and 1,331 minutes
-   of dead time against 14, 16 and 16 minutes of content — overshooting zero by **36x, 48x and 82x**.
-   Slot growth alone cannot close the gap; it is not close to closing it.
-
-4. **The modelled mutation arm does not close it either.** Not one of the 16 (p, m) pairs pushes
-   tier-10 exhaustion past **15 minutes**, let alone the 60 asked about. The two levers also do not
-   compose: at K = 20 the best mutation configuration produces exactly the K = 20 baseline.
-
-5. **Why, in one sentence:** exhaustion is a *relative* criterion — gain rate against income already
-   held — and both K and a mutation multiplier scale the numerator and the denominator together. The
-   only thing that would move it is a distribution whose tail keeps producing improvements after the
-   set has filled, which is a property of the roll table's shape, not of how many slots hold it.
-
-6. **A saturated slot has an exact price: $6,011,287,000.** At any tier whose set reaches the
-   ceiling, one more slot is worth one more top-Divine slime at max level, and the economy's own
-   exchange rate prices it at `350,000 x 28.6252 x 600`. That is 23x the tier-9 swing price and
-   under a quarter of tier 11's.
-
----
-
-# Step 0 — the facts that decide whether the sweep is valid
-
-## 0a. Can one slime occupy several slots at once? **Yes. Duplicates are permitted.**
-
-Both write paths scan only for an *empty* slot and never compare against what is already held:
-
-- `PlayerProfile.receiveSlime:865-873` — `for i = 1, SLOT_COUNT do if not profile.slots[i] then
-  profile.slots[i] = slime.globalIndex ...` — the condition is emptiness, nothing else.
-- `PlayerProfile.placeFromInventory:907-919` — the same loop, the same condition. Its only ownership
-  test is `profile.inventory[globalIndex] > 0`.
-
-Nothing else in the tree writes `profile.slots` (checked: the only other touches are
-`removeToInventory:939`, which clears, and `applyLoadedData:624`, which restores whatever was
-saved). The inventory itself is a *stacked count* per `globalIndex`
-(`PlayerProfile.luau:43-52`), which only makes sense if several copies can be held and placed.
-
-**Therefore the K-slot ceiling is `K x $350,000`** — the top Divine slime, `SlimeConfig.
-SLIME_INCOME_BY_TIER[8][8]`, in every slot. Every sweep below uses that. Had duplicates been
-blocked, the ceiling would have been the sum of the top K distinct slimes and every number here
-would differ.
-
-## 0b. Everything a change to `SLOT_COUNT` would drag with it
-
-`BaseConfig.SLOT_COUNT = 10` (`BaseConfig.luau:151`) is read in exactly these places:
-
-| site | what it does | survives a raise? |
-|---|---|---|
-| `BaseGeometry.slotPositions:66-72` | builds the K pad positions from `slotPosition` | **geometry-bound** — see 0c |
-| `BaseGeometry.slotPosition:50-61` | 2-column grid, `col = (i-1) % 2`, `row = (i-1) // 2`, `z = 117 + 14*row` | yes, but marches off the mat |
-| `MapBuilder.server.luau:168-182` | builds one pad per position, named `string.format("Slot%02d", n)` | yes up to **99** slots; `%02d` silently widens past that |
-| `PlayerProfile.getSlotPad:153-156` | `WaitForChild(string.format("Slot%02d", n))` | must match the builder's format exactly |
-| `PlayerProfile.syncClientState:537-546` | JSON-encodes one `{slot, globalIndex, level}` record per filled slot into a `Slots` attribute | grows ~40 bytes per slot; at K = 50 that is ~2 KB. Roblox's attribute-string limit is not documented in this repo — **flagged, not verified** |
-| `PlayerProfile.toSaveShape:578-584` | `table.create(SLOT_COUNT, 0)` positional arrays for `slots` and `levels` | yes |
-| `PlayerProfile.applyLoadedData:621-634` | reads `slots[i]` for `i = 1..SLOT_COUNT`, ignoring missing entries | yes — **an old 10-entry save loads into a larger base with the extra slots empty**, no migration needed |
-| `PlayerProfile.removeToInventory:931`, `upgradeSlime:1020`, `:1340` | range validation `slotNumber <= SLOT_COUNT` | yes |
-| `PlayerProfile` income loop `:1164` and visual rebuild `:758` | iterate all slots | yes |
-| `DevPanelClient.client.luau:410-413` | walks slots to find a free one | yes |
-
-The `Profile` type itself (`PlayerProfile.luau:41-65`) is keyed maps, not fixed-width arrays, so it
-needs no change at all. **No UI grid is K-bound**: the inventory panel lists slimes, not slots.
-
-## 0c. The largest K the existing serialisation and layout can carry
-
-**Serialisation: unbounded in practice.** The save shape is positional arrays sized from
-`SLOT_COUNT`, written and read by the same loop, and DataStore's per-key limit is megabytes against
-a few hundred bytes here. Growth is also *backward-compatible* — see `applyLoadedData` above.
-
-**Geometry: 12.** The binding constraint is the plot mat. Slot pads start at
-`BASE_SLOT_Z_START = 117`, step `BASE_SLOT_ROW_SPACING_STUDS = 14` per row, and are
-`BASE_SLOT_PAD_SIZE.Z = 8` deep, so row r's far edge is `117 + 14r + 4`. The mat is
-`BASE_MAT_SIZE.Z = 84` centred on `BASE_PLOT_CENTER_Z = 150`, so it ends at **192**, where the back
-edge part also sits (`BASE_BACK_EDGE_Z = 192`). `117 + 14r + 4 <= 192` gives `r <= 5.07`, i.e. rows
-0-5, and at `BASE_GRID_COLUMNS = 2` that is **12 slots**. K = 13 puts the seventh row's pads through
-the back edge and off the mat.
-
-So: **K = 12 without touching anything but `SLOT_COUNT`; beyond that the mat, the row pitch or the
-column count has to move too** — none of which is a schema change, just a layout one. The naming
-format caps at 99 regardless.
-
-## 0d. Does income sum all slots, uncapped? **Yes — re-verified.**
-
-`PlayerProfile.totalIncomePerSecond:1162-1174` walks `1..SLOT_COUNT`, adds
-`SlimeUpgrade.incomeForLevel(slime.incomePerSecond, levels[i] or 1)` per filled slot, and returns
-the sum. There is no cap, no per-slot multiplier, no diminishing term, and no dependence on how many
-slots are filled. The payout loop (`:1176-1187`) multiplies that sum by the tick length.
-
-## 0e. The level-reset rule, re-verified
-
-Unchanged from the first pass: level is per **slot** (`levels: { [number]: number }`,
-`PlayerProfile.luau:54-65`), set to 1 on every placement (`receiveSlime:868`,
-`placeFromInventory:910`), and destroyed on removal (`removeToInventory:942`).
-
-`SlimeUpgrade.totalUpgradeCost:81-89` takes `(baseIncomePerSecond, fromLevel, count)` and reads
-nothing else — no slot count, no held-set size. **The re-max cost therefore depends on K only
-through the total base income of the set**, which is exactly how this sweep charges it. The derived
-constant is `SlimeUpgrade.totalUpgradeCost(1, 1, 25)` = **16,575.1057** seconds of base income,
-computed in the script rather than typed in.
-
----
-
-# Step 1 — the slot sweep
-
-**Method.** The same event-driven construction `dev/analysis/slot_sim.luau` uses (read, not edited):
-the held set only changes when a roll beats the current worst slot, so the wait for the next
-improvement is geometric with `q = P(income > worst)` and is sampled directly. That is exact, not an
-approximation of rolling one at a time. One thing is new, and it is what makes K = 51 affordable:
-the held set is carried as a **count vector over the distribution's distinct income values**, with
-the worst-held value as a pointer that only ever moves up — an improvement is two increments and an
-amortised bump, O(1) instead of O(K). The sampled process is unchanged.
-
-**Exhaustion is defined once, and used everywhere below**: the first roll N at which the mean
-forward gain rate over `[N, 2N)` falls under 1% of the mean income held at N. Every doubled point is
-on the measurement grid by construction (the grid is ~9% geometric plus the exact double of every
-point), so no interpolation enters. The "1% of equilibrium" definition from the first pass is
-degenerate and is not reported. Exhaustion resolves to the nearest grid point, so figures are quoted
-to about +/-5%.
-
-**"Rolls to 50 / 90 / 99%" are percentages OF THE CEILING** — `K x $350,000` — not of a
-horizon value. The first pass's T2 reported against its 10,000-roll value and that was read as if it
-were the ceiling; it was not.
+<!-- generated by dev/analysis/sweep_tables.luau -->
 
 ### K1a. Rolls to exhaustion, by slot count and tier
 
@@ -183,22 +15,6 @@ were the ceiling; it was not.
 | 9 | 81 | 88 | 96 | 96 | 96 | +15 rolls (1.19x) |
 | 10 | 81 | 88 | 88 | 96 | 96 | +15 rolls (1.19x) |
 | 11 | 50 | 62 | 68 | 81 | 88 | +38 rolls (1.76x) |
-
-**Read the first column against the last.** Five times the slots buys between -9% and +76% of
-exhaustion, with no trend worth calling one: tier 5 does not move at all, tier 1 gets *worse*, and
-the only tier that genuinely responds is **tier 11** (50 to 88 rolls, +76%) — because the chest
-table is the one distribution whose upper tail keeps producing improvements for a set that large.
-Everywhere else the answer is flat.
-
-That is the whole finding, and the rest of this report is its consequences. What K *does* buy is
-income: tier 10's median at 10,000 rolls goes from $3.5M/s to $17.5M/s, exactly 5x, because the set
-saturates at the ceiling and the ceiling is linear in K. **More slots make you richer at the same
-speed; they do not make the tier last longer.**
-
-Also visible in K1b: the number of rolls to reach 90% of the ceiling grows roughly linearly in K
-(tier 10: 1,292 rolls at K = 10, 6,700 at K = 50), which is the mirror image — a bigger ceiling
-takes proportionally longer to fill, so the *fraction* filled at any given roll count is nearly
-K-invariant, and the exhaustion criterion sees the same curve shape either way.
 
 ### K1b. The sweep in full (median held-set base income/s)
 
@@ -261,15 +77,6 @@ Ceiling = K x $350,000, the top Divine slime in every slot -- duplicates are per
 | 50 | 9 | $17.5M | $475K | $4.05M | $15M | $17.5M | 2817 | 12288 | 15936 | 96 | $249B |
 | 50 | 10 | $17.5M | $815K | $6.61M | $17.5M | $17.5M | 1536 | 6700 | 8688 | 96 | $290B |
 | 50 | 11 | $17.5M | $3.28M | $14.2M | $17.5M | $17.5M | 352 | 1536 | 1992 | 88 | $290B |
-
----
-
-# Step 2 — the percentile spread
-
-The first pass reported p90/p10 only at 10,000 rolls, where tiers 8-11 came out at exactly **1.00**:
-every simulated player, lucky or unlucky, ended with an identical base. That is real, and it is the
-saturation showing through — at those tiers the set reaches the ceiling well inside the horizon, and
-a ceiling has no variance.
 
 ### K2. Percentile spread of held-set base income/s
 
@@ -339,35 +146,6 @@ a ceiling has no variance.
 | 1000 rolls | tiers 10, 11 | tiers 10, 11 | tiers 10, 11 | tiers 10, 11 | tiers 10, 11 |
 | 10000 rolls | tiers 6, 7, 8, 9, 10, 11 | tiers 6, 7, 8, 9, 10, 11 | tiers 6, 7, 8, 9, 10, 11 | tiers 6, 7, 8, 9, 10, 11 | tiers 7, 8, 9, 10, 11 |
 
-**Raising K does push that boundary back, but by one tier, not by several.** At 10,000 rolls the
-variance-dead set is tiers 6-11 at K = 10 through K = 30, and tiers 7-11 at K = 50 — tier 6 is the
-only tier bought back, and it takes a 5x slot increase to do it. At 1,000 rolls the boundary does
-not move at all (tiers 10 and 11 at every K). At 100 rolls no tier is variance-dead at any K.
-
-The per-tier numbers say the same thing more precisely. Tier 8's ratio goes 1.00 -> 1.05 -> 1.15 ->
-1.19 -> 1.20 across the sweep; tier 9 goes 1.00 -> 1.00 -> 1.00 -> 1.08 -> 1.13; tier 10 reaches
-1.02 only at K = 50; tier 11 stays at exactly 1.00 throughout. **More slots restore a little
-outcome variance at tier 8 and almost none at tiers 10-11**, because the reachable value set at
-those tiers is so top-heavy that fifty slots fill with the same handful of slimes.
-
-The low tiers are the opposite and worth noting: tier 1's ratio *falls* from 11.64 to 6.24 as K
-rises, because averaging over more slots is exactly what a larger sample does to a spread. Raising K
-makes low-tier outcomes more uniform and high-tier outcomes marginally less so.
-
----
-
-# Step 3 — real time
-
-Roll counts multiplied by the cycle time measured in the previous pass and read from
-`dev/out/cycle_economics.json` — 5.25 s to 11.85 s per launch at perfect play, rising with tier
-because the flight does. **Cycle time does not depend on K**, so this is a straight multiplication.
-
-**Two assumptions ride along, from that pass, and they are load-bearing here**: the bar hit rate
-(the three player models are assumptions, not measurements — the `perfect` column assumes the
-sweet spot is hit on the first pass every time) and the character walk speed (never configured
-anywhere in the repo; the engine default of 16 studs/s is assumed, affecting the 4-stud remount and
-tier 11's 29.6-stud chest walk).
-
 ### K3-perfect. Real time -- perfect
 
 | tier | K=10 exhaust | K=15 | K=20 | K=30 | K=50 | K=10 to 90% ceiling | K=15 | K=20 | K=30 | K=50 |
@@ -415,17 +193,6 @@ tier 11's 29.6-stud chest walk).
 | 9 | 26.2 min | 28.5 min | 31.1 min | 31.1 min | 31.1 min | 767 min | 1085 min | 1535 min | 2367 min | 3981 min |
 | 10 | 26.6 min | 28.9 min | 28.9 min | 31.6 min | 31.6 min | 425 min | 601 min | 850 min | 1311 min | 2204 min |
 | 11 | 17.9 min | 22.2 min | 24.3 min | 29.0 min | 31.5 min | 97 min | 149 min | 212 min | 300 min | 549 min |
-
----
-
-# Step 4 — dead time at each K
-
-Affordability is the prior pass's **non-circular** method, unchanged: integrate income along the
-measured held-set growth curve from an empty base (medians at 0 / 100 / 1,000 / 10,000 rolls,
-linearly interpolated, flat past the last point), banking at the measured cadence, until the next
-tier's price is met. Two brackets: **unlevelled** (base income, no drain) and **fully maxed**
-(28.6252x, less the re-max drain measured at that (K, tier) over the `[10,000, 20,000]` window).
-Price / equilibrium income is not used anywhere.
 
 ### K4. Dead time by slot count (perfect play)
 
@@ -504,30 +271,6 @@ Positive = dead time (tier exhausted, still grinding). Negative = skipped conten
 | 30 | 47.3 | 54.2 | 5.4 |
 | 50 | 46.0 | 44.4 | 5.2 |
 
-**Content is flat and dead time halves.** Between K = 10 and K = 50 the content total moves 1.98 h
--> 2.03 h (+2.5%, inside the grid's own resolution) while dead time falls 113.3 h -> 49.7 h (-56%).
-The ratio improves from 1 : 57 to 1 : 24, and every minute of that improvement is the *denominator*
-shrinking. A player at K = 50 does not get a more interesting tier 8; they get out of it sooner.
-
-Diminishing, too: the first five slots (10 -> 15) buy 27.5 h of the reduction, the last twenty
-(30 -> 50) buy 9.9 h. Dead time falls roughly linearly in **log K**, which is what makes step 5's
-answer come out the way it does.
-
-For the maxed bracket the whole effect is small — 8.3 h -> 6.4 h — because levelling already
-collapses affordability to a fraction of the unlevelled figure, and K cannot collapse it much
-further.
-
----
-
-# Step 5 — solve for K
-
-Dead time is close to linear in **log K** (step 4), so the solve interpolates on log K between swept
-points and, where the curve does not cross zero inside K <= 50, extrapolates from the slope of the
-last swept segment (30 -> 50). Extrapolated rows are flagged. **They should be read as "the curve
-does not get there", not as engineering targets** — where the last segment is nearly flat, the
-extrapolation is numerically unstable and blows up to absurd values (tier 6's 6.7e13 is that, not a
-finding).
-
 ### K5. The K at which dead time reaches zero
 
 Interpolated on log K between swept points; **extrapolated** where the curve does not cross inside K <= 50, using the slope of the last swept segment (30 -> 50).
@@ -544,44 +287,6 @@ Interpolated on log K between swept points; **extrapolated** where the curve doe
 | 8 | 2567 | yes | +895.9 | +560.1 | 3.7e+12 | yes | +88.3 | +78.2 |
 | 9 | 1602 | yes | +1549.7 | +774.7 | 1.8e+10 | yes | +121.5 | +94.8 |
 | 10 | 276 | yes | +3994.9 | +1331.1 | 21148 | yes | +214.1 | +136.0 |
-
-## Is there a single K that zeroes tiers 8, 9 and 10 together?
-
-**No, and not within two orders of magnitude.** The three tiers hold 107.3 of the 113.3 dead hours
-at K = 10. Taking the largest K swept as the best available single answer:
-
-| tier | content at K = 50 | dead at K = 50 | dead as a multiple of content | +/-20% of zero would be |
-|---|---|---|---|---|
-| 8 | 14.1 min | **560 min** | 40x | +/- 2.8 min |
-| 9 | 15.7 min | **775 min** | 49x | +/- 3.1 min |
-| 10 | 16.2 min | **1,331 min** | 82x | +/- 3.2 min |
-
-The per-tier solves put the crossing at K = 2,567 / 1,602 / 276 for tiers 8 / 9 / 10 respectively,
-all extrapolated, and they do not even agree with each other to within a factor of nine — so there
-is no single K, and there is not a narrow band of K either. Note the ordering is inverted from
-intuition: tier 10 needs the *fewest* extra slots of the three, because its ceiling-linear income
-growth attacks the largest price.
-
-**Stated plainly: slot growth alone cannot close the gap.** Going from 10 slots to 50 removes 63 of
-the 113 dead hours, which is real and worth having, but it leaves 50 hours against 2 hours of
-content and it does so by making the player richer rather than by giving them anything to do. The
-gap is between a flat exhaustion curve and a geometric price ladder; K moves neither. The two levers
-that would are the price ladder itself (tiers 8-10 are where 95% of the dead time is) and the shape
-of the roll table's upper tail (what would actually extend exhaustion).
-
----
-
-# Step 6 — pricing the Kth slot
-
-The exchange rate is the one verified exactly in the first pass: **$600 buys +1 income/s
-permanently**, at any tier, any level, any purchase size (worst deviation 1.5e-12 across all 65
-slimes x every level and count). A slot's break-even price is therefore
-`600 x (realised income/s with K+1 slots - realised income/s with K slots)` — the point where a
-player is indifferent between buying the slot and spending the same money on levels.
-
-`realised` here is maxed gross (28.6252x the held base) less the re-max drain measured at that
-(K, tier), at perfect-play cadence. K and K+1 were **both simulated** rather than sloping between
-swept points, so these are true one-slot differences.
 
 ### K6. Marginal value of one more slot, and its break-even price
 
@@ -645,32 +350,6 @@ Break-even price = delta realised income/s x $600. Realised = maxed gross (28.62
 | 50 -> 51 | 10 | $311K | $187M | $9.14M | $5.48B | $6B | $290B |
 | 50 -> 51 | 11 | $5.66M | $3.4B | $10M | $6.01B | $6.01B | $290B |
 
-**The saturated slot has an exact closed-form price.** Wherever the set reaches the ceiling inside
-the budget — tiers 10 and 11 at every K, tier 9 at small K — one more slot is worth exactly one more
-top-Divine slime at max level:
-
-```
-350,000 x 28.6252 x 600  =  $6,011,287,000
-```
-
-Every such cell in K6 reads $6.01B, and that is a derivation, not an artefact of the sample. For
-scale, that is **almost exactly the tier-8 swing price ($6B)**, twice tier 7's ($3B), and 5.5% of
-tier 9's ($110B) — so at the top of the ladder a slot is worth about one mid-ladder swing tier, and
-the top three swing tiers each cost more than eighteen saturated slots would.
-
-**Below saturation the marginal slot is worth far less, and at tier 1 it is worth nothing
-measurable.** At tier 1 the 11th slot is worth about -$0.03B to +$0.04B — statistically zero, and
-the sign flips with the sample, because a tier-1 roll almost never produces a slime good enough to
-occupy a marginal slot. The marginal value climbs steeply with tier ($0.11B at tier 3, $2.04B at
-tier 5, $5.95B at tier 8, $6.01B at tier 10) and *falls* with K at a fixed tier (tier 8: $5.95B at
-the 11th slot, $2.47B at the 51st), which is ordinary diminishing returns: later slots hold worse
-slimes.
-
-**The competing sink grows too.** The `levelling capacity` column is `16,575.1 x` held base income —
-what it costs to max everything currently held. At tier 10 it goes from $58B at K = 10 to $290B at
-K = 50, so buying slots makes the levelling sink five times deeper at the same time. A slot priced
-at break-even is, by construction, exactly as good as pouring the same money into that sink.
-
 ### K6b. Candidate price ladder for slots 11-30 (mean-based, 10,000-roll budget)
 
 **Tier assignment is an assumption**: two slots per swing tier from tier 3 upward, which is roughly the rate the measured progression moves through tiers. The full (K, tier) matrix is in K6 and in the JSON, so any other assignment can be read off it.
@@ -697,17 +376,6 @@ at break-even is, by construction, exactly as good as pouring the same money int
 | 28 | 10 | 20 | $6.01B | $260B |
 | 29 | 10 | 20 | $6.01B | $260B |
 | 30 | 10 | 20 | $6.01B | $260B |
-
----
-
-# Step 7 — the mutation arm (MODELLED)
-
-**No mutation system exists in this codebase.** Nothing was added, stubbed or modified in `src/`;
-this arm lives entirely inside `dev/analysis/slot_sweep.luau`. The model: at roll time, independently
-of which slime was rolled, with probability **p** the slime is worth **m** times its base income.
-That splits every value in the distribution into an unmutated copy at mass `1-p` and a mutated copy
-at `p x m` the value, and the ceiling becomes `K x 350,000 x m`. 2,000 sims per cell, seed 20260813,
-exploratory precision. **Every number in the next table is a model output.**
 
 ### K7. The mutation arm -- MODELLED, no such system exists in the source
 
@@ -843,123 +511,3 @@ At roll time, independently of the slime rolled, with probability p the slime is
 | 20 | 11 | 0.01 | 5 | 1.04x | $35M | 68 | 13.4 | $15.3M |
 | 20 | 11 | 0.01 | 10 | 1.09x | $70M | 74 | 14.6 | $29.7M |
 | 20 | 11 | 0.01 | 50 | 1.49x | $350M | 81 | 16.0 | $148M |
-
-## Which (p, m) pairs push tier-10 exhaustion past 60 minutes of perfect play?
-
-**None of the sixteen.** At K = 10 the whole grid lands between **13.7 and 14.9 minutes** against a
-13.7-minute no-mutation baseline; at K = 20 it lands between 14.9 and 16.2 against a 14.9 baseline.
-The best cell in the entire arm is +1.3 minutes. Sixty minutes is not approached by any combination,
-including `p = 0.5, m = 50` — which multiplies average income by **25.5x** and inflates the ceiling
-to $175M/s while extending the tier by 1.2 minutes.
-
-Average multiplier `E[mutation] = 1 + p(m-1)` per pair, with the ones that inflate the economy
-rather than extending it flagged:
-
-| p \ m | 2 | 5 | 10 | 50 |
-|---|---|---|---|---|
-| **0.50** | 1.50x | 3.00x **>2x** | 5.50x **>2x** | 25.50x **>2x** |
-| **0.10** | 1.10x | 1.40x | 1.90x | 5.90x **>2x** |
-| **0.02** | 1.02x | 1.08x | 1.18x | 1.98x |
-| **0.01** | 1.01x | 1.04x | 1.09x | 1.49x |
-
-Six of the sixteen exceed 2x average income. None of the six buys more exhaustion than the cheap
-cells do: `p = 0.02, m = 10` (1.18x average) reaches the same 14.9 minutes as `p = 0.5, m = 50`
-(25.5x average). **Mutation rarity and size trade off almost exactly in the exhaustion metric, and
-the trade is flat** — which is the same invariance the slot sweep found, for the same reason: a
-multiplier applied to the value scale moves the income held and the gain rate together, and
-exhaustion is the ratio of the two.
-
-## Head to head at tier 10
-
-| lever | exhaustion, perfect play | gained | cost to the economy |
-|---|---|---|---|
-| baseline, K = 10 | 13.7 min | - | - |
-| **K 10 -> 30** | 16.2 min | **+2.5 min** | 3x the income ceiling ($3.5M/s -> $10.5M/s base) |
-| **best mutation under 1.5x average** (`p = 0.02, m = 10`, 1.18x) | 14.9 min | **+1.2 min** | 1.18x average income, 10x ceiling |
-| both together (K = 20, `p = 0.02, m = 10`) | 14.9 min | +1.2 min over K=10 | both of the above |
-
-**Slots do roughly twice as much as the best cheap mutation, and they do not compose.** At K = 20
-the mutation adds exactly nothing over the K = 20 baseline (14.9 min either way) — the two levers
-overlap completely, because both work by enlarging the value set the held slots draw from, and the
-exhaustion criterion is blind to scale. Adding both gets you the better of the two, not the sum.
-
-For the record, the arm's one genuine positive: mutations do raise the **ceiling** (10x at m = 10,
-50x at m = 50) and therefore the income and the levelling capacity. If the aim is to give a
-late-game player something to spend money on, that works. If the aim is to make tier 10 interesting
-for more than a quarter of an hour, it does not.
-
----
-
-# Assumptions carried into these tables
-
-Stated here as well as at each table, per the brief:
-
-1. **The best-of-K policy is hand play, not code.** The game has no replacement policy at all — a
-   roll arriving at a full base goes to inventory (`receiveSlime:874`), and swapping is a manual
-   remove-then-place. Every held-set figure is what an attentive player achieves, an upper bound.
-2. **Bar hit rate** (step 3): the three player models are assumptions. `perfect` means the sweet
-   spot is hit on the first pass, every launch, at every tier — including tier 11's 0.072 s window.
-3. **Walk speed** (step 3, via the cycle join): never configured anywhere in the repo; the engine
-   default of 16 studs/s is assumed.
-4. **The affordability curve** is interpolated from four measured points (0 / 100 / 1,000 / 10,000
-   rolls), matching the prior pass so the K = 10 arm is comparable.
-5. **The mutation arm is a model with no source behind it** (step 7), at reduced precision
-   (2,000 sims).
-6. **Exhaustion resolves to the nearest grid point** (~9% spacing), so single-cell differences of
-   one grid step are not significant; the flatness across K is, since it holds across all five
-   columns.
-7. **Duplicates permitted** (step 0a) sets the ceiling at `K x $350,000`. Had they been blocked,
-   every ceiling, every "% of ceiling", and every saturated-slot price would be different.
-
-# Bugs and discrepancies found (reported, not fixed)
-
-1. **`SLOT_COUNT` cannot be raised past 12 without moving the plot.** `BaseGeometry.slotPosition`
-   marches rows off the far edge of the mat at K = 13 (step 0c). Nothing warns, asserts or clamps:
-   the pads would simply be built past `BASE_BACK_EDGE_Z`, floating over the grass with the back
-   edge part through them. Given that `SLOT_COUNT` presents as a tunable config constant with a
-   comment inviting a change, this is a trap worth an assert.
-2. **The `Slots` sync attribute grows without a documented bound.** `syncClientState:537-546`
-   JSON-encodes one record per filled slot into an instance attribute. At K = 50 that is roughly
-   2 KB per player per sync. Roblox's attribute-string limit is not stated anywhere in this repo and
-   was not verified here — flagged, not measured.
-3. **`string.format("Slot%02d", n)` is width-limited by convention only.** Past 99 slots the name
-   widens to three digits and `getSlotPad`'s `WaitForChild` still matches, since both sides use the
-   same format — so this is safe, but only because one expression is used in both places
-   (`MapBuilder:180`, `PlayerProfile:155`). Worth keeping that way.
-4. **Nothing in the sweep contradicts the two prior passes.** The K = 10 arm reproduces the earlier
-   dead-time totals to 1.5% under the earlier definition, and to 3% under this brief's.
-
-# What would actually move exhaustion (not measured, stated as the implication)
-
-Exhaustion is `first N where mean gain over [N,2N) < 1% of income at N`. Both levers tested here
-scale income and gain together and leave the ratio alone. The quantity that does move it is the
-**shape of the reachable value distribution above the current worst slot** — specifically, how much
-probability mass sits in the band just above where the held set has reached. A roll table with a
-long, thin, continuously-populated upper tail keeps producing 1%-scale improvements for far longer
-than one that saturates on eight Divine values. Measuring that would mean sweeping tail shape
-(number of distinct values above the ceiling region, and their spacing) rather than K or m — the
-natural next pass, and it needs no new systems, only a different `SLIME_INCOME_BY_TIER`.
-
-# Files
-
-Created this pass (analysis only):
-
-- `dev/analysis/slot_sweep.luau` — steps 0-7, writes `dev/out/slot_sweep.json`
-- `dev/analysis/sweep_tables.luau` — every table above
-- `dev/out/slot_sweep.json`, `dev/out/sweep_tables.md`, `dev/out/slot_sweep.log`
-
-Read but not modified: `dev/analysis/common.luau`, the four earlier analysis scripts,
-`dev/out/roll_economics.json`, `dev/out/cycle_economics.json`, and every file on the
-must-not-change list.
-
-**`dev/out/slot_sweep.json` shape:** `gitCommit`; `sourceJson` (both joined files and their
-commits); `facts` (every step 0 answer, including `duplicatesAllowed: true`,
-`maxKWithoutSchemaChange: 12` and the binding constraint as prose); `sweep` (110 entries keyed by
-`slots` and `tier`, each with ceiling, income and percentiles at 100 / 1,000 / 10,000 / 20,000,
-`rollsToCeiling50/90/99`, `rollsToExhaustion`, the prior pass's definition alongside it,
-`minutesToExhaustion` and `minutesToCeiling90` per player model, the measured re-max drain,
-levelling capacity, and the affordability block per model); `deadTime` (`perSlotTier` and per-K
-`totals`); `requiredSlots` (step 5, per tier and bracket, with `extrapolated`); `slotPricing`
-(`marginal` per (K, tier) with both mean- and median-based deltas, and `candidateLadder` for slots
-11-30); `mutationArm` (`modelled: true` and the full 128-cell grid); `constants`; `seeds`;
-`sampleCounts`.

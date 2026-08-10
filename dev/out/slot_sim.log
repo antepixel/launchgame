@@ -1,0 +1,68 @@
+runs/tier = 10000, horizon = 10000 rolls, slots = 10, costToMax = 16575.1057 s of base income
+tier  1  eq(base) $46.4K  [p10 $19.4K, p90 $232K]  asymptote $3.5M  rolls->90% 8856  remax/roll@eq $129K
+tier  2  eq(base) $178K  [p10 $56.3K, p90 $484K]  asymptote $3.5M  rolls->90% 8856  remax/roll@eq $324K
+tier  3  eq(base) $364K  [p10 $152K, p90 $743K]  asymptote $3.5M  rolls->90% 8856  remax/roll@eq $627K
+tier  4  eq(base) $1M  [p10 $547K, p90 $1.57M]  asymptote $3.5M  rolls->90% 8856  remax/roll@eq $1.58M
+tier  5  eq(base) $2.22M  [p10 $1.69M, p90 $2.72M]  asymptote $3.5M  rolls->90% 7701  remax/roll@eq $3.45M
+tier  6  eq(base) $2.8M  [p10 $2.34M, p90 $3.24M]  asymptote $3.5M  rolls->90% 6697  remax/roll@eq $4.17M
+tier  7  eq(base) $3.37M  [p10 $2.85M, p90 $3.5M]  asymptote $3.5M  rolls->90% 6697  remax/roll@eq $4.01M
+tier  8  eq(base) $3.5M  [p10 $3.5M, p90 $3.5M]  asymptote $3.5M  rolls->90% 4403  remax/roll@eq $1.77M
+tier  9  eq(base) $3.5M  [p10 $3.5M, p90 $3.5M]  asymptote $3.5M  rolls->90% 2189  remax/roll@eq $72.1K
+tier 10  eq(base) $3.5M  [p10 $3.5M, p90 $3.5M]  asymptote $3.5M  rolls->90% 1252  remax/roll@eq $0
+tier 11  eq(base) $3.5M  [p10 $3.5M, p90 $3.5M]  asymptote $3.5M  rolls->90% 269  remax/roll@eq $0
+
+$/income-per-second across all 65 slimes x every (level, count): 600, worst deviation 1.478e-12
+
+== roll budget 100 ==
+tier  price      dRealised/s   implied$     ratio      payback(s)   payback(h)  capacity$   nextTier/capacity
+   2  100K       -25.4K        -15.2M       -0.006564  -3.94        -0.00109    17.9M       0.00559
+   3  450K       -61.1K        -36.7M       -0.01227   -7.36        -0.00205    32.8M       0.0137
+   4  5M         -191K         -114M        -0.04373   -26.2        -0.00729    58.1M       0.0861
+   5  20M        -284K         -170M        -0.1174    -70.5        -0.0196     126M        0.159
+   6  250M       -304K         -183M        -1.369     -822         -0.228      462M        0.541
+   7  3B         397K          238M         12.58      7.55K        2.1         824M        3.64
+   8  6B         1.5M          900M         6.666      4K           1.11        1.92B       3.13
+   9  110B       1.84M         1.1B         99.71      59.8K        16.6        4.23B       26
+  10  260B       2.52M         1.51B        172.3      103K         28.7        7.38B       35.2
+  11  800B       4.94M         2.97B        269.7      162K         44.9        12.4B       64.5
+
+== roll budget 1000 ==
+tier  price      dRealised/s   implied$     ratio      payback(s)   payback(h)  capacity$   nextTier/capacity
+   2  100K       153K          91.6M        0.001091   0.655        0.000182    90.3M       0.00111
+   3  450K       465K          279M         0.001613   0.968        0.000269    216M        0.00208
+   4  5M         1.9M          1.14B        0.004388   2.63         0.000731    520M        0.00962
+   5  20M        8.32M         4.99B        0.004004   2.4          0.000667    1.77B       0.0113
+   6  250M       7.64M         4.58B        0.05456    32.7         0.00909     6.99B       0.0358
+   7  3B         12.6M         7.57B        0.3963     238          0.0661      11.8B       0.254
+   8  6B         16M           9.6B         0.6252     375          0.104       19.6B       0.306
+   9  110B       17.2M         10.3B        10.63      6.38K        1.77        29.7B       3.71
+  10  260B       14.8M         8.87B        29.32      17.6K        4.89        40.4B       6.43
+  11  800B       20.6M         12.4B        64.66      38.8K        10.8        49.4B       16.2
+
+== roll budget 10000 ==
+tier  price      dRealised/s   implied$     ratio      payback(s)   payback(h)  capacity$   nextTier/capacity
+   2  100K       3.75M         2.25B        4.449e-05  0.0267       7.42e-06    768M        0.00013
+   3  450K       5.29M         3.17B        0.0001419  0.0851       2.36e-05    2.95B       0.000152
+   4  5M         18.1M         10.8B        0.0004615  0.277        7.69e-05    6.04B       0.000828
+   5  20M        34.7M         20.8B        0.0009612  0.577        0.00016     16.6B       0.00121
+   6  250M       16.5M         9.92B        0.02521    15.1         0.0042      36.8B       0.00679
+   7  3B         16.4M         9.82B        0.3054     183          0.0509      46.4B       0.0646
+   8  6B         4.01M         2.41B        2.492      1.5K         0.415       55.9B       0.107
+   9  110B       212K          127M         865.2      519K         144         58B         1.9
+  10  260B       8.69K         5.21M        4.989e+04  29.9M        8.31e+03    58B         4.48
+  11  800B       0             0            n/a        n/a          n/a         58B         13.8
+
+tier  rampMult  modelIncome/s   realised@100    realised@1000   realised@10000  m/model@100  @1000   @10000
+   1  1.000     390             -76.3K          94K             1.29M           -195.6       240.9   3310
+   2  2.313     1.51K           -102K           247K            5.04M           -67.45       163.6   3340
+   3  5.350     5.69K           -163K           712K            10.3M           -28.61       125     1814
+   4  12.375    32.6K           -353K           2.61M           28.4M           -10.85       80.18   871.7
+   5  28.625    204K            -637K           10.9M           63.1M           -3.118       53.5    308.5
+   6  28.625    327K            -942K           18.6M           79.6M           -2.876       56.74   243.1
+   7  28.625    549K            -544K           31.2M           96M             -0.991       56.79   174.7
+   8  28.625    956K            956K            47.2M           100M            1            49.38   104.6
+   9  28.625    1.53M           2.79M           64.4M           100M            1.821        41.98   65.27
+  10  28.625    2.57M           5.31M           79.2M           100M            2.067        30.83   38.99
+  11  28.625    9.61M           10.3M           99.8M           100M            1.067        10.39   10.43
+
+wrote dev/out/roll_economics.json  (commit e12ca51476a0f5e724b06f09231fe5c45516b045)

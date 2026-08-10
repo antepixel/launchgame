@@ -1,0 +1,12 @@
+tier  bandLuck  E[base]/roll no box  E[base]/roll with box  box multiple
+   1        25  $25.5                $39                    1.53x
+   2        75  $25.8                $65.2                  2.53x
+   3       200  $26                  $106                   4.09x
+   4       700  $66.6                $263                   3.95x
+   5      2500  $189                 $714                   3.78x
+   6      5000  $191                 $1.14K                 5.99x
+   7      9000  $193                 $1.92K                 9.95x
+   8     20000  $881                 $3.34K                 3.79x
+   9     45000  $903                 $5.36K                 5.94x
+  10     75000  $8.87K               $8.98K                 1.01x
+  11         0  (chest landing -- no box on this path)

@@ -1,0 +1,1934 @@
+{
+  "constants": {
+    "boxDoubleChance": 0.55,
+    "chestDivineChance": 0.2,
+    "chestTierWeightRatio": 2,
+    "costToMaxMultiplier": 16575.10571467284,
+    "dollarsPerIncomePerSecond": 600,
+    "dollarsPerIncomeWorstDeviation": 1.4779288903810084e-12,
+    "maxLevel": 25,
+    "maxLevelIncomeMultiplier": 28.625176191121405,
+    "slotCount": 10,
+    "upgradeGrowthRate": 0.15,
+    "upgradePaybackSeconds": 600
+  },
+  "gitCommit": "e12ca51476a0f5e724b06f09231fe5c45516b045",
+  "sampleCounts": {
+    "rollsPerSimulation": 10000,
+    "rollsPerTier": 2000000,
+    "simulationsPerTier": 10000
+  },
+  "seed": {
+    "rollEv": 20260810,
+    "slotSim": 20260811
+  },
+  "slimes": [
+    {
+      "baseIncomePerSecond": 5,
+      "id": 1,
+      "name": "Common Slime 1",
+      "tier": 1,
+      "tierName": "Common"
+    },
+    {
+      "baseIncomePerSecond": 6,
+      "id": 2,
+      "name": "Common Slime 2",
+      "tier": 1,
+      "tierName": "Common"
+    },
+    {
+      "baseIncomePerSecond": 7,
+      "id": 3,
+      "name": "Common Slime 3",
+      "tier": 1,
+      "tierName": "Common"
+    },
+    {
+      "baseIncomePerSecond": 8,
+      "id": 4,
+      "name": "Common Slime 4",
+      "tier": 1,
+      "tierName": "Common"
+    },
+    {
+      "baseIncomePerSecond": 9,
+      "id": 5,
+      "name": "Common Slime 5",
+      "tier": 1,
+      "tierName": "Common"
+    },
+    {
+      "baseIncomePerSecond": 10,
+      "id": 6,
+      "name": "Common Slime 6",
+      "tier": 1,
+      "tierName": "Common"
+    },
+    {
+      "baseIncomePerSecond": 15,
+      "id": 7,
+      "name": "Uncommon Slime 1",
+      "tier": 2,
+      "tierName": "Uncommon"
+    },
+    {
+      "baseIncomePerSecond": 17,
+      "id": 8,
+      "name": "Uncommon Slime 2",
+      "tier": 2,
+      "tierName": "Uncommon"
+    },
+    {
+      "baseIncomePerSecond": 19,
+      "id": 9,
+      "name": "Uncommon Slime 3",
+      "tier": 2,
+      "tierName": "Uncommon"
+    },
+    {
+      "baseIncomePerSecond": 21,
+      "id": 10,
+      "name": "Uncommon Slime 4",
+      "tier": 2,
+      "tierName": "Uncommon"
+    },
+    {
+      "baseIncomePerSecond": 23,
+      "id": 11,
+      "name": "Uncommon Slime 5",
+      "tier": 2,
+      "tierName": "Uncommon"
+    },
+    {
+      "baseIncomePerSecond": 25,
+      "id": 12,
+      "name": "Uncommon Slime 6",
+      "tier": 2,
+      "tierName": "Uncommon"
+    },
+    {
+      "baseIncomePerSecond": 35,
+      "id": 13,
+      "name": "Rare Slime 1",
+      "tier": 3,
+      "tierName": "Rare"
+    },
+    {
+      "baseIncomePerSecond": 40,
+      "id": 14,
+      "name": "Rare Slime 2",
+      "tier": 3,
+      "tierName": "Rare"
+    },
+    {
+      "baseIncomePerSecond": 45,
+      "id": 15,
+      "name": "Rare Slime 3",
+      "tier": 3,
+      "tierName": "Rare"
+    },
+    {
+      "baseIncomePerSecond": 50,
+      "id": 16,
+      "name": "Rare Slime 4",
+      "tier": 3,
+      "tierName": "Rare"
+    },
+    {
+      "baseIncomePerSecond": 55,
+      "id": 17,
+      "name": "Rare Slime 5",
+      "tier": 3,
+      "tierName": "Rare"
+    },
+    {
+      "baseIncomePerSecond": 60,
+      "id": 18,
+      "name": "Rare Slime 6",
+      "tier": 3,
+      "tierName": "Rare"
+    },
+    {
+      "baseIncomePerSecond": 80,
+      "id": 19,
+      "name": "Epic Slime 1",
+      "tier": 4,
+      "tierName": "Epic"
+    },
+    {
+      "baseIncomePerSecond": 95,
+      "id": 20,
+      "name": "Epic Slime 2",
+      "tier": 4,
+      "tierName": "Epic"
+    },
+    {
+      "baseIncomePerSecond": 110,
+      "id": 21,
+      "name": "Epic Slime 3",
+      "tier": 4,
+      "tierName": "Epic"
+    },
+    {
+      "baseIncomePerSecond": 125,
+      "id": 22,
+      "name": "Epic Slime 4",
+      "tier": 4,
+      "tierName": "Epic"
+    },
+    {
+      "baseIncomePerSecond": 140,
+      "id": 23,
+      "name": "Epic Slime 5",
+      "tier": 4,
+      "tierName": "Epic"
+    },
+    {
+      "baseIncomePerSecond": 150,
+      "id": 24,
+      "name": "Epic Slime 6",
+      "tier": 4,
+      "tierName": "Epic"
+    },
+    {
+      "baseIncomePerSecond": 250,
+      "id": 25,
+      "name": "Legendary Slime 1",
+      "tier": 5,
+      "tierName": "Legendary"
+    },
+    {
+      "baseIncomePerSecond": 300,
+      "id": 26,
+      "name": "Legendary Slime 2",
+      "tier": 5,
+      "tierName": "Legendary"
+    },
+    {
+      "baseIncomePerSecond": 350,
+      "id": 27,
+      "name": "Legendary Slime 3",
+      "tier": 5,
+      "tierName": "Legendary"
+    },
+    {
+      "baseIncomePerSecond": 400,
+      "id": 28,
+      "name": "Legendary Slime 4",
+      "tier": 5,
+      "tierName": "Legendary"
+    },
+    {
+      "baseIncomePerSecond": 450,
+      "id": 29,
+      "name": "Legendary Slime 5",
+      "tier": 5,
+      "tierName": "Legendary"
+    },
+    {
+      "baseIncomePerSecond": 500,
+      "id": 30,
+      "name": "Legendary Slime 6",
+      "tier": 5,
+      "tierName": "Legendary"
+    },
+    {
+      "baseIncomePerSecond": 800,
+      "id": 31,
+      "name": "Mythic Slime 1",
+      "tier": 6,
+      "tierName": "Mythic"
+    },
+    {
+      "baseIncomePerSecond": 950,
+      "id": 32,
+      "name": "Mythic Slime 2",
+      "tier": 6,
+      "tierName": "Mythic"
+    },
+    {
+      "baseIncomePerSecond": 1100,
+      "id": 33,
+      "name": "Mythic Slime 3",
+      "tier": 6,
+      "tierName": "Mythic"
+    },
+    {
+      "baseIncomePerSecond": 1250,
+      "id": 34,
+      "name": "Mythic Slime 4",
+      "tier": 6,
+      "tierName": "Mythic"
+    },
+    {
+      "baseIncomePerSecond": 1400,
+      "id": 35,
+      "name": "Mythic Slime 5",
+      "tier": 6,
+      "tierName": "Mythic"
+    },
+    {
+      "baseIncomePerSecond": 1500,
+      "id": 36,
+      "name": "Mythic Slime 6",
+      "tier": 6,
+      "tierName": "Mythic"
+    },
+    {
+      "baseIncomePerSecond": 3000,
+      "id": 37,
+      "name": "Secret Slime 1",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 3500,
+      "id": 38,
+      "name": "Secret Slime 2",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 4000,
+      "id": 39,
+      "name": "Secret Slime 3",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 4500,
+      "id": 40,
+      "name": "Secret Slime 4",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 5000,
+      "id": 41,
+      "name": "Secret Slime 5",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 5500,
+      "id": 42,
+      "name": "Secret Slime 6",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 6000,
+      "id": 43,
+      "name": "Secret Slime 7",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 6500,
+      "id": 44,
+      "name": "Secret Slime 8",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 7000,
+      "id": 45,
+      "name": "Secret Slime 9",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 8000,
+      "id": 46,
+      "name": "Secret Slime 10",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 9000,
+      "id": 47,
+      "name": "Secret Slime 11",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 10000,
+      "id": 48,
+      "name": "Secret Slime 12",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 11000,
+      "id": 49,
+      "name": "Secret Slime 13",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 12500,
+      "id": 50,
+      "name": "Secret Slime 14",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 14000,
+      "id": 51,
+      "name": "Secret Slime 15",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 15500,
+      "id": 52,
+      "name": "Secret Slime 16",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 16500,
+      "id": 53,
+      "name": "Secret Slime 17",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 17500,
+      "id": 54,
+      "name": "Secret Slime 18",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 18500,
+      "id": 55,
+      "name": "Secret Slime 19",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 19250,
+      "id": 56,
+      "name": "Secret Slime 20",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 20000,
+      "id": 57,
+      "name": "Secret Slime 21",
+      "tier": 7,
+      "tierName": "Secret"
+    },
+    {
+      "baseIncomePerSecond": 50000,
+      "id": 58,
+      "name": "Divine Slime 1",
+      "tier": 8,
+      "tierName": "Divine"
+    },
+    {
+      "baseIncomePerSecond": 65000,
+      "id": 59,
+      "name": "Divine Slime 2",
+      "tier": 8,
+      "tierName": "Divine"
+    },
+    {
+      "baseIncomePerSecond": 80000,
+      "id": 60,
+      "name": "Divine Slime 3",
+      "tier": 8,
+      "tierName": "Divine"
+    },
+    {
+      "baseIncomePerSecond": 100000,
+      "id": 61,
+      "name": "Divine Slime 4",
+      "tier": 8,
+      "tierName": "Divine"
+    },
+    {
+      "baseIncomePerSecond": 130000,
+      "id": 62,
+      "name": "Divine Slime 5",
+      "tier": 8,
+      "tierName": "Divine"
+    },
+    {
+      "baseIncomePerSecond": 170000,
+      "id": 63,
+      "name": "Divine Slime 6",
+      "tier": 8,
+      "tierName": "Divine"
+    },
+    {
+      "baseIncomePerSecond": 220000,
+      "id": 64,
+      "name": "Divine Slime 7",
+      "tier": 8,
+      "tierName": "Divine"
+    },
+    {
+      "baseIncomePerSecond": 350000,
+      "id": 65,
+      "name": "Divine Slime 8",
+      "tier": 8,
+      "tierName": "Divine"
+    }
+  ],
+  "tiers": [
+    {
+      "analyticExpectedIncomePerRoll": 39.027647816261414,
+      "asymptoteIncomePerSecond": 3500000,
+      "bandIndex": 4,
+      "cycleSecondsFloor": 3.7055555555555557,
+      "distanceFromBandZero": 171.47576436351045,
+      "distanceScale": 1,
+      "equilibriumIncomePerSecond": 46350,
+      "equilibriumMean": 88818.065,
+      "equilibriumP10": 19450,
+      "equilibriumP90": 232300,
+      "grossIncomePerSecondMaxed": 1326776.916458477,
+      "incomeByHorizon": {
+        "100": {
+          "grossMaxedIncomePerSecond": 30915.190286411118,
+          "levellingCapacityCost": 17901114.17184667,
+          "mean": 2278.334,
+          "meanRemaxSpend": 48034377.89934599,
+          "meanRemaxSpendAtHalf": 28162889.748114746,
+          "median": 1080,
+          "p10": 720,
+          "p90": 2265,
+          "realisedIncomePerSecond": -76337.2195253317,
+          "remaxDrainDollarsPerSecond": 107252.40981174282,
+          "remaxDrainFraction": 3.469246309600947,
+          "remaxSpendPerRoll": 397429.7630246248,
+          "rolls": 100
+        },
+        "1000": {
+          "grossMaxedIncomePerSecond": 156007.21024161167,
+          "levellingCapacityCost": 90334326.14496699,
+          "mean": 13989.6965,
+          "meanRemaxSpend": 276530025.33845526,
+          "meanRemaxSpendAtHalf": 161662363.10937187,
+          "median": 5450,
+          "p10": 3200,
+          "p90": 22000,
+          "realisedIncomePerSecond": 94009.67140732378,
+          "remaxDrainDollarsPerSecond": 61997.53883428789,
+          "remaxDrainFraction": 0.39740175302328007,
+          "remaxSpendPerRoll": 229735.32445816678,
+          "rolls": 1000
+        },
+        "10000": {
+          "grossMaxedIncomePerSecond": 1326776.916458477,
+          "levellingCapacityCost": 768256149.8750862,
+          "mean": 88818.065,
+          "meanRemaxSpend": 1689835453.6852453,
+          "meanRemaxSpendAtHalf": 1045526535.4604994,
+          "median": 46350,
+          "p10": 19450,
+          "p90": 232300,
+          "realisedIncomePerSecond": 1292001.6225213094,
+          "remaxDrainDollarsPerSecond": 34775.29393716769,
+          "remaxDrainFraction": 0.02621035496305759,
+          "remaxSpendPerRoll": 128861.78364494917,
+          "rolls": 10000
+        }
+      },
+      "landingZ": -175.73576436351047,
+      "launchDistanceStuds": 200,
+      "levellingCapacityCost": 768256149.8750862,
+      "luckValue": 25,
+      "marginalBelowOnePercentAtRoll": 1,
+      "marginalBelowOnePercentOfCurrentAtRoll": 76,
+      "marginalPoint": {
+        "n10": 68.11070000000001,
+        "n100": 7.628999999999905,
+        "n1000": 12.820999999999913,
+        "n50": 20.885400000000118,
+        "n500": 92.78750000000036,
+        "n5000": 8.849999999998545
+      },
+      "marginalWindow": {
+        "n10": 25.21502,
+        "n100": 15.664425000000001,
+        "n1000": 11.207273500000001,
+        "n50": 18.255109999999995,
+        "n500": 12.162792999999999,
+        "n5000": 6.817873000000001
+      },
+      "measuredOverModel": 3310.4778146096187,
+      "measuredOverModelByHorizon": {
+        "100": -195.5977974504647,
+        "1000": 240.8796754800922,
+        "10000": 3310.4778146096187
+      },
+      "modelIncomePerSecond": 390.2764781626141,
+      "modelRampMultiplier": 1,
+      "nextTierPriceOverCapacity": 0.00013016491962512686,
+      "price": 0,
+      "rawExpectedIncomePerRoll": 38.5668,
+      "realisedIncomePerSecond": 1292001.6225213094,
+      "remaxDrainDollarsPerSecond": 34775.29393716769,
+      "remaxDrainFraction": 0.02621035496305759,
+      "remaxSpendFirst1000Rolls": 276530025.33845526,
+      "remaxSpendPerRollAtEquilibrium": 128861.78364494917,
+      "rewardSource": "mysteryBox",
+      "rollsTo50Percent": 4403,
+      "rollsTo90Percent": 8856,
+      "rollsTo99Percent": 10000,
+      "swingTier": 1,
+      "visualScale": 1,
+      "zone": "road"
+    },
+    {
+      "analyticExpectedIncomePerRoll": 65.20402408470866,
+      "asymptoteIncomePerSecond": 3500000,
+      "bandIndex": 14,
+      "cycleSecondsFloor": 5.023247009179534,
+      "deltaRealisedIncomePerSecond": 3745982.3292952077,
+      "distanceFromBandZero": 572.1640560871317,
+      "distanceScale": 3,
+      "equilibriumIncomePerSecond": 178250,
+      "equilibriumMean": 231742.615,
+      "equilibriumP10": 56300,
+      "equilibriumP90": 484500,
+      "exchangeByHorizon": {
+        "100": {
+          "deltaRealisedIncomePerSecond": -25392.287521416714,
+          "impliedPriceAtExchangeRate": -15235372.51285003,
+          "paybackSeconds": -3.938203673680704,
+          "previousTierLevellingCapacityCost": 17901114.17184667,
+          "priceOverPreviousCapacity": 0.005586244467245027,
+          "priceToImpliedRatio": -0.00656367278946784
+        },
+        "1000": {
+          "deltaRealisedIncomePerSecond": 152740.11181032012,
+          "impliedPriceAtExchangeRate": 91644067.08619207,
+          "paybackSeconds": 0.6547068665511043,
+          "previousTierLevellingCapacityCost": 90334326.14496699,
+          "priceOverPreviousCapacity": 0.0011069989036008494,
+          "priceToImpliedRatio": 0.0010911781109185072
+        },
+        "10000": {
+          "deltaRealisedIncomePerSecond": 3745982.3292952077,
+          "impliedPriceAtExchangeRate": 2247589397.5771246,
+          "paybackSeconds": 0.026695267411689743,
+          "previousTierLevellingCapacityCost": 768256149.8750862,
+          "priceOverPreviousCapacity": 0.00013016491962512686,
+          "priceToImpliedRatio": 0.00004449211235281624
+        }
+      },
+      "grossIncomePerSecondMaxed": 5102437.65606739,
+      "impliedPriceAtExchangeRate": 2247589397.5771246,
+      "incomeByHorizon": {
+        "100": {
+          "grossMaxedIncomePerSecond": 56677.84885842038,
+          "levellingCapacityCost": 32818709.315052226,
+          "mean": 4421.423,
+          "meanRemaxSpend": 86306676.56444654,
+          "meanRemaxSpendAtHalf": 46520712.72531268,
+          "median": 1980,
+          "p10": 1155,
+          "p90": 4275,
+          "realisedIncomePerSecond": -101729.50704674842,
+          "remaxDrainDollarsPerSecond": 158407.3559051688,
+          "remaxDrainFraction": 2.7948724077525555,
+          "remaxSpendPerRoll": 795719.2767826772,
+          "rolls": 100
+        },
+        "1000": {
+          "grossMaxedIncomePerSecond": 373558.5492941343,
+          "levellingCapacityCost": 216305129.5764806,
+          "mean": 35187.66,
+          "meanRemaxSpend": 663710793.8508285,
+          "meanRemaxSpendAtHalf": 345214916.3850898,
+          "median": 13050,
+          "p10": 6700,
+          "p90": 84950,
+          "realisedIncomePerSecond": 246749.7832176439,
+          "remaxDrainDollarsPerSecond": 126808.76607649038,
+          "remaxDrainFraction": 0.33946155513266835,
+          "remaxSpendPerRoll": 636991.7549314775,
+          "rolls": 1000
+        },
+        "10000": {
+          "grossMaxedIncomePerSecond": 5102437.65606739,
+          "levellingCapacityCost": 2954512593.6404343,
+          "mean": 231742.615,
+          "meanRemaxSpend": 4239398099.16791,
+          "meanRemaxSpendAtHalf": 2620563713.624206,
+          "median": 178250,
+          "p10": 56300,
+          "p90": 484500,
+          "realisedIncomePerSecond": 5037983.951816517,
+          "remaxDrainDollarsPerSecond": 64453.704250873154,
+          "remaxDrainFraction": 0.012631943513161837,
+          "remaxSpendPerRoll": 323766.8771087408,
+          "rolls": 10000
+        }
+      },
+      "landingZ": -576.4240560871317,
+      "launchDistanceStuds": 600,
+      "levellingCapacityCost": 2954512593.6404343,
+      "luckValue": 75,
+      "marginalBelowOnePercentAtRoll": 1,
+      "marginalBelowOnePercentOfCurrentAtRoll": 67,
+      "marginalPoint": {
+        "n10": 100.18510000000003,
+        "n100": 25.004500000000007,
+        "n1000": 36.890000000006694,
+        "n50": 35.20119999999997,
+        "n500": 56.48500000000058,
+        "n5000": 14.395000000018626
+      },
+      "marginalWindow": {
+        "n10": 54.67707999999999,
+        "n100": 40.99071500000001,
+        "n1000": 27.873404999999998,
+        "n50": 40.482288,
+        "n500": 34.172257,
+        "n5000": 18.139751999999994
+      },
+      "measuredOverModel": 3340.375875115085,
+      "measuredOverModelByHorizon": {
+        "100": -67.45055053297328,
+        "1000": 163.6045352532146,
+        "10000": 3340.375875115085
+      },
+      "modelIncomePerSecond": 1508.2086987120708,
+      "modelRampMultiplier": 2.313060765624999,
+      "nextTierPriceOverCapacity": 0.00015230938631590927,
+      "paybackSeconds": 0.026695267411689743,
+      "price": 100000,
+      "priceToImpliedRatio": 0.00004449211235281624,
+      "rawExpectedIncomePerRoll": 63.8462445,
+      "realisedIncomePerSecond": 5037983.951816517,
+      "remaxDrainDollarsPerSecond": 64453.704250873154,
+      "remaxDrainFraction": 0.012631943513161837,
+      "remaxSpendFirst1000Rolls": 663710793.8508285,
+      "remaxSpendPerRollAtEquilibrium": 323766.8771087408,
+      "rewardSource": "mysteryBox",
+      "rollsTo50Percent": 5823,
+      "rollsTo90Percent": 8856,
+      "rollsTo99Percent": 10000,
+      "swingTier": 2,
+      "visualScale": 1.12,
+      "zone": "road"
+    },
+    {
+      "analyticExpectedIncomePerRoll": 106.39536994298726,
+      "asymptoteIncomePerSecond": 3500000,
+      "bandIndex": 21,
+      "cycleSecondsFloor": 5.681267408968101,
+      "deltaRealisedIncomePerSecond": 5285582.843592322,
+      "distanceFromBandZero": 853.0817783852935,
+      "distanceScale": 4.4,
+      "equilibriumIncomePerSecond": 364500,
+      "equilibriumMean": 414825.275,
+      "equilibriumP10": 151750,
+      "equilibriumP90": 742750,
+      "exchangeByHorizon": {
+        "100": {
+          "deltaRealisedIncomePerSecond": -61108.58542557637,
+          "impliedPriceAtExchangeRate": -36665151.25534582,
+          "paybackSeconds": -7.363940710885072,
+          "previousTierLevellingCapacityCost": 32818709.315052226,
+          "priceOverPreviousCapacity": 0.013711690965055976,
+          "priceToImpliedRatio": -0.012273234518141787
+        },
+        "1000": {
+          "deltaRealisedIncomePerSecond": 464946.00306986325,
+          "impliedPriceAtExchangeRate": 278967601.84191793,
+          "paybackSeconds": 0.9678543250803741,
+          "previousTierLevellingCapacityCost": 216305129.5764806,
+          "priceOverPreviousCapacity": 0.002080394491249872,
+          "priceToImpliedRatio": 0.0016130905418006234
+        },
+        "10000": {
+          "deltaRealisedIncomePerSecond": 5285582.843592322,
+          "impliedPriceAtExchangeRate": 3171349706.1553936,
+          "paybackSeconds": 0.08513725227966715,
+          "previousTierLevellingCapacityCost": 2954512593.6404343,
+          "priceOverPreviousCapacity": 0.00015230938631590927,
+          "priceToImpliedRatio": 0.0001418954204661119
+        }
+      },
+      "grossIncomePerSecondMaxed": 10433876.721663753,
+      "impliedPriceAtExchangeRate": 3171349706.1553936,
+      "incomeByHorizon": {
+        "100": {
+          "grossMaxedIncomePerSecond": 100331.24254988052,
+          "levellingCapacityCost": 58095745.52992831,
+          "mean": 8515.7405,
+          "meanRemaxSpend": 158786633.65070325,
+          "meanRemaxSpendAtHalf": 84029865.34563012,
+          "median": 3505,
+          "p10": 1975,
+          "p90": 13980,
+          "realisedIncomePerSecond": -162838.0924723248,
+          "remaxDrainDollarsPerSecond": 263169.3350222053,
+          "remaxDrainFraction": 2.6230048420995926,
+          "remaxSpendPerRoll": 1495135.3661014626,
+          "rolls": 100
+        },
+        "1000": {
+          "grossMaxedIncomePerSecond": 897399.273591656,
+          "levellingCapacityCost": 519629564.1549936,
+          "mean": 61568.425,
+          "meanRemaxSpend": 1164670990.9991188,
+          "meanRemaxSpendAtHalf": 637155405.9227276,
+          "median": 31350,
+          "p10": 12600,
+          "p90": 156950,
+          "realisedIncomePerSecond": 711695.7862875072,
+          "remaxDrainDollarsPerSecond": 185703.48730414885,
+          "remaxDrainFraction": 0.20693518790238022,
+          "remaxSpendPerRoll": 1055031.1701527825,
+          "rolls": 1000
+        },
+        "10000": {
+          "grossMaxedIncomePerSecond": 10433876.721663753,
+          "levellingCapacityCost": 6041626032.998251,
+          "mean": 414825.275,
+          "meanRemaxSpend": 7927874029.656697,
+          "meanRemaxSpendAtHalf": 4794373085.068149,
+          "median": 364500,
+          "p10": 151750,
+          "p90": 742750,
+          "realisedIncomePerSecond": 10323566.79540884,
+          "remaxDrainDollarsPerSecond": 110309.92625491261,
+          "remaxDrainFraction": 0.010572285757016587,
+          "remaxSpendPerRoll": 626700.1889177097,
+          "rolls": 10000
+        }
+      },
+      "landingZ": -857.3417783852935,
+      "launchDistanceStuds": 880.0000000000001,
+      "levellingCapacityCost": 6041626032.998251,
+      "luckValue": 200,
+      "marginalBelowOnePercentAtRoll": 1,
+      "marginalBelowOnePercentOfCurrentAtRoll": 88,
+      "marginalPoint": {
+        "n10": 79.58910000000014,
+        "n100": 72.63849999999911,
+        "n1000": 15.905000000006112,
+        "n50": 84.08550000000014,
+        "n500": 68.68000000000029,
+        "n5000": 95.78500000000349
+      },
+      "marginalWindow": {
+        "n10": 93.72326999999999,
+        "n100": 75.19315,
+        "n1000": 54.278319999999994,
+        "n50": 79.17974,
+        "n500": 56.02002,
+        "n5000": 31.212494000000007
+      },
+      "measuredOverModel": 1813.5643031510879,
+      "measuredOverModelByHorizon": {
+        "100": -28.606135607352243,
+        "1000": 125.02520672293991,
+        "10000": 1813.5643031510879
+      },
+      "modelIncomePerSecond": 5692.418392593816,
+      "modelRampMultiplier": 5.350250105473706,
+      "nextTierPriceOverCapacity": 0.0008275917729251892,
+      "paybackSeconds": 0.08513725227966715,
+      "price": 450000,
+      "priceToImpliedRatio": 0.0001418954204661119,
+      "rawExpectedIncomePerRoll": 106.492279,
+      "realisedIncomePerSecond": 10323566.79540884,
+      "remaxDrainDollarsPerSecond": 110309.92625491261,
+      "remaxDrainFraction": 0.010572285757016587,
+      "remaxSpendFirst1000Rolls": 1164670990.9991188,
+      "remaxSpendPerRollAtEquilibrium": 626700.1889177097,
+      "rewardSource": "mysteryBox",
+      "rollsTo50Percent": 4999,
+      "rollsTo90Percent": 8856,
+      "rollsTo99Percent": 10000,
+      "swingTier": 3,
+      "visualScale": 1.28,
+      "zone": "road"
+    },
+    {
+      "analyticExpectedIncomePerRoll": 263.09145097257755,
+      "asymptoteIncomePerSecond": 3500000,
+      "bandIndex": 31,
+      "cycleSecondsFloor": 6.459235386198022,
+      "deltaRealisedIncomePerSecond": 18057292.336432748,
+      "distanceFromBandZero": 1254.6304347634411,
+      "distanceScale": 6.4,
+      "equilibriumIncomePerSecond": 1000000,
+      "equilibriumMean": 1035548.9,
+      "equilibriumP10": 547000,
+      "equilibriumP90": 1575000,
+      "exchangeByHorizon": {
+        "100": {
+          "deltaRealisedIncomePerSecond": -190573.0519407795,
+          "impliedPriceAtExchangeRate": -114343831.16446769,
+          "paybackSeconds": -26.236658064088452,
+          "previousTierLevellingCapacityCost": 58095745.52992831,
+          "priceOverPreviousCapacity": 0.08606482203458815,
+          "priceToImpliedRatio": -0.04372776344014742
+        },
+        "1000": {
+          "deltaRealisedIncomePerSecond": 1898953.630081717,
+          "impliedPriceAtExchangeRate": 1139372178.04903,
+          "paybackSeconds": 2.6330290117641457,
+          "previousTierLevellingCapacityCost": 519629564.1549936,
+          "priceOverPreviousCapacity": 0.009622239273723491,
+          "priceToImpliedRatio": 0.004388381686273576
+        },
+        "10000": {
+          "deltaRealisedIncomePerSecond": 18057292.336432748,
+          "impliedPriceAtExchangeRate": 10834375401.859648,
+          "paybackSeconds": 0.27689644199379226,
+          "previousTierLevellingCapacityCost": 6041626032.998251,
+          "priceOverPreviousCapacity": 0.0008275917729251892,
+          "priceToImpliedRatio": 0.00046149406998965384
+        }
+      },
+      "grossIncomePerSecondMaxed": 28625176.191121403,
+      "impliedPriceAtExchangeRate": 10834375401.859648,
+      "incomeByHorizon": {
+        "100": {
+          "grossMaxedIncomePerSecond": 217551.33905252267,
+          "levellingCapacityCost": 125970803.4315136,
+          "mean": 21790.3995,
+          "meanRemaxSpend": 402514405.4390626,
+          "meanRemaxSpendAtHalf": 218115351.56942856,
+          "median": 7600,
+          "p10": 4650,
+          "p90": 29300,
+          "realisedIncomePerSecond": -353411.1444131043,
+          "remaxDrainDollarsPerSecond": 570962.483465627,
+          "remaxDrainFraction": 2.624495376366226,
+          "remaxSpendPerRoll": 3687981.0773926806,
+          "rolls": 100
+        },
+        "1000": {
+          "grossMaxedIncomePerSecond": 3048581.2643544297,
+          "levellingCapacityCost": 1765248758.6126575,
+          "mean": 166328.86,
+          "meanRemaxSpend": 3064347843.2706943,
+          "meanRemaxSpendAtHalf": 1649995398.646128,
+          "median": 106500,
+          "p10": 34800,
+          "p90": 396000,
+          "realisedIncomePerSecond": 2610649.416369224,
+          "remaxDrainDollarsPerSecond": 437931.84798520553,
+          "remaxDrainFraction": 0.14365103305781235,
+          "remaxSpendPerRoll": 2828704.8892491325,
+          "rolls": 1000
+        },
+        "10000": {
+          "grossMaxedIncomePerSecond": 28625176.191121403,
+          "levellingCapacityCost": 16575105714.672842,
+          "mean": 1035548.9,
+          "meanRemaxSpend": 20342207293.424606,
+          "meanRemaxSpendAtHalf": 12451700319.66449,
+          "median": 1000000,
+          "p10": 547000,
+          "p90": 1575000,
+          "realisedIncomePerSecond": 28380859.13184159,
+          "remaxDrainDollarsPerSecond": 244317.05927981538,
+          "remaxDrainFraction": 0.008535041239522381,
+          "remaxSpendPerRoll": 1578101.3947520233,
+          "rolls": 10000
+        }
+      },
+      "landingZ": -1258.8904347634411,
+      "launchDistanceStuds": 1280,
+      "levellingCapacityCost": 16575105714.672842,
+      "luckValue": 700,
+      "marginalBelowOnePercentAtRoll": 1,
+      "marginalBelowOnePercentOfCurrentAtRoll": 88,
+      "marginalPoint": {
+        "n10": 297.9546,
+        "n100": 213.97399999999834,
+        "n1000": 173.97999999998137,
+        "n50": 241.8670000000002,
+        "n500": 65.17999999999302,
+        "n5000": 25.75
+      },
+      "marginalWindow": {
+        "n10": 253.76009000000005,
+        "n100": 183.376955,
+        "n1000": 141.55452000000002,
+        "n50": 196.68438999999998,
+        "n500": 155.59273,
+        "n5000": 76.688975
+      },
+      "measuredOverModel": 871.6811922710118,
+      "measuredOverModelByHorizon": {
+        "100": -10.854563855618132,
+        "1000": 80.18270290166099,
+        "10000": 871.6811922710118
+      },
+      "modelIncomePerSecond": 32558.76045449628,
+      "modelRampMultiplier": 12.375453605252241,
+      "nextTierPriceOverCapacity": 0.001206628804924926,
+      "paybackSeconds": 0.27689644199379226,
+      "price": 5000000,
+      "priceToImpliedRatio": 0.00046149406998965384,
+      "rawExpectedIncomePerRoll": 266.087498,
+      "realisedIncomePerSecond": 28380859.13184159,
+      "remaxDrainDollarsPerSecond": 244317.05927981538,
+      "remaxDrainFraction": 0.008535041239522381,
+      "remaxSpendFirst1000Rolls": 3064347843.2706943,
+      "remaxSpendPerRollAtEquilibrium": 1578101.3947520233,
+      "rewardSource": "mysteryBox",
+      "rollsTo50Percent": 4403,
+      "rollsTo90Percent": 8856,
+      "rollsTo99Percent": 10000,
+      "swingTier": 4,
+      "visualScale": 1.55,
+      "zone": "road"
+    },
+    {
+      "analyticExpectedIncomePerRoll": 714.0203893174798,
+      "asymptoteIncomePerSecond": 3500000,
+      "bandIndex": 40,
+      "cycleSecondsFloor": 7.059971138335042,
+      "deltaRealisedIncomePerSecond": 34678566.70956214,
+      "distanceFromBandZero": 1615.7775876361432,
+      "distanceScale": 8.2,
+      "equilibriumIncomePerSecond": 2220000,
+      "equilibriumMean": 2214273,
+      "equilibriumP10": 1690000,
+      "equilibriumP90": 2720000,
+      "exchangeByHorizon": {
+        "100": {
+          "deltaRealisedIncomePerSecond": -283867.10020617035,
+          "impliedPriceAtExchangeRate": -170320260.1237022,
+          "paybackSeconds": -70.45550535963542,
+          "previousTierLevellingCapacityCost": 125970803.4315136,
+          "priceOverPreviousCapacity": 0.15876694801643762,
+          "priceToImpliedRatio": -0.11742584226605904
+        },
+        "1000": {
+          "deltaRealisedIncomePerSecond": 8324575.0444759745,
+          "impliedPriceAtExchangeRate": 4994745026.685585,
+          "paybackSeconds": 2.402525040995529,
+          "previousTierLevellingCapacityCost": 1765248758.6126575,
+          "priceOverPreviousCapacity": 0.01132984793356738,
+          "priceToImpliedRatio": 0.004004208401659215
+        },
+        "10000": {
+          "deltaRealisedIncomePerSecond": 34678566.70956214,
+          "impliedPriceAtExchangeRate": 20807140025.73728,
+          "paybackSeconds": 0.5767251042265618,
+          "previousTierLevellingCapacityCost": 16575105714.672842,
+          "priceOverPreviousCapacity": 0.001206628804924926,
+          "priceToImpliedRatio": 0.0009612085070442697
+        }
+      },
+      "grossIncomePerSecondMaxed": 63547891.144289516,
+      "impliedPriceAtExchangeRate": 20807140025.73728,
+      "incomeByHorizon": {
+        "100": {
+          "grossMaxedIncomePerSecond": 798642.4157322872,
+          "levellingCapacityCost": 462445449.4393723,
+          "mean": 60325.81,
+          "meanRemaxSpend": 1104137357.3730414,
+          "meanRemaxSpendAtHalf": 597259436.4219903,
+          "median": 27900,
+          "p10": 11300,
+          "p90": 166300,
+          "realisedIncomePerSecond": -637278.2446192746,
+          "remaxDrainDollarsPerSecond": 1435920.6603515618,
+          "remaxDrainFraction": 1.7979519144809566,
+          "remaxSpendPerRoll": 10137558.419021022,
+          "rolls": 100
+        },
+        "1000": {
+          "grossMaxedIncomePerSecond": 12065511.764557673,
+          "levellingCapacityCost": 6986407058.734603,
+          "mean": 467588.675,
+          "meanRemaxSpend": 8664575797.732996,
+          "meanRemaxSpendAtHalf": 4674677926.6146965,
+          "median": 421500,
+          "p10": 162250,
+          "p90": 831250,
+          "realisedIncomePerSecond": 10935224.460845198,
+          "remaxDrainDollarsPerSecond": 1130287.303712474,
+          "remaxDrainFraction": 0.09367918458566195,
+          "remaxSpendPerRoll": 7979795.742236599,
+          "rolls": 1000
+        },
+        "10000": {
+          "grossMaxedIncomePerSecond": 63547891.144289516,
+          "levellingCapacityCost": 36796734686.57371,
+          "mean": 2214273,
+          "meanRemaxSpend": 50752933288.22041,
+          "meanRemaxSpendAtHalf": 33510178585.961807,
+          "median": 2220000,
+          "p10": 1690000,
+          "p90": 2720000,
+          "realisedIncomePerSecond": 63059425.84140373,
+          "remaxDrainDollarsPerSecond": 488465.30288578424,
+          "remaxDrainFraction": 0.007686569830880663,
+          "remaxSpendPerRoll": 3448550.940451721,
+          "rolls": 10000
+        }
+      },
+      "landingZ": -1620.0375876361431,
+      "launchDistanceStuds": 1639.9999999999998,
+      "levellingCapacityCost": 36796734686.57371,
+      "luckValue": 2500,
+      "marginalBelowOnePercentAtRoll": 1,
+      "marginalBelowOnePercentOfCurrentAtRoll": 88,
+      "marginalPoint": {
+        "n10": 772.4839999999995,
+        "n100": 596.4599999999991,
+        "n1000": 270.54999999998836,
+        "n50": 523.2899999999972,
+        "n500": 572.8099999999977,
+        "n5000": 235.72500000009313
+      },
+      "marginalWindow": {
+        "n10": 724.33295,
+        "n100": 517.36595,
+        "n1000": 343.9183750000001,
+        "n50": 543.5444,
+        "n500": 419.92767,
+        "n5000": 117.63838999999999
+      },
+      "measuredOverModel": 308.52561746607745,
+      "measuredOverModelByHorizon": {
+        "100": -3.117958359046215,
+        "1000": 53.50186485042879,
+        "10000": 308.52561746607745
+      },
+      "modelIncomePerSecond": 204389.5944826596,
+      "modelRampMultiplier": 28.625176191121405,
+      "nextTierPriceOverCapacity": 0.006794081108811519,
+      "paybackSeconds": 0.5767251042265618,
+      "price": 20000000,
+      "priceToImpliedRatio": 0.0009612085070442697,
+      "rawExpectedIncomePerRoll": 706.443705,
+      "realisedIncomePerSecond": 63059425.84140373,
+      "remaxDrainDollarsPerSecond": 488465.30288578424,
+      "remaxDrainFraction": 0.007686569830880663,
+      "remaxSpendFirst1000Rolls": 8664575797.732996,
+      "remaxSpendPerRollAtEquilibrium": 3448550.940451721,
+      "rewardSource": "mysteryBox",
+      "rollsTo50Percent": 3329,
+      "rollsTo90Percent": 7701,
+      "rollsTo99Percent": 10000,
+      "swingTier": 5,
+      "visualScale": 1.75,
+      "zone": "road"
+    },
+    {
+      "analyticExpectedIncomePerRoll": 1143.5741954771909,
+      "asymptoteIncomePerSecond": 3500000,
+      "bandIndex": 45,
+      "cycleSecondsFloor": 7.365225875272671,
+      "deltaRealisedIncomePerSecond": 16525305.482885621,
+      "distanceFromBandZero": 1817.2115287270208,
+      "distanceScale": 9.2,
+      "equilibriumIncomePerSecond": 2800000,
+      "equilibriumMean": 2788477,
+      "equilibriumP10": 2340000,
+      "equilibriumP90": 3240000,
+      "exchangeByHorizon": {
+        "100": {
+          "deltaRealisedIncomePerSecond": -304255.5716784621,
+          "impliedPriceAtExchangeRate": -182553343.00707725,
+          "paybackSeconds": -821.6776396923325,
+          "previousTierLevellingCapacityCost": 462445449.4393723,
+          "priceOverPreviousCapacity": 0.5406043032817768,
+          "priceToImpliedRatio": -1.3694627328205542
+        },
+        "1000": {
+          "deltaRealisedIncomePerSecond": 7637282.196236905,
+          "impliedPriceAtExchangeRate": 4582369317.742143,
+          "paybackSeconds": 32.73415772474425,
+          "previousTierLevellingCapacityCost": 6986407058.734603,
+          "priceOverPreviousCapacity": 0.035783772388046434,
+          "priceToImpliedRatio": 0.05455692954124042
+        },
+        "10000": {
+          "deltaRealisedIncomePerSecond": 16525305.482885621,
+          "impliedPriceAtExchangeRate": 9915183289.731373,
+          "paybackSeconds": 15.128313377257182,
+          "previousTierLevellingCapacityCost": 36796734686.57371,
+          "priceOverPreviousCapacity": 0.006794081108811519,
+          "priceToImpliedRatio": 0.02521385562876197
+        }
+      },
+      "grossIncomePerSecondMaxed": 80150493.33513993,
+      "impliedPriceAtExchangeRate": 9915183289.731373,
+      "incomeByHorizon": {
+        "100": {
+          "grossMaxedIncomePerSecond": 1422671.256698734,
+          "levellingCapacityCost": 823782754.0192403,
+          "mean": 101096.57,
+          "meanRemaxSpend": 1826402072.4560108,
+          "meanRemaxSpendAtHalf": 955756853.551785,
+          "median": 49700,
+          "p10": 18000,
+          "p90": 257450,
+          "realisedIncomePerSecond": -941533.8162977367,
+          "remaxDrainDollarsPerSecond": 2364205.0729964706,
+          "remaxDrainFraction": 1.6618070139988192,
+          "remaxSpendPerRoll": 17412904.378084518,
+          "rolls": 100
+        },
+        "1000": {
+          "grossMaxedIncomePerSecond": 20373969.15403066,
+          "levellingCapacityCost": 11797331492.418396,
+          "mean": 752441.65,
+          "meanRemaxSpend": 14467116961.529997,
+          "meanRemaxSpendAtHalf": 7833027863.600589,
+          "median": 711750,
+          "p10": 349250,
+          "p90": 1209250,
+          "realisedIncomePerSecond": 18572506.657082103,
+          "remaxDrainDollarsPerSecond": 1801462.4969485556,
+          "remaxDrainFraction": 0.08841981075602863,
+          "remaxSpendPerRoll": 13268178.195858816,
+          "rolls": 1000
+        },
+        "10000": {
+          "grossMaxedIncomePerSecond": 80150493.33513993,
+          "levellingCapacityCost": 46410296001.083954,
+          "mean": 2788477,
+          "meanRemaxSpend": 72287954003.7393,
+          "meanRemaxSpendAtHalf": 51453128995.92417,
+          "median": 2800000,
+          "p10": 2340000,
+          "p90": 3240000,
+          "realisedIncomePerSecond": 79584731.32428935,
+          "remaxDrainDollarsPerSecond": 565762.0108505851,
+          "remaxDrainFraction": 0.007058746456929682,
+          "remaxSpendPerRoll": 4166965.0015630266,
+          "rolls": 10000
+        }
+      },
+      "landingZ": -1821.4715287270208,
+      "launchDistanceStuds": 1839.9999999999998,
+      "levellingCapacityCost": 46410296001.083954,
+      "luckValue": 5000,
+      "marginalBelowOnePercentAtRoll": 1,
+      "marginalBelowOnePercentOfCurrentAtRoll": 99,
+      "marginalPoint": {
+        "n10": 1339.2895000000008,
+        "n100": 818.890000000014,
+        "n1000": 436.2249999999767,
+        "n50": 1085.5050000000047,
+        "n500": 546.6500000000233,
+        "n5000": 217.5
+      },
+      "marginalWindow": {
+        "n10": 1128.1896,
+        "n100": 903.0225999999998,
+        "n1000": 550.0547499999999,
+        "n50": 946.6073000000001,
+        "n500": 651.38338,
+        "n5000": 110.3974
+      },
+      "measuredOverModel": 243.1180697252844,
+      "measuredOverModelByHorizon": {
+        "100": -2.8762286457518584,
+        "1000": 56.73590767091925,
+        "10000": 243.1180697252844
+      },
+      "modelIncomePerSecond": 327350.128331545,
+      "modelRampMultiplier": 28.625176191121405,
+      "nextTierPriceOverCapacity": 0.06464082883526388,
+      "paybackSeconds": 15.128313377257182,
+      "price": 250000000,
+      "priceToImpliedRatio": 0.02521385562876197,
+      "rawExpectedIncomePerRoll": 1152.3901375,
+      "realisedIncomePerSecond": 79584731.32428935,
+      "remaxDrainDollarsPerSecond": 565762.0108505851,
+      "remaxDrainFraction": 0.007058746456929682,
+      "remaxSpendFirst1000Rolls": 14467116961.529997,
+      "remaxSpendPerRollAtEquilibrium": 4166965.0015630266,
+      "rewardSource": "mysteryBox",
+      "rollsTo50Percent": 2517,
+      "rollsTo90Percent": 6697,
+      "rollsTo99Percent": 10000,
+      "swingTier": 6,
+      "visualScale": 2,
+      "zone": "road"
+    },
+    {
+      "analyticExpectedIncomePerRoll": 1918.5608399427672,
+      "asymptoteIncomePerSecond": 3500000,
+      "bandIndex": 53,
+      "cycleSecondsFloor": 7.82095917661135,
+      "deltaRealisedIncomePerSecond": 16369930.7344639,
+      "distanceFromBandZero": 2138.932258036074,
+      "distanceScale": 10.8,
+      "equilibriumIncomePerSecond": 3370000,
+      "equilibriumMean": 3282802,
+      "equilibriumP10": 2850000,
+      "equilibriumP90": 3500000,
+      "exchangeByHorizon": {
+        "100": {
+          "deltaRealisedIncomePerSecond": 397312.42095764703,
+          "impliedPriceAtExchangeRate": 238387452.5745882,
+          "paybackSeconds": 7550.732979273749,
+          "previousTierLevellingCapacityCost": 823782754.0192403,
+          "priceOverPreviousCapacity": 3.6417368357895143,
+          "priceToImpliedRatio": 12.584554965456249
+        },
+        "1000": {
+          "deltaRealisedIncomePerSecond": 12616484.156481292,
+          "impliedPriceAtExchangeRate": 7569890493.888775,
+          "paybackSeconds": 237.78415308030577,
+          "previousTierLevellingCapacityCost": 11797331492.418396,
+          "priceOverPreviousCapacity": 0.25429479555846696,
+          "priceToImpliedRatio": 0.39630692180050964
+        },
+        "10000": {
+          "deltaRealisedIncomePerSecond": 16369930.7344639,
+          "impliedPriceAtExchangeRate": 9821958440.67834,
+          "paybackSeconds": 183.2628401831932,
+          "previousTierLevellingCapacityCost": 46410296001.083954,
+          "priceOverPreviousCapacity": 0.06464082883526388,
+          "priceToImpliedRatio": 0.3054380669719886
+        }
+      },
+      "grossIncomePerSecondMaxed": 96466843.76407914,
+      "impliedPriceAtExchangeRate": 9821958440.67834,
+      "incomeByHorizon": {
+        "100": {
+          "grossMaxedIncomePerSecond": 3313364.1441223025,
+          "levellingCapacityCost": 1918568486.4733815,
+          "mean": 176842,
+          "meanRemaxSpend": 3159090280.657748,
+          "meanRemaxSpendAtHalf": 1650589329.4366663,
+          "median": 115750,
+          "p10": 38500,
+          "p90": 412250,
+          "realisedIncomePerSecond": -544221.3953400897,
+          "remaxDrainDollarsPerSecond": 3857585.539462392,
+          "remaxDrainFraction": 1.1642504028135585,
+          "remaxSpendPerRoll": 30170019.02442164,
+          "rolls": 100
+        },
+        "1000": {
+          "grossMaxedIncomePerSecond": 33877896.02219218,
+          "levellingCapacityCost": 19616637613.315308,
+          "mean": 1208428.6,
+          "meanRemaxSpend": 23870824989.78788,
+          "meanRemaxSpendAtHalf": 13355916056.55621,
+          "median": 1183500,
+          "p10": 666000,
+          "p90": 1785000,
+          "realisedIncomePerSecond": 31188990.813563395,
+          "remaxDrainDollarsPerSecond": 2688905.2086287835,
+          "remaxDrainFraction": 0.07937049003478194,
+          "remaxSpendPerRoll": 21029817.86646334,
+          "rolls": 1000
+        },
+        "10000": {
+          "grossMaxedIncomePerSecond": 96466843.76407914,
+          "levellingCapacityCost": 55858106258.44748,
+          "mean": 3282802,
+          "meanRemaxSpend": 93672298861.64723,
+          "meanRemaxSpendAtHalf": 73643537819.84247,
+          "median": 3370000,
+          "p10": 2850000,
+          "p90": 3500000,
+          "realisedIncomePerSecond": 95954662.05875325,
+          "remaxDrainDollarsPerSecond": 512181.70532588783,
+          "remaxDrainFraction": 0.0053094066867004335,
+          "remaxSpendPerRoll": 4005752.208360953,
+          "rolls": 10000
+        }
+      },
+      "landingZ": -2143.1922580360742,
+      "launchDistanceStuds": 2160,
+      "levellingCapacityCost": 55858106258.44748,
+      "luckValue": 9000,
+      "marginalBelowOnePercentAtRoll": 1,
+      "marginalBelowOnePercentOfCurrentAtRoll": 99,
+      "marginalPoint": {
+        "n10": 1847.3240000000005,
+        "n100": 1517.890000000014,
+        "n1000": 666.0500000000466,
+        "n50": 1777.9749999999913,
+        "n500": 1069.6500000000233,
+        "n5000": 213
+      },
+      "marginalWindow": {
+        "n10": 1996.128,
+        "n100": 1522.9749,
+        "n1000": 703.8329749999998,
+        "n50": 1671.6454,
+        "n500": 1015.2535000000003,
+        "n5000": 92.3334
+      },
+      "measuredOverModel": 174.7198853264313,
+      "measuredOverModelByHorizon": {
+        "100": -0.9909502857483813,
+        "1000": 56.79074660339353,
+        "10000": 174.7198853264313
+      },
+      "modelIncomePerSecond": 549191.4207674759,
+      "modelRampMultiplier": 28.625176191121405,
+      "nextTierPriceOverCapacity": 0.10741502714465215,
+      "paybackSeconds": 183.2628401831932,
+      "price": 3000000000,
+      "priceToImpliedRatio": 0.3054380669719886,
+      "rawExpectedIncomePerRoll": 1935.14019,
+      "realisedIncomePerSecond": 95954662.05875325,
+      "remaxDrainDollarsPerSecond": 512181.70532588783,
+      "remaxDrainFraction": 0.0053094066867004335,
+      "remaxSpendFirst1000Rolls": 23870824989.78788,
+      "remaxSpendPerRollAtEquilibrium": 4005752.208360953,
+      "rewardSource": "mysteryBox",
+      "rollsTo50Percent": 1655,
+      "rollsTo90Percent": 6697,
+      "rollsTo99Percent": 8856,
+      "swingTier": 7,
+      "visualScale": 2.3,
+      "zone": "road"
+    },
+    {
+      "analyticExpectedIncomePerRoll": 3338.286663853433,
+      "asymptoteIncomePerSecond": 3500000,
+      "bandIndex": 57,
+      "cycleSecondsFloor": 8.03613464728906,
+      "deltaRealisedIncomePerSecond": 4012874.5056348294,
+      "distanceFromBandZero": 2300.3661991269514,
+      "distanceScale": 11.6,
+      "equilibriumIncomePerSecond": 3500000,
+      "equilibriumMean": 3491719,
+      "equilibriumP10": 3500000,
+      "equilibriumP90": 3500000,
+      "exchangeByHorizon": {
+        "100": {
+          "deltaRealisedIncomePerSecond": 1500195.3741046395,
+          "impliedPriceAtExchangeRate": 900117224.4627837,
+          "paybackSeconds": 3999.4790702384184,
+          "previousTierLevellingCapacityCost": 1918568486.4733815,
+          "priceOverPreviousCapacity": 3.127331675831341,
+          "priceToImpliedRatio": 6.665798450397364
+        },
+        "1000": {
+          "deltaRealisedIncomePerSecond": 15994735.57636137,
+          "impliedPriceAtExchangeRate": 9596841345.816822,
+          "paybackSeconds": 375.1234255393008,
+          "previousTierLevellingCapacityCost": 19616637613.315308,
+          "priceOverPreviousCapacity": 0.3058628149366099,
+          "priceToImpliedRatio": 0.625205709232168
+        },
+        "10000": {
+          "deltaRealisedIncomePerSecond": 4012874.5056348294,
+          "impliedPriceAtExchangeRate": 2407724703.3808975,
+          "paybackSeconds": 1495.1875498660308,
+          "previousTierLevellingCapacityCost": 55858106258.44748,
+          "priceOverPreviousCapacity": 0.10741502714465215,
+          "priceToImpliedRatio": 2.491979249776718
+        }
+      },
+      "grossIncomePerSecondMaxed": 100188116.66892491,
+      "impliedPriceAtExchangeRate": 2407724703.3808975,
+      "incomeByHorizon": {
+        "100": {
+          "grossMaxedIncomePerSecond": 7313732.516831519,
+          "levellingCapacityCost": 4234939510.0989113,
+          "mean": 303626.64,
+          "meanRemaxSpend": 5412007887.8825445,
+          "meanRemaxSpendAtHalf": 2857417704.539654,
+          "median": 255500,
+          "p10": 84500,
+          "p90": 594750,
+          "realisedIncomePerSecond": 955973.9787645498,
+          "remaxDrainDollarsPerSecond": 6357758.538066969,
+          "remaxDrainFraction": 0.8692905467127063,
+          "remaxSpendPerRoll": 51091803.66685782,
+          "rolls": 100
+        },
+        "1000": {
+          "grossMaxedIncomePerSecond": 51239065.38210732,
+          "levellingCapacityCost": 29669439229.264385,
+          "mean": 1806948.075,
+          "meanRemaxSpend": 38266853088.15651,
+          "meanRemaxSpendAtHalf": 21972227997.366264,
+          "median": 1790000,
+          "p10": 1250000,
+          "p90": 2390000,
+          "realisedIncomePerSecond": 47183726.389924765,
+          "remaxDrainDollarsPerSecond": 4055338.99218255,
+          "remaxDrainFraction": 0.07914545204797344,
+          "remaxSpendPerRoll": 32589250.18158049,
+          "rolls": 1000
+        },
+        "10000": {
+          "grossMaxedIncomePerSecond": 100188116.66892491,
+          "levellingCapacityCost": 58012870001.35494,
+          "mean": 3491719,
+          "meanRemaxSpend": 103162998597.35692,
+          "meanRemaxSpendAtHalf": 94299941494.50142,
+          "median": 3500000,
+          "p10": 3500000,
+          "p90": 3500000,
+          "realisedIncomePerSecond": 99967536.56438808,
+          "remaxDrainDollarsPerSecond": 220580.10453683467,
+          "remaxDrainFraction": 0.00220165935712465,
+          "remaxSpendPerRoll": 1772611.4205711,
+          "rolls": 10000
+        }
+      },
+      "landingZ": -2304.6261991269516,
+      "launchDistanceStuds": 2320,
+      "levellingCapacityCost": 58012870001.35494,
+      "luckValue": 20000,
+      "marginalBelowOnePercentAtRoll": 1,
+      "marginalBelowOnePercentOfCurrentAtRoll": 88,
+      "marginalPoint": {
+        "n10": 3721.327000000001,
+        "n100": 2686.7050000000163,
+        "n1000": 1068.7249999998603,
+        "n50": 3040.00999999998,
+        "n500": 1834.8249999999534,
+        "n5000": 148
+      },
+      "marginalWindow": {
+        "n10": 3326.9939999999997,
+        "n100": 2359.6736,
+        "n1000": 703.694425,
+        "n50": 2844.5761,
+        "n500": 1377.36825,
+        "n5000": 39.7932
+      },
+      "measuredOverModel": 104.6133703873968,
+      "measuredOverModelByHorizon": {
+        "100": 1.0004013638647116,
+        "1000": 49.37651576427042,
+        "10000": 104.6133703873968
+      },
+      "modelIncomePerSecond": 955590.4392927539,
+      "modelRampMultiplier": 28.625176191121405,
+      "nextTierPriceOverCapacity": 1.8961309791677408,
+      "paybackSeconds": 1495.1875498660308,
+      "price": 6000000000,
+      "priceToImpliedRatio": 2.491979249776718,
+      "rawExpectedIncomePerRoll": 3347.0107875,
+      "realisedIncomePerSecond": 99967536.56438808,
+      "remaxDrainDollarsPerSecond": 220580.10453683467,
+      "remaxDrainFraction": 0.00220165935712465,
+      "remaxSpendFirst1000Rolls": 38266853088.15651,
+      "remaxSpendPerRollAtEquilibrium": 1772611.4205711,
+      "rewardSource": "mysteryBox",
+      "rollsTo50Percent": 999,
+      "rollsTo90Percent": 4403,
+      "rollsTo99Percent": 5823,
+      "swingTier": 8,
+      "visualScale": 2.55,
+      "zone": "road"
+    },
+    {
+      "analyticExpectedIncomePerRoll": 5361.732184083271,
+      "asymptoteIncomePerSecond": 3500000,
+      "bandIndex": 62,
+      "cycleSecondsFloor": 8.29492172130314,
+      "deltaRealisedIncomePerSecond": 211893.82792536914,
+      "distanceFromBandZero": 2501.8001402178293,
+      "distanceScale": 12.6,
+      "equilibriumIncomePerSecond": 3500000,
+      "equilibriumMean": 3500000,
+      "equilibriumP10": 3500000,
+      "equilibriumP90": 3500000,
+      "exchangeByHorizon": {
+        "100": {
+          "deltaRealisedIncomePerSecond": 1838616.9729120815,
+          "impliedPriceAtExchangeRate": 1103170183.747249,
+          "paybackSeconds": 59827.57780473288,
+          "previousTierLevellingCapacityCost": 4234939510.0989113,
+          "priceOverPreviousCapacity": 25.974396974900554,
+          "priceToImpliedRatio": 99.7126296745548
+        },
+        "1000": {
+          "deltaRealisedIncomePerSecond": 17245999.980286516,
+          "impliedPriceAtExchangeRate": 10347599988.17191,
+          "paybackSeconds": 6378.290625405214,
+          "previousTierLevellingCapacityCost": 29669439229.264385,
+          "priceOverPreviousCapacity": 3.707518674350331,
+          "priceToImpliedRatio": 10.630484375675358
+        },
+        "10000": {
+          "deltaRealisedIncomePerSecond": 211893.82792536914,
+          "impliedPriceAtExchangeRate": 127136296.75522149,
+          "paybackSeconds": 519127.9098452219,
+          "previousTierLevellingCapacityCost": 58012870001.35494,
+          "priceOverPreviousCapacity": 1.8961309791677408,
+          "priceToImpliedRatio": 865.2131830753699
+        }
+      },
+      "grossIncomePerSecondMaxed": 100188116.66892491,
+      "impliedPriceAtExchangeRate": 127136296.75522149,
+      "incomeByHorizon": {
+        "100": {
+          "grossMaxedIncomePerSecond": 12738203.405049024,
+          "levellingCapacityCost": 7375922043.029414,
+          "mean": 489294.085,
+          "meanRemaxSpend": 8755327261.275953,
+          "meanRemaxSpendAtHalf": 4631252914.891,
+          "median": 445000,
+          "p10": 173500,
+          "p90": 860000,
+          "realisedIncomePerSecond": 2794590.9516766313,
+          "remaxDrainDollarsPerSecond": 9943612.453372393,
+          "remaxDrainFraction": 0.7806134144027765,
+          "remaxSpendPerRoll": 82481486.92769907,
+          "rolls": 100
+        },
+        "1000": {
+          "grossMaxedIncomePerSecond": 69845429.90633623,
+          "levellingCapacityCost": 40443257943.801735,
+          "mean": 2429718,
+          "meanRemaxSpend": 57685044717.899475,
+          "meanRemaxSpendAtHalf": 35223626268.928925,
+          "median": 2440000,
+          "p10": 1910000,
+          "p90": 2980000,
+          "realisedIncomePerSecond": 64429726.37021128,
+          "remaxDrainDollarsPerSecond": 5415703.536124953,
+          "remaxDrainFraction": 0.07753840936175055,
+          "remaxSpendPerRoll": 44922836.8979411,
+          "rolls": 1000
+        },
+        "10000": {
+          "grossMaxedIncomePerSecond": 100188116.66892491,
+          "levellingCapacityCost": 58012870001.35494,
+          "mean": 3500000,
+          "meanRemaxSpend": 102868277355.37344,
+          "meanRemaxSpendAtHalf": 102508017432.66495,
+          "median": 3500000,
+          "p10": 3500000,
+          "p90": 3500000,
+          "realisedIncomePerSecond": 100179430.39231345,
+          "remaxDrainDollarsPerSecond": 8686.276611466295,
+          "remaxDrainFraction": 0.00008669966958427212,
+          "remaxSpendPerRoll": 72051.98454169922,
+          "rolls": 10000
+        }
+      },
+      "landingZ": -2506.0601402178295,
+      "launchDistanceStuds": 2520,
+      "levellingCapacityCost": 58012870001.35494,
+      "luckValue": 45000,
+      "marginalBelowOnePercentAtRoll": 1,
+      "marginalBelowOnePercentOfCurrentAtRoll": 88,
+      "marginalPoint": {
+        "n10": 5744.1159999999945,
+        "n100": 3762.6100000000442,
+        "n1000": 836,
+        "n50": 4347.630000000005,
+        "n500": 1827.7250000000931,
+        "n5000": 26
+      },
+      "marginalWindow": {
+        "n10": 5680.469550000001,
+        "n100": 3826.3146500000003,
+        "n1000": 640.15,
+        "n50": 4487.674300000001,
+        "n500": 1428.4402999999998,
+        "n5000": 1.6146
+      },
+      "measuredOverModel": 65.271752318133,
+      "measuredOverModelByHorizon": {
+        "100": 1.8208113952535352,
+        "1000": 41.97908817301668,
+        "10000": 65.271752318133
+      },
+      "modelIncomePerSecond": 1534805.284589898,
+      "modelRampMultiplier": 28.625176191121405,
+      "nextTierPriceOverCapacity": 4.481764132578296,
+      "paybackSeconds": 519127.9098452219,
+      "price": 110000000000,
+      "priceToImpliedRatio": 865.2131830753699,
+      "rawExpectedIncomePerRoll": 5364.1005475,
+      "realisedIncomePerSecond": 100179430.39231345,
+      "remaxDrainDollarsPerSecond": 8686.276611466295,
+      "remaxDrainFraction": 0.00008669966958427212,
+      "remaxSpendFirst1000Rolls": 57685044717.899475,
+      "remaxSpendPerRollAtEquilibrium": 72051.98454169922,
+      "rewardSource": "mysteryBox",
+      "rollsTo50Percent": 541,
+      "rollsTo90Percent": 2189,
+      "rollsTo99Percent": 2895,
+      "swingTier": 9,
+      "visualScale": 2.8,
+      "zone": "road"
+    },
+    {
+      "analyticExpectedIncomePerRoll": 8976.51842086917,
+      "asymptoteIncomePerSecond": 3500000,
+      "bandIndex": 68,
+      "cycleSecondsFloor": 8.59225877911797,
+      "deltaRealisedIncomePerSecond": 8686.276611462235,
+      "distanceFromBandZero": 2743.807657745058,
+      "distanceScale": 13.8,
+      "equilibriumIncomePerSecond": 3500000,
+      "equilibriumMean": 3500000,
+      "equilibriumP10": 3500000,
+      "equilibriumP90": 3500000,
+      "exchangeByHorizon": {
+        "100": {
+          "deltaRealisedIncomePerSecond": 2515571.4553449955,
+          "impliedPriceAtExchangeRate": 1509342873.2069974,
+          "paybackSeconds": 103356.23718720507,
+          "previousTierLevellingCapacityCost": 7375922043.029414,
+          "priceOverPreviousCapacity": 35.24983025623379,
+          "priceToImpliedRatio": 172.26039531200843
+        },
+        "1000": {
+          "deltaRealisedIncomePerSecond": 14779171.586714797,
+          "impliedPriceAtExchangeRate": 8867502952.028877,
+          "paybackSeconds": 17592.325691225997,
+          "previousTierLevellingCapacityCost": 40443257943.801735,
+          "priceOverPreviousCapacity": 6.428760026239359,
+          "priceToImpliedRatio": 29.32054281871
+        },
+        "10000": {
+          "deltaRealisedIncomePerSecond": 8686.276611462235,
+          "impliedPriceAtExchangeRate": 5211765.966877341,
+          "paybackSeconds": 29932272.667544257,
+          "previousTierLevellingCapacityCost": 58012870001.35494,
+          "priceOverPreviousCapacity": 4.481764132578296,
+          "priceToImpliedRatio": 49887.12111257376
+        }
+      },
+      "grossIncomePerSecondMaxed": 100188116.66892491,
+      "impliedPriceAtExchangeRate": 5211765.966877341,
+      "incomeByHorizon": {
+        "100": {
+          "grossMaxedIncomePerSecond": 21425944.37905437,
+          "levellingCapacityCost": 12406466627.432623,
+          "mean": 794286.75,
+          "meanRemaxSpend": 14519385355.705935,
+          "meanRemaxSpendAtHalf": 7595836899.128463,
+          "median": 748500,
+          "p10": 367250,
+          "p90": 1276500,
+          "realisedIncomePerSecond": 5310162.407021627,
+          "remaxDrainDollarsPerSecond": 16115781.972032744,
+          "remaxDrainFraction": 0.7521620371509622,
+          "remaxSpendPerRoll": 138470969.13154945,
+          "rolls": 100
+        },
+        "1000": {
+          "grossMaxedIncomePerSecond": 85303025.04954179,
+          "levellingCapacityCost": 49393815029.72507,
+          "mean": 2981998,
+          "meanRemaxSpend": 79730526660.17311,
+          "meanRemaxSpendAtHalf": 53549368153.87909,
+          "median": 2980000,
+          "p10": 2540000,
+          "p90": 3500000,
+          "realisedIncomePerSecond": 79208897.95692608,
+          "remaxDrainDollarsPerSecond": 6094127.092615715,
+          "remaxDrainFraction": 0.07144092591178805,
+          "remaxSpendPerRoll": 52362317.01258805,
+          "rolls": 1000
+        },
+        "10000": {
+          "grossMaxedIncomePerSecond": 100188116.66892491,
+          "levellingCapacityCost": 58012870001.35494,
+          "mean": 3500000,
+          "meanRemaxSpend": 102618460287.5476,
+          "meanRemaxSpendAtHalf": 102618460287.5476,
+          "median": 3500000,
+          "p10": 3500000,
+          "p90": 3500000,
+          "realisedIncomePerSecond": 100188116.66892491,
+          "remaxDrainDollarsPerSecond": 0,
+          "remaxDrainFraction": 0,
+          "remaxSpendPerRoll": 0,
+          "rolls": 10000
+        }
+      },
+      "landingZ": -2748.067657745058,
+      "launchDistanceStuds": 2760,
+      "levellingCapacityCost": 58012870001.35494,
+      "luckValue": 75000,
+      "marginalBelowOnePercentAtRoll": 1,
+      "marginalBelowOnePercentOfCurrentAtRoll": 88,
+      "marginalPoint": {
+        "n10": 8789.89,
+        "n100": 7024.650000000023,
+        "n1000": 967,
+        "n50": 7308.015000000014,
+        "n500": 1974,
+        "n5000": 0
+      },
+      "marginalWindow": {
+        "n10": 9116.2775,
+        "n100": 5842.0055,
+        "n1000": 451.137,
+        "n50": 7198.9487,
+        "n500": 1319.778,
+        "n5000": 0
+      },
+      "measuredOverModel": 38.9906179200054,
+      "measuredOverModelByHorizon": {
+        "100": 2.066577558190347,
+        "1000": 30.82604982294395,
+        "10000": 38.9906179200054
+      },
+      "modelIncomePerSecond": 2569544.2138022687,
+      "modelRampMultiplier": 28.625176191121405,
+      "nextTierPriceOverCapacity": 13.790043484856296,
+      "paybackSeconds": 29932272.667544257,
+      "price": 260000000000,
+      "priceToImpliedRatio": 49887.12111257376,
+      "rawExpectedIncomePerRoll": 8998.770775,
+      "realisedIncomePerSecond": 100188116.66892491,
+      "remaxDrainDollarsPerSecond": 0,
+      "remaxDrainFraction": 0,
+      "remaxSpendFirst1000Rolls": 79730526660.17311,
+      "remaxSpendPerRollAtEquilibrium": 0,
+      "rewardSource": "mysteryBox",
+      "rollsTo50Percent": 309,
+      "rollsTo90Percent": 1252,
+      "rollsTo99Percent": 1655,
+      "swingTier": 10,
+      "visualScale": 3.15,
+      "zone": "road"
+    },
+    {
+      "analyticExpectedIncomePerRoll": 33566.421072365956,
+      "asymptoteIncomePerSecond": 3500000,
+      "bandIndex": 76,
+      "cycleSecondsFloor": 7.803428102702968,
+      "deltaRealisedIncomePerSecond": 0,
+      "distanceFromBandZero": 3057.4287517086373,
+      "distanceScale": 15.3552,
+      "equilibriumIncomePerSecond": 3500000,
+      "equilibriumMean": 3500000,
+      "equilibriumP10": 3500000,
+      "equilibriumP90": 3500000,
+      "exchangeByHorizon": {
+        "100": {
+          "deltaRealisedIncomePerSecond": 4944438.919467285,
+          "impliedPriceAtExchangeRate": 2966663351.6803713,
+          "paybackSeconds": 161797.9336037975,
+          "previousTierLevellingCapacityCost": 12406466627.432623,
+          "priceOverPreviousCapacity": 64.4825012651931,
+          "priceToImpliedRatio": 269.6632226729958
+        },
+        "1000": {
+          "deltaRealisedIncomePerSecond": 20619900.839620948,
+          "impliedPriceAtExchangeRate": 12371940503.772568,
+          "paybackSeconds": 38797.47076488396,
+          "previousTierLevellingCapacityCost": 49393815029.72507,
+          "priceOverPreviousCapacity": 16.19635979765001,
+          "priceToImpliedRatio": 64.66245127480661
+        },
+        "10000": {
+          "deltaRealisedIncomePerSecond": 0,
+          "impliedPriceAtExchangeRate": 0,
+          "previousTierLevellingCapacityCost": 58012870001.35494,
+          "priceOverPreviousCapacity": 13.790043484856296
+        }
+      },
+      "grossIncomePerSecondMaxed": 100188116.66892491,
+      "impliedPriceAtExchangeRate": 0,
+      "incomeByHorizon": {
+        "100": {
+          "grossMaxedIncomePerSecond": 63547891.144289516,
+          "levellingCapacityCost": 36796734686.57371,
+          "mean": 2224857,
+          "meanRemaxSpend": 48915771933.417625,
+          "meanRemaxSpendAtHalf": 28122254160.931667,
+          "median": 2220000,
+          "p10": 1700000,
+          "p90": 2750000,
+          "realisedIncomePerSecond": 10254601.326488912,
+          "remaxDrainDollarsPerSecond": 53293289.817800604,
+          "remaxDrainFraction": 0.8386319177263462,
+          "remaxSpendPerRoll": 415870355.4497192,
+          "rolls": 100
+        },
+        "1000": {
+          "grossMaxedIncomePerSecond": 100188116.66892491,
+          "levellingCapacityCost": 58012870001.35494,
+          "mean": 3499974,
+          "meanRemaxSpend": 101331891739.15608,
+          "meanRemaxSpendAtHalf": 99929936147.59753,
+          "median": 3500000,
+          "p10": 3500000,
+          "p90": 3500000,
+          "realisedIncomePerSecond": 99828798.79654703,
+          "remaxDrainDollarsPerSecond": 359317.8723778939,
+          "remaxDrainFraction": 0.003586432047278343,
+          "remaxSpendPerRoll": 2803911.183117096,
+          "rolls": 1000
+        },
+        "10000": {
+          "grossMaxedIncomePerSecond": 100188116.66892491,
+          "levellingCapacityCost": 58012870001.35494,
+          "mean": 3500000,
+          "meanRemaxSpend": 101333051996.5561,
+          "meanRemaxSpendAtHalf": 101333051996.5561,
+          "median": 3500000,
+          "p10": 3500000,
+          "p90": 3500000,
+          "realisedIncomePerSecond": 100188116.66892491,
+          "remaxDrainDollarsPerSecond": 0,
+          "remaxDrainFraction": 0,
+          "remaxSpendPerRoll": 0,
+          "rolls": 10000
+        }
+      },
+      "landingZ": -3061.6887517086375,
+      "launchDistanceStuds": 3071.04,
+      "levellingCapacityCost": 58012870001.35494,
+      "luckValue": 0,
+      "marginalBelowOnePercentAtRoll": 1,
+      "marginalBelowOnePercentOfCurrentAtRoll": 67,
+      "marginalPoint": {
+        "n10": 33573.04509999999,
+        "n100": 10498.5,
+        "n1000": 0,
+        "n50": 22005.75,
+        "n500": 364,
+        "n5000": 0
+      },
+      "marginalWindow": {
+        "n10": 35016.518939999994,
+        "n100": 6709.69,
+        "n1000": 0.026,
+        "n50": 14574.594,
+        "n500": 62.836,
+        "n5000": 0
+      },
+      "measuredOverModel": 10.427087214494327,
+      "measuredOverModelByHorizon": {
+        "100": 1.067248551387671,
+        "1000": 10.3896911747485,
+        "10000": 10.427087214494327
+      },
+      "modelIncomePerSecond": 9608447.173018457,
+      "modelRampMultiplier": 28.625176191121405,
+      "price": 800000000000,
+      "rawExpectedIncomePerRoll": 33555.450099,
+      "realisedIncomePerSecond": 100188116.66892491,
+      "remaxDrainDollarsPerSecond": 0,
+      "remaxDrainFraction": 0,
+      "remaxSpendFirst1000Rolls": 101331891739.15608,
+      "remaxSpendPerRollAtEquilibrium": 0,
+      "rewardSource": "chest",
+      "rollsTo50Percent": 67,
+      "rollsTo90Percent": 269,
+      "rollsTo99Percent": 356,
+      "swingTier": 11,
+      "visualScale": 3.6,
+      "zone": "past"
+    }
+  ]
+}
