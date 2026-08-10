@@ -1,0 +1,94 @@
+================ STEP 0: the interpolated quantities ================
+anchors LOW 220 / HIGH 120000   T_MIN -0.5 / T_MAX 1.35   window width 4 over 8 tiers
+
+0a. peak = windowStart + peakOffset  (SlimeRoll.luau:79, :94)
+    peakOffset = lerp(SLIME_PEAK_OFFSET_LOW 1.0000, SLIME_PEAK_OFFSET_HIGH 1.0000, t)
+    endpoints are IDENTICAL -> peakOffset is CONSTANT in t
+    peak is NOT an index. It is the real-valued CENTRE of the generalised
+    Gaussian, in slime-tier units, used only as `dist = i - peak` inside the
+    windowStart..windowStart+3 loop (SlimeRoll.luau:98-104). Nothing indexes
+    a table with it, so it cannot be out of range; what it can do is move
+    the peak outside the window, which would put the modal weight on a tier
+    that gets no weight assigned at all.
+
+0b/0c. every t-dependent quantity, at the probe values
+  t      windowStart  peakOffset  peak   peak in window?  spreadDown  spreadUp  shape   floors engaged
+  1.00             5      1.0000   6.00  yes                  0.3780    0.6400  0.9000  none
+  1.10             5      1.0000   6.00  yes                  0.3618    0.6350  0.8820  none
+  1.20             5      1.0000   6.00  yes                  0.3456    0.6300  0.8640  none
+  1.30             5      1.0000   6.00  yes                  0.3294    0.6250  0.8460  none
+  1.35             5      1.0000   6.00  yes                  0.3213    0.6225  0.8370  none
+  1.40             5      1.0000   6.00  yes                  0.3132    0.6200  0.8280  none
+  1.50             5      1.0000   6.00  yes                  0.2970    0.6150  0.8100  none
+
+0d. windowStart range check (clamp(round(lerp(1, 5, t)), 1, 5))
+  t        raw lerp   rounded   after clamp   saturated at 5?
+  0.875      4.5000         5             5   yes
+  1.000      5.0000         5             5   yes
+  1.100      5.4000         5             5   yes
+  1.200      5.8000         6             5   yes
+  1.300      6.2000         6             5   yes
+  1.350      6.4000         6             5   yes
+  1.400      6.6000         7             5   yes
+  1.500      7.0000         7             5   yes
+  3.000     13.0000        13             5   yes
+
+0e. the largest T_MAX with nothing out of range and no floor engaged
+  spreadDown  floor engages at t = 3.0247
+  spreadUp    floor engages at t = 12.8000
+  shape       floor engages at t = 5.4444
+  peak        never leaves the window (peakOffset constant at 1.0, peak = windowStart + 1)
+  windowStart saturates at 5 for every t >= 0.875 and cannot index out of range
+
+  T_MAX_SAFE   = 3.0247  (bound: the first floor to engage)
+  T_MAX_TARGET = min(1.35, T_MAX_SAFE) = 1.3500
+  currently configured T_MAX = 1.35
+
+================ STEP 3: verification ================
+clamp luck (t reaches T_MAX) = 1.089M
+
+3a. STOP CONDITION -- the luck-to-t mapping is restored
+  PASS band 68 (luck 75000) pre-box E[base]/roll      expected $8.0K..$9.8K (~$8.87K)       actual $8.872K
+
+3b. STOP CONDITION -- the window transitions are back on the road
+     band  0  luck 5         t = -0.5000  -> window start 1 (Common-Epic)
+     band 27  luck 500       t = 0.1303  -> window start 2 (Uncommon-Legendary)
+     band 40  luck 2,500     t = 0.3857  -> window start 3 (Rare-Mythic)
+     band 56  luck 15,000    t = 0.6700  -> window start 4 (Epic-Secret)
+     band 64  luck 55,000    t = 0.8762  -> window start 5 (Legendary-Divine)
+  PASS window transitions, by band                    expected 0, 27, 40, 56, 64            actual 0, 27, 40, 56, 64
+
+3c. STOP CONDITION -- monotonicity across all 74 band lucks
+  PASS worst decreasing step in E[base]/roll          expected 0                            actual 0.000000e+00
+
+3d. STOP CONDITION -- well-formedness past the old clamp
+     luck 120K       sum 1.000000000000000  NaN no  negative no
+     luck 250K       sum 1.000000000000000  NaN no  negative no
+     luck 500K       sum 1.000000000000000  NaN no  negative no
+     luck 1M         sum 1.000000000000000  NaN no  negative no
+     luck 5M         sum 1.000000000000000  NaN no  negative no
+  PASS worst |sum - 1| over the five probes           expected <= 1e-9, no NaN/negative/out-of-range actual 2.220e-16 at luck 1000000
+
+---- all four stop conditions passed ----
+
+3e. does the extrapolation actually reach? (not a stop condition)
+  luck        t        P(Divine)   E[base]/roll   TV distance from the previous probe
+  120K        1.0000     4.4686%   $9.062K        --
+  250K        1.1165     4.6760%   $9.37K         0.003732
+  500K        1.2265     4.8801%   $9.673K        0.003456
+  1M          1.3365     5.0924%   $9.988K        0.003393
+
+3f/3g/3h. per tier on the renumbered ladder
+tier  band luck   E[base] no box   E[base] with box   box multiple   doublings that still move the distribution
+   1  25          $25.47           $39.24             1.54x          16
+   2  65          $25.71           $62.8              2.44x          15
+   3  150         $25.93           $98.5              3.80x          13
+   4  550         $66.39           $248.5             3.74x          11
+   5  950         $66.86           $395.5             5.92x          11
+   6  4,500       $190.7           $1.16K             6.08x          8
+   7  8,500       $192.6           $1.949K            10.12x         8
+   8  35,000      $896.5           $5.445K            6.07x          5
+   9  75,000      $8.872K          $9.192K            1.04x          4
+  10  -- (chest)  --               --                 --             -- (no box on the chest path)
+
+UNDER 1.5x: tier(s) 9 -- reported plainly, not a stop condition

@@ -209,27 +209,31 @@ local SlimeConfig: SlimeConfig = {
 	-- swing prices above tier 7 were not retuned for it -- if the late game
 	-- now inflates, this is the number that did it, not the upgrade curve.
 	--
-	-- ===== RAISED FROM 120,000 TO 1,000,000 BY THE LADDER RENUMBER, and it is
-	-- a prerequisite of that change rather than a companion to it (see
-	-- REPORT.md). The mystery box multiplies luck by 2^D with no ceiling
-	-- (LaunchServer's onBoxPress), but SLIME_EXTRAPOLATION_T_MAX clamps t at
-	-- this anchor, so every doubling PAST it buys exactly nothing. At 120,000
-	-- that made the box worth 1.01x at the band the old tier 10 landed on --
-	-- band 68, luck 75,000, one doubling from the clamp. Deleting old tier 10
-	-- moved the new tier 9 onto that same band, which would have moved the
-	-- dead box rather than removing it. At 1,000,000 the box is live at every
-	-- band on the road: a band-68 roll now needs four doublings to reach the
-	-- clamp instead of one.
+	-- ===== RAISED TO 1,000,000 BY THE LADDER RENUMBER AND PUT BACK. Recorded
+	-- because the mistake is an easy one to make twice.
 	--
-	-- THE VALUE IS NOW A CLAMP POINT, NOT AN OBSERVED ANCHOR. 120,000 was a
-	-- measured reference distribution; 1,000,000 is not. Everything between
-	-- 120,000 and 1,000,000 is EXTRAPOLATED along the same lerps that shape
-	-- the window, which is exactly what SLIME_EXTRAPOLATION_T_MIN/MAX exist to
-	-- keep sane -- and t no longer reaches 1.0 anywhere on the road, so the
-	-- shape at every band has moved. See REPORT.md for the measured
-	-- before/after and for what it does to the window at the top of the road;
-	-- that consequence is reported there, not fixed here.
-	SLIME_LUCK_ANCHOR_HIGH = 1000000,
+	-- The reasoning for raising it was sound as far as it went: the mystery box
+	-- multiplies luck by 2^D with no ceiling (LaunchServer's onBoxPress), but t
+	-- clamps at SLIME_EXTRAPOLATION_T_MAX, so every doubling past the clamp
+	-- buys exactly nothing -- which is why band 68's box measured 1.01x. What
+	-- it missed is that THIS CONSTANT DOES TWO JOBS AT ONCE. It sets where t
+	-- clamps, and it sets the RATE at which t advances with luck, because
+	--     t = ln(luck / 220) / ln(HIGH / 220)
+	-- Raising HIGH stretches the denominator, so every luck value maps to a
+	-- smaller t and every window transition slides DOWN the road. At 1,000,000
+	-- the t = 0.875 transition needed luck 349,000 against a top band of
+	-- 100,000: the Legendary-Divine window stopped being reachable by landing
+	-- at all, band 68's pre-box expected income fell from $8.87K to $877, and
+	-- tiers 1-2 lost their box value to the same dilution. Measured, see
+	-- REPORT.md.
+	--
+	-- THE KNOB FOR BOX HEADROOM IS SLIME_EXTRAPOLATION_T_MAX, not this. Raising
+	-- T_MAX clamps t later without touching the luck-to-t mapping, so the road
+	-- keeps the shape three measurement passes validated and only the
+	-- doubling chain gains anything. This value is back at its measured
+	-- reference and should stay there: it is an OBSERVED anchor (the reference
+	-- game's 120,000 distribution), not a free parameter.
+	SLIME_LUCK_ANCHOR_HIGH = 120000,
 	-- How many consecutive tiers are ever eligible at once. 4 reproduces both
 	-- anchors exactly (Common-Epic at the low end, Legendary-Divine at the
 	-- high end are both 4-tier spans) -- see the written report.
@@ -365,18 +369,44 @@ local SlimeConfig: SlimeConfig = {
 	-- distribution -- verified safe (SHAPE stays comfortably positive down
 	-- to well past this bound).
 	--
-	-- MAX=1.0, deliberately NOT beyond the high anchor -- the window position
-	-- is already fully saturated at t=1 (windowStart's own lerp already
-	-- reaches its clamped ceiling there, tiers 5-8, so extrapolating t
-	-- further slides nothing), and the shape exponent crosses ZERO at
-	-- t=1.21 and goes NEGATIVE beyond that -- undefined/degenerate math, not
-	-- "more concentrated." The box's doubling has no ceiling (see
-	-- LaunchConfig.BOX_DOUBLE_CHANCE), so luck CAN genuinely exceed 120,000
-	-- by a lot on a long chain -- this cap is what keeps an extreme chain's
-	-- roll safe: luck at or above 120,000 always uses the exact high-anchor
-	-- shape (t pinned to 1), never something further extrapolated.
+	-- ===== MAX=1.35, RAISED FROM 1.0, AND THIS IS THE ONLY KNOB FOR BOX
+	-- HEADROOM. It moves where t stops, and nothing else: the luck-to-t
+	-- mapping is a function of the two ANCHORS, so raising this cannot slide a
+	-- window transition, cannot change what any band on the road rolls, and
+	-- cannot touch the four transitions three measurement passes validated.
+	-- The top band (luck 100,000) sits at t = 0.9711, under 1.0, so the road is
+	-- untouched by construction. Everything above 1.0 is reachable only by the
+	-- box's doubling chain -- from band 68 (luck 75,000, t = 0.9254) the
+	-- doublings land at t = 1.0354 / 1.1454 / 1.2554 / 1.3654, so four of them
+	-- now move the distribution where one used to.
+	--
+	-- WHY 1.35 AND WHAT ACTUALLY BOUNDS IT. The binding quantity is
+	-- spreadDown: it lerps 0.54 -> 0.378, so it reaches SLIME_SPREAD_FLOOR
+	-- (0.05) at t = 3.0247 and the floor engages from there. spreadUp reaches
+	-- its floor at t = 12.80 and shape reaches SLIME_SHAPE_FLOOR at t = 5.44,
+	-- both far above. peak cannot go out of range at any t at all --
+	-- SLIME_PEAK_OFFSET_LOW and _HIGH are both 1.0, so peakOffset is constant
+	-- and peak is always windowStart + 1, one tier inside the window. So the
+	-- largest safe value is 3.02; 1.35 is chosen well inside it because the
+	-- returns are small and flatten out (P(Divine) at the top of the window
+	-- goes 4.47% at t = 1.0 to 5.12% at t = 1.35), not because anything breaks
+	-- above it. Measured in REPORT.md.
+	--
+	-- CORRECTING THE CLAIM THIS BLOCK USED TO MAKE: it said the shape exponent
+	-- "crosses ZERO at t=1.21 and goes NEGATIVE beyond that". Against the
+	-- current constants that is simply false -- shape lerps 1.08 -> 0.90, so it
+	-- crosses zero at t = 6.0 and hits its floor at 5.44. The 1.21 predates the
+	-- retune that set these values and was the stated reason T_MAX could not be
+	-- raised; anyone trusting it would have believed this change unsafe.
+	--
+	-- WINDOW SATURATION IS STILL REAL, and it is what caps the gain: windowStart
+	-- reaches its ceiling of 5 at t = 0.875 and cannot advance further (8 tiers,
+	-- a 4-wide window -- there is nowhere above Legendary-Divine to go). Past
+	-- that point extra t only sharpens the shape WITHIN the top window, which is
+	-- worth about 10% of expected income, not a new tier of reward. Raising this
+	-- number further does not change that; more window would need more tiers.
 	SLIME_EXTRAPOLATION_T_MIN = -0.5,
-	SLIME_EXTRAPOLATION_T_MAX = 1.0,
+	SLIME_EXTRAPOLATION_T_MAX = 1.35,
 
 	-- ===== The reveal (see LaunchServer's onBoxPress and LaunchClient's
 	-- SlimeRevealed handler) =====

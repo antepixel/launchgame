@@ -1,0 +1,71 @@
+================ STEP 0: the interpolated quantities ================
+anchors LOW 220 / HIGH 1000000   T_MIN -0.5 / T_MAX 1   window width 4 over 8 tiers
+
+0a. peak = windowStart + peakOffset  (SlimeRoll.luau:79, :94)
+    peakOffset = lerp(SLIME_PEAK_OFFSET_LOW 1.0000, SLIME_PEAK_OFFSET_HIGH 1.0000, t)
+    endpoints are IDENTICAL -> peakOffset is CONSTANT in t
+    peak is NOT an index. It is the real-valued CENTRE of the generalised
+    Gaussian, in slime-tier units, used only as `dist = i - peak` inside the
+    windowStart..windowStart+3 loop (SlimeRoll.luau:98-104). Nothing indexes
+    a table with it, so it cannot be out of range; what it can do is move
+    the peak outside the window, which would put the modal weight on a tier
+    that gets no weight assigned at all.
+
+0b/0c. every t-dependent quantity, at the probe values
+  t      windowStart  peakOffset  peak   peak in window?  spreadDown  spreadUp  shape   floors engaged
+  1.00             5      1.0000   6.00  yes                  0.3780    0.6400  0.9000  none
+  1.10             5      1.0000   6.00  yes                  0.3618    0.6350  0.8820  none
+  1.20             5      1.0000   6.00  yes                  0.3456    0.6300  0.8640  none
+  1.30             5      1.0000   6.00  yes                  0.3294    0.6250  0.8460  none
+  1.35             5      1.0000   6.00  yes                  0.3213    0.6225  0.8370  none
+  1.40             5      1.0000   6.00  yes                  0.3132    0.6200  0.8280  none
+  1.50             5      1.0000   6.00  yes                  0.2970    0.6150  0.8100  none
+
+0d. windowStart range check (clamp(round(lerp(1, 5, t)), 1, 5))
+  t        raw lerp   rounded   after clamp   saturated at 5?
+  0.875      4.5000         5             5   yes
+  1.000      5.0000         5             5   yes
+  1.100      5.4000         5             5   yes
+  1.200      5.8000         6             5   yes
+  1.300      6.2000         6             5   yes
+  1.350      6.4000         6             5   yes
+  1.400      6.6000         7             5   yes
+  1.500      7.0000         7             5   yes
+  3.000     13.0000        13             5   yes
+
+0e. the largest T_MAX with nothing out of range and no floor engaged
+  spreadDown  floor engages at t = 3.0247
+  spreadUp    floor engages at t = 12.8000
+  shape       floor engages at t = 5.4444
+  peak        never leaves the window (peakOffset constant at 1.0, peak = windowStart + 1)
+  windowStart saturates at 5 for every t >= 0.875 and cannot index out of range
+
+  T_MAX_SAFE   = 3.0247  (bound: the first floor to engage)
+  T_MAX_TARGET = min(1.35, T_MAX_SAFE) = 1.3500
+  currently configured T_MAX = 1
+
+================ STEP 3: verification ================
+clamp luck (t reaches T_MAX) = 1000K
+
+3a. STOP CONDITION -- the luck-to-t mapping is restored
+  FAIL band 68 (luck 75000) pre-box E[base]/roll      expected $8.0K..$9.8K (~$8.87K)       actual $877.4
+
+3b. STOP CONDITION -- the window transitions are back on the road
+     band  0  luck 5         t = -0.4493  -> window start 1 (Common-Epic)
+     band 30  luck 650       t = 0.1286  -> window start 2 (Uncommon-Legendary)
+     band 46  luck 5,500     t = 0.3822  -> window start 3 (Rare-Mythic)
+     band 62  luck 45,000    t = 0.6318  -> window start 4 (Epic-Secret)
+  FAIL window transitions, by band                    expected 0, 27, 40, 56, 64            actual 0, 30, 46, 62
+
+3c. STOP CONDITION -- monotonicity across all 74 band lucks
+  PASS worst decreasing step in E[base]/roll          expected 0                            actual 0.000000e+00
+
+3d. STOP CONDITION -- well-formedness past the old clamp
+     luck 120K       sum 1.000000000000000  NaN no  negative no
+     luck 250K       sum 1.000000000000000  NaN no  negative no
+     luck 500K       sum 1.000000000000000  NaN no  negative no
+     luck 1M         sum 1.000000000000000  NaN no  negative no
+     luck 5M         sum 1.000000000000000  NaN no  negative no
+  PASS worst |sum - 1| over the five probes           expected <= 1e-9, no NaN/negative/out-of-range actual 0.000e+00
+
+==== STOPPED
