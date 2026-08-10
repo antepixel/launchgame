@@ -148,6 +148,29 @@ local BaseConfig: BaseConfig = {
 	-- How many slots EACH player's base has. A slime revealed once every
 	-- slot in that player's own base already holds one goes to that
 	-- player's inventory instead -- see PlayerProfile.receiveSlime.
+	--
+	-- ===== THE CEILING IS 12, AND IT IS GEOMETRY, NOT A DESIGN CHOICE. This
+	-- reads like a freely tunable number and is not one. BaseGeometry.
+	-- slotPosition lays the pads out two per row (BASE_GRID_COLUMNS) marching
+	-- down the plot in Z: row r is centred at BASE_SLOT_Z_START (117) +
+	-- r * BASE_SLOT_ROW_SPACING_STUDS (14), and each pad is
+	-- BASE_SLOT_PAD_SIZE.Z (8) deep, so row r's far edge lands at
+	-- 117 + 14r + 4. The plot's back boundary is the nearer of the mat's far
+	-- edge (BASE_PLOT_CENTER_Z 150 + BASE_MAT_SIZE.Z/2 42 = 192) and the near
+	-- face of the back edge part (BASE_BACK_EDGE_Z 192 -
+	-- BASE_BACK_EDGE_SIZE.Z/2 0.5 = 191.5), i.e. 191.5. That gives
+	-- r <= 5.0357, so six rows, so TWELVE slots. Row 6 would put slots 13-14
+	-- at Z 205, thirteen and a half studs past the back edge, floating over
+	-- the grass with the edge part through them.
+	--
+	-- Raising this past 12 therefore means moving BASE_SLOT_Z_START, the row
+	-- pitch, BASE_GRID_COLUMNS or the mat itself -- not just this number.
+	-- BaseGeometry asserts the bound at load (it re-derives it from these same
+	-- constants rather than hardcoding 12), so the failure is a refusal to
+	-- load rather than pads quietly built over the grass. Everything else
+	-- scales without a schema change: the save is a positional array sized
+	-- from this constant and tolerates a shorter one on load, and the slot pad
+	-- name format (Slot%02d) is good to 99.
 	SLOT_COUNT = 10,
 
 	-- Seconds between income payouts -- a DISCRETE lump (every placed

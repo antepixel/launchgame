@@ -38,12 +38,57 @@ local BaseGeometry = {}
 -- RUNWAY_START_Z from Baseplate instead of a raw number.
 local groundY = baseplate.Position.Y + baseplate.Size.Y / 2
 
--- ===== Slot grid: TEN pads, a real 2-column x 5-row grid (see BaseConfig.
--- BASE_GRID_COLUMNS) -- X = baseX +-15 (half of BASE_SLOT_COLUMN_SPACING_
--- STUDS), Z = BASE_SLOT_Z_START + row*BASE_SLOT_ROW_SPACING_STUDS (117, 131,
--- 145, 159, 173). The world position of slot i (1-indexed) within the given
--- lane's base -- Y already includes BASE_SLOT_PAD_Y_OFFSET, same "the
--- returned position IS the part's center, offset baked in" shape as
+-- ===== HOW MANY SLOTS THE PLOT CAN ACTUALLY HOLD, asserted at load.
+-- SLOT_COUNT reads like a freely tunable constant and is not one: the grid
+-- below marches DOWN the plot in Z, one row per BASE_GRID_COLUMNS slots, and
+-- runs out of mat. Nothing else in the game notices -- the pads would simply
+-- be built past the plot's back edge, floating over the grass with the back
+-- edge part through them -- so this is the check that turns a silent layout
+-- bug into a refusal to load.
+--
+-- THE DERIVATION, from the constants and nothing hardcoded:
+--   row r's pads are centred at BASE_SLOT_Z_START + r * BASE_SLOT_ROW_SPACING_
+--   STUDS and are BASE_SLOT_PAD_SIZE.Z deep, so the far edge of row r sits at
+--   BASE_SLOT_Z_START + r * pitch + padDepth/2. That must stay clear of the
+--   plot's own back boundary, which is the NEARER of the mat's far edge
+--   (BASE_PLOT_CENTER_Z + BASE_MAT_SIZE.Z/2) and the near face of the back
+--   edge part (BASE_BACK_EDGE_Z - BASE_BACK_EDGE_SIZE.Z/2).
+-- At today's values that is 191.5 (the back edge part, 0.5 studs tighter than
+-- the mat), giving r <= 5.0357, so 6 rows and TWELVE slots. SLOT_COUNT is 10,
+-- i.e. one spare row.
+local SLOT_GRID_BACK_LIMIT_Z = math.min(
+	BaseConfig.BASE_PLOT_CENTER_Z + BaseConfig.BASE_MAT_SIZE.Z / 2,
+	BaseConfig.BASE_BACK_EDGE_Z - BaseConfig.BASE_BACK_EDGE_SIZE.Z / 2
+)
+local SLOT_GRID_MAX_ROWS = 1
+	+ math.floor(
+		(SLOT_GRID_BACK_LIMIT_Z - BaseConfig.BASE_SLOT_Z_START - BaseConfig.BASE_SLOT_PAD_SIZE.Z / 2)
+			/ BaseConfig.BASE_SLOT_ROW_SPACING_STUDS
+	)
+local SLOT_GRID_MAX_SLOTS = SLOT_GRID_MAX_ROWS * BaseConfig.BASE_GRID_COLUMNS
+assert(
+	BaseConfig.SLOT_COUNT <= SLOT_GRID_MAX_SLOTS,
+	string.format(
+		"BaseConfig.SLOT_COUNT is %d, but the plot holds at most %d (%d rows of %d): row %d's pads would reach Z %.1f against a back limit of %.1f (%s). Move BASE_SLOT_Z_START, BASE_SLOT_ROW_SPACING_STUDS, BASE_GRID_COLUMNS or the mat before raising it.",
+		BaseConfig.SLOT_COUNT,
+		SLOT_GRID_MAX_SLOTS,
+		SLOT_GRID_MAX_ROWS,
+		BaseConfig.BASE_GRID_COLUMNS,
+		SLOT_GRID_MAX_ROWS,
+		BaseConfig.BASE_SLOT_Z_START + SLOT_GRID_MAX_ROWS * BaseConfig.BASE_SLOT_ROW_SPACING_STUDS + BaseConfig.BASE_SLOT_PAD_SIZE.Z / 2,
+		SLOT_GRID_BACK_LIMIT_Z,
+		if BaseConfig.BASE_BACK_EDGE_Z - BaseConfig.BASE_BACK_EDGE_SIZE.Z / 2 <= BaseConfig.BASE_PLOT_CENTER_Z + BaseConfig.BASE_MAT_SIZE.Z / 2
+			then "the back edge part"
+			else "the mat's far edge"
+	)
+)
+
+-- ===== Slot grid: a real 2-column grid (see BaseConfig.BASE_GRID_COLUMNS) --
+-- X = baseX +-15 (half of BASE_SLOT_COLUMN_SPACING_STUDS), Z =
+-- BASE_SLOT_Z_START + row*BASE_SLOT_ROW_SPACING_STUDS (117, 131, 145, 159,
+-- 173 at the current ten slots). The world position of slot i (1-indexed)
+-- within the given lane's base -- Y already includes BASE_SLOT_PAD_Y_OFFSET,
+-- same "the returned position IS the part's center, offset baked in" shape as
 -- matPosition/centralPathPosition/etc below, so this lands the pad flush on
 -- top of the mat rather than centered at bare groundY (which would bury it
 -- half inside the mat). =====
