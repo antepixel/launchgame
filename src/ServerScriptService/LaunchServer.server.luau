@@ -37,6 +37,10 @@ local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
 -- Server-only siblings (see each module's own header for why these live in
 -- ServerScriptService, not ReplicatedStorage, specifically).
 local ChestBuilder = require(ReplicatedStorage.ChestBuilder)
+-- TODO: REMOVE BEFORE LAUNCH -- read ONLY by the dev ping probe further down
+-- (search "PingProbe"), which uses the same allowlist the dev panel does.
+-- This require and that block leave together.
+local DevConfig = require(ReplicatedStorage.Config.DevConfig)
 local SlimeRoll = require(ServerScriptService.SlimeRoll)
 local SwingBuilder = require(ServerScriptService.SwingBuilder)
 -- Per-player base + income + collection + persistence + swing tier (see
@@ -1039,6 +1043,15 @@ local activeCharacters: { [Player]: Model } = {}
 -- Player to begin with.
 local riderReadyFlags: { [Player]: boolean } = {}
 
+-- TODO: REMOVE BEFORE LAUNCH -- the dev ping probe's per-player state, kept
+-- here with the other per-player tables (and cleared alongside them in
+-- clearActiveRider) rather than beside the probe's own functions further
+-- down, because clearActiveRider runs above that point in this file. See the
+-- "PingProbe" block near mountPlayer for what it measures and why.
+local DEV_PING_PROBE_SAMPLES = 20
+local devPingProbeSentAt: { [Player]: number } = {}
+local devPingProbeSamples: { [Player]: { pingSeconds: number, roundTripSeconds: number } } = {}
+
 -- One flight's fixed, precomputed description -- set once at that player's
 -- release, read every Heartbeat until its own duration elapses. Nothing
 -- here ever changes mid-flight.
@@ -1159,6 +1172,10 @@ local function clearActiveRider(player: Player)
 	activeFlights[player] = nil
 	activeBoxes[player] = nil
 	riderReadyFlags[player] = nil
+	-- TODO: REMOVE BEFORE LAUNCH -- the dev ping probe's own per-player state,
+	-- cleared on the same path as every other per-player table so a
+	-- disconnect mid-handshake cannot leave a stale timestamp behind.
+	devPingProbeSentAt[player] = nil
 	-- Replicated occupant state (see the written report -- frozen remote
 	-- players): a rider who dies or disconnects mid-ride/mid-flight must not
 	-- leave their pivot stuck reporting "riding"/"flying" forever -- every
@@ -1691,6 +1708,92 @@ local function setupCharacter(player: Player, character: Model)
 	end
 end
 
+-- ============================================================
+-- TODO: REMOVE BEFORE LAUNCH -- dev-only measurement, same marker and same
+-- allowlist as the dev panel (see DevPanelServer.server.luau and
+-- DevConfig.luau); it should be deleted in the same sweep they are.
+-- ============================================================
+--
+-- WHAT IT ANSWERS. releasePingCompensationSeconds rewinds the graded release
+-- phase by clamp(Player:GetNetworkPing(), 0, RELEASE_PING_COMPENSATION_MAX_
+-- SECONDS), and its comment treats that value as ONE-WAY ("one network hop
+-- later"). Roblox does not document which it is. If it is actually ROUND-TRIP
+-- the rewind is twice the intended size, and at the top tier -- whose whole
+-- snap window is 0.072s -- a 60ms player would be over-compensated by 30ms,
+-- biased the wrong way by nearly half the window. This logs the two numbers
+-- side by side so a human can read the ratio off a published server:
+--   ratio ~= 1.0  ->  GetNetworkPing already reports ROUND-TRIP time
+--   ratio ~= 2.0  ->  it reports ONE-WAY, and the current comment is right
+--
+-- IT ADDS NO REMOTE. It times the RidingAssigned -> RiderReady handshake that
+-- every mount already performs (see mountPlayer below and the watchdog that
+-- already depends on that ack), rather than introducing a RemoteFunction and
+-- an InvokeClient -- which would be a new production remote AND would park a
+-- server thread on a client's willingness to answer. The cost of reusing the
+-- handshake is that the interval includes the client's own handling of
+-- RidingAssigned (setMounted/setGrounded, a few UI property writes) before it
+-- acks, so the measurement is an UPPER BOUND on round-trip time. That is
+-- immaterial to the question being asked: a few milliseconds of UI work does
+-- not move a ratio that is either ~1 or ~2.
+--
+-- IT CANNOT BE MEASURED IN STUDIO, which is why this is NOT wrapped in the
+-- RunService:IsStudio() gate the dev panel uses -- see REPORT.md, where that
+-- deviation is argued rather than assumed. A Studio test client has ~0 ping
+-- and the ratio is 0/0. The allowlist (DevConfig.ALLOWLISTED_USER_IDS, the
+-- same list DevPanelServer checks) is the gate here, and it gates only
+-- WRITING TO THE LOG: nothing about the handshake, the mount, the watchdog or
+-- any grading changes, for anyone, ever. A client can make its own ack look
+-- slower and thereby corrupt its own log line; there is nothing else to win.
+local function devPingProbeEnabled(player: Player): boolean
+	return table.find(DevConfig.ALLOWLISTED_USER_IDS, player.UserId) ~= nil
+end
+
+local function devPingProbeMarkSent(player: Player)
+	if devPingProbeEnabled(player) then
+		devPingProbeSentAt[player] = os.clock()
+	end
+end
+
+local function devPingProbeMarkAcked(player: Player)
+	local sentAt = devPingProbeSentAt[player]
+	if not sentAt then
+		return
+	end
+	devPingProbeSentAt[player] = nil
+	local roundTrip = os.clock() - sentAt
+	local ping = player:GetNetworkPing()
+	if typeof(ping) ~= "number" or ping ~= ping then
+		return
+	end
+
+	local samples = devPingProbeSamples[player]
+	if not samples then
+		samples = {}
+		devPingProbeSamples[player] = samples
+	end
+	table.insert(samples, { pingSeconds = ping, roundTripSeconds = roundTrip })
+
+	local pingTotal, tripTotal = 0, 0
+	for _, sample in samples do
+		pingTotal += sample.pingSeconds
+		tripTotal += sample.roundTripSeconds
+	end
+	local meanPing = pingTotal / #samples
+	local meanTrip = tripTotal / #samples
+	-- TWENTY SAMPLES. Ping jitters by tens of milliseconds against a signal of
+	-- 60-150ms, and the mean's standard error falls as 1/sqrt(n), so 20 cuts
+	-- it by ~4.5x -- ample for a question whose two answers are a FACTOR OF
+	-- TWO apart. It also costs nothing: a sample is taken per mount, so 20
+	-- arrives inside a few minutes of ordinary play with no special procedure.
+	print(string.format(
+		"[PingProbe] %s sample %d/%d: round trip %.1fms, GetNetworkPing %.1fms | means: trip %.1fms, ping %.1fms, RATIO %.3f%s",
+		player.Name, #samples, DEV_PING_PROBE_SAMPLES, roundTrip * 1000, ping * 1000,
+		meanTrip * 1000, meanPing * 1000,
+		if meanPing > 0 then meanTrip / meanPing else 0,
+		if #samples >= DEV_PING_PROBE_SAMPLES then "  <-- STABLE, read the ratio here" else ""
+	))
+end
+
 -- Seats a GROUNDED player onto THEIR OWN swing -- see the written report.
 -- This is the entire mount interaction: no button, no ProximityPrompt, no
 -- keypress. Called ONLY from the proximity check in the Heartbeat loop
@@ -1729,6 +1832,7 @@ local function mountPlayer(player: Player, character: Model, humanoid: Humanoid,
 	character:PivotTo(CFrame.lookAt(seatPosition, seatPosition + Vector3.new(0, 0, -1)))
 
 	ridingAssignedRemote:FireClient(player)
+	devPingProbeMarkSent(player)
 
 	-- BUG FIX (see the written report): the anchor above assumes THIS
 	-- player's LaunchClient is alive and already listening for
@@ -1767,6 +1871,7 @@ end
 
 riderReadyRemote.OnServerEvent:Connect(function(player: Player)
 	riderReadyFlags[player] = true
+	devPingProbeMarkAcked(player)
 end)
 
 Players.PlayerAdded:Connect(function(player)
