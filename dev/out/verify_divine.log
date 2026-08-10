@@ -18,7 +18,7 @@
     totalUpgradeCost(854000, 1, 25) = 14155140280.3306 ($14.2B), 24 levels, 16575.105715 seconds of base income
 
 0f. dev/analysis/common.luau clamp assumption
-    clampLuck hardcoded to SLIME_LUCK_ANCHOR_HIGH: YES (stale)
+    clampLuck hardcoded to SLIME_LUCK_ANCHOR_HIGH: no (derived)
     true clamp luck at T_MAX 1.35 = 1089047.3
 
 ================ STEP 1: backward compatibility ================

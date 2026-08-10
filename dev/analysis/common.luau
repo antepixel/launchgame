@@ -116,23 +116,71 @@ function M.sampleBoxDoublings(): number
 	return d
 end
 
+-- The within-tier split, matching SlimeRoll.pickSlimeInTier exactly: shares are
+-- ratio^-(i-1) over the tier's own list, normalised, from
+-- SlimeConfig.SLIME_TIER_WEIGHT_RATIO. A ratio of 1.0 returns nil rather than a
+-- table of 1/n, so the callers below can keep their original
+-- `mass / #pool` arithmetic for uniform tiers -- same expression, same
+-- rounding, bit-identical results to before this table existed.
+local shareCache: { [number]: { number }? } = {}
+local shareCacheFilled: { [number]: boolean } = {}
+local function withinTierShares(tier: number): { number }?
+	if shareCacheFilled[tier] then
+		return shareCache[tier]
+	end
+	shareCacheFilled[tier] = true
+	local ratios = (M.SlimeConfig :: any).SLIME_TIER_WEIGHT_RATIO
+	local ratio = if ratios then ratios[tier] else 1.0
+	if typeof(ratio) ~= "number" or ratio == 1 then
+		shareCache[tier] = nil
+		return nil
+	end
+	local pool = M.SlimeData.SLIMES_BY_TIER[tier]
+	local weights, total = table.create(#pool, 0), 0
+	for i = 1, #pool do
+		weights[i] = ratio ^ -(i - 1)
+		total += weights[i]
+	end
+	for i = 1, #pool do
+		weights[i] /= total
+	end
+	shareCache[tier] = weights
+	return weights
+end
+M.withinTierShares = withinTierShares
+
 -- Exact per-slime probability mass for one roll at a given pre-box band luck,
 -- integrating the box's doubling chain analytically. Every distribution comes
 -- from the real SlimeRoll.distributionForLuck; the only thing done here is
--- weighting them by P(D = d) and splitting each tier's mass uniformly over its
--- slimes (SlimeRoll.rollSlime:133 -- math.random(1, #pool)).
+-- weighting them by P(D = d) and splitting each tier's mass the same way
+-- SlimeRoll.pickSlimeInTier does.
 --
--- The tail is EXACT, not truncated: past the luck at which t clamps at
--- SLIME_EXTRAPOLATION_T_MAX every further doubling produces a bit-identical
--- distribution, so all remaining mass P(D >= dClamp) is assigned to it in one
--- term.
+-- TWO ASSUMPTIONS WERE FIXED HERE, both of which were correct when written and
+-- silently stopped being so (see REPORT.md):
+--
+--   1. THE CLAMP IS DERIVED, NOT ASSUMED. This used to read
+--      `clampLuck = SLIME_LUCK_ANCHOR_HIGH`, which is where t clamps only while
+--      SLIME_EXTRAPOLATION_T_MAX is exactly 1.0. It is 1.35 now, so the real
+--      clamp is LOW * (HIGH/LOW)^T_MAX = 1,089,047 and the old expression
+--      collapsed the doubling tail 9x too early -- understating box value by
+--      0.3% at tier 1 rising to 1.9% at tier 9.
+--   2. THE WITHIN-TIER SPLIT IS NO LONGER ASSUMED UNIFORM. It used to divide a
+--      tier's mass by #pool unconditionally, which stopped matching the game
+--      when SLIME_TIER_WEIGHT_RATIO gave Divine a 1.40 ratio. Uniform tiers
+--      still take the identical `mass / #pool` expression.
+--
+-- The tail is EXACT, not truncated: past the clamp every further doubling
+-- produces a bit-identical distribution, so all remaining mass P(D >= dClamp)
+-- is assigned to it in one term.
 function M.rollPmfForBandLuck(bandLuck: number): { number }
 	local slimes = M.SlimeData.SLIMES
 	local pmf = table.create(#slimes, 0)
 	if bandLuck <= 0 then
 		return pmf
 	end
-	local clampLuck = M.SlimeConfig.SLIME_LUCK_ANCHOR_HIGH
+	local clampLuck = M.SlimeConfig.SLIME_LUCK_ANCHOR_LOW
+		* (M.SlimeConfig.SLIME_LUCK_ANCHOR_HIGH / M.SlimeConfig.SLIME_LUCK_ANCHOR_LOW)
+			^ M.SlimeConfig.SLIME_EXTRAPOLATION_T_MAX
 	local remaining = 1.0
 	local d = 0
 	while true do
@@ -147,9 +195,16 @@ function M.rollPmfForBandLuck(bandLuck: number): { number }
 		for tier, tierMass in tierWeights do
 			if tierMass > 0 then
 				local pool = M.SlimeData.SLIMES_BY_TIER[tier]
-				local share = weight * tierMass / #pool
-				for _, slime in pool do
-					pmf[slime.globalIndex] += share
+				local shares = withinTierShares(tier)
+				if shares then
+					for i, slime in pool do
+						pmf[slime.globalIndex] += weight * tierMass * shares[i]
+					end
+				else
+					local share = weight * tierMass / #pool
+					for _, slime in pool do
+						pmf[slime.globalIndex] += share
+					end
 				end
 			end
 		end
@@ -162,11 +217,14 @@ function M.rollPmfForBandLuck(bandLuck: number): { number }
 	return pmf
 end
 
--- The chest's table (tier 11's perfect launch clears the road entirely and
+-- The chest's table (the top tier's perfect launch clears the road entirely and
 -- lands on the chest platform -- see perfectLaunchForTier). Mirrors
--- LaunchServer.server.luau:1416 rollChestSlime exactly: a flat
+-- LaunchServer.server.luau's rollChestSlime exactly: a flat
 -- CHEST_DIVINE_CHANCE for Divine off the top, the rest spread over tiers
--- 1..n-1 geometrically at CHEST_TIER_WEIGHT_RATIO, then uniform within tier.
+-- 1..n-1 geometrically at CHEST_TIER_WEIGHT_RATIO, then split within the tier
+-- by SlimeRoll.pickSlimeInTier -- which the chest now calls too, so the same
+-- SLIME_TIER_WEIGHT_RATIO applies here. Uniform tiers keep the identical
+-- `tierMass / #pool` expression they always had.
 function M.chestPmf(): { number }
 	local slimes = M.SlimeData.SLIMES
 	local pmf = table.create(#slimes, 0)
@@ -184,8 +242,15 @@ function M.chestPmf(): { number }
 			tierMass = (1 - M.TreasureConfig.CHEST_DIVINE_CHANCE) * weights[tier] / total
 		end
 		local pool = M.SlimeData.SLIMES_BY_TIER[tier]
-		for _, slime in pool do
-			pmf[slime.globalIndex] += tierMass / #pool
+		local shares = withinTierShares(tier)
+		if shares then
+			for i, slime in pool do
+				pmf[slime.globalIndex] += tierMass * shares[i]
+			end
+		else
+			for _, slime in pool do
+				pmf[slime.globalIndex] += tierMass / #pool
+			end
 		end
 	end
 	return pmf
