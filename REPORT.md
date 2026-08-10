@@ -200,9 +200,10 @@ the clamp derived from `T_MAX`, sharing nothing with `verify_anchor.luau`, `clam
 within-tier split is applied to a tier mass the roll already fixed, so it cannot move it. P(Divine)
 at tier 9 is 4.5562% before and after; P(Divine) from a chest is 0.20 before and after.
 
-**3d**: $8.872K -> $9.416K is 1.061x, and the Divine tier's own mean income rose 1.34x
-(uniform mean $145,625 -> weighted mean $195,485). The band-68 figure moves less because Divine is
-only 4.6% of that band's mass.
+**3d**: $8.872K -> $9.416K is 1.061x, and the Divine tier's own mean income rose 1.086x
+(old uniform mean $145,625 -> new weighted mean $158,158 -- which is exactly the sum of §3g's
+conditional-contribution column). The band-68 figure moves less because Divine is only 4.340% of
+that band's PRE-BOX mass: 0.04340 x $12,533 = $544, and $8,872 + $544 = $9,416.
 
 ## 3e. Per tier
 
