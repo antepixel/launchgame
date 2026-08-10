@@ -1413,6 +1413,15 @@ end
 -- SERVER-SIDE AND SERVER-ONLY. The client's entire contribution to this is a
 -- ProximityPrompt.Triggered signal, which carries nothing but the player --
 -- no odds, no outcome, no luck. Same shape as onBoxPress.
+--
+-- THE TIER IS THIS TABLE'S BUSINESS; WHICH SLIME WITHIN IT IS NOT. The final
+-- pick goes through SlimeRoll.pickSlimeInTier, the same function the mystery
+-- box uses, so SlimeConfig.SLIME_TIER_WEIGHT_RATIO applies identically on both
+-- reward paths -- a Divine out of a chest is exactly as likely to be the top
+-- Divine as one out of a box. It used to be a flat math.random(1, #pool) here,
+-- which was the same thing only while every ratio was 1.0. Nothing about the
+-- TIER odds changed: CHEST_DIVINE_CHANCE and CHEST_TIER_WEIGHT_RATIO are
+-- untouched and still decide, alone, how often a chest pays Divine at all.
 local function rollChestSlime(): SlimeData.Slime
 	local tierCount = #SlimeConfig.SLIME_TIER_NAMES
 	local roll = math.random()
@@ -1440,8 +1449,7 @@ local function rollChestSlime(): SlimeData.Slime
 			end
 		end
 	end
-	local pool = SlimeData.SLIMES_BY_TIER[tier]
-	return pool[math.random(1, #pool)]
+	return SlimeRoll.pickSlimeInTier(tier)
 end
 
 -- Fired by a GROUNDED player's own click-anywhere/tap listener once the

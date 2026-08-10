@@ -11,6 +11,7 @@ export type SlimeConfig = {
 	SLIME_TIER_COLORS: { Color3 },
 	SLIME_COLOR_BY_TIER: { { Color3 } },
 	SLIME_INCOME_BY_TIER: { { number } },
+	SLIME_TIER_WEIGHT_RATIO: { number },
 	SLIME_LUCK_ANCHOR_LOW: number,
 	SLIME_LUCK_ANCHOR_HIGH: number,
 	SLIME_WINDOW_WIDTH: number,
@@ -168,8 +169,47 @@ local SlimeConfig: SlimeConfig = {
 		-- SLIME_TIER_COUNTS' own comment), so its income spread is the
 		-- widest of any tier too (3000..20000, not a clean arithmetic step).
 		{ 3000, 3500, 4000, 4500, 5000, 5500, 6000, 6500, 7000, 8000, 9000, 10000, 11000, 12500, 14000, 15500, 16500, 17500, 18500, 19250, 20000 },
-		{ 50000, 65000, 80000, 100000, 130000, 170000, 220000, 350000 }, -- Divine
+		-- Divine: a 1.50x geometric ladder from 50,000, rounded to 3 significant
+		-- figures -- see the block above this table for why it was steepened from
+		-- the old 1.32x (50,000..350,000, a 7x spread) to 17x, and why that lands
+		-- as a jackpot rather than as inflation only because
+		-- SLIME_TIER_WEIGHT_RATIO makes the top of it rare.
+		{ 50000, 75000, 113000, 169000, 253000, 380000, 570000, 854000 }, -- Divine
 	},
+
+	-- ===== HOW MASS SPLITS *WITHIN* ONE TIER. One entry per tier, same
+	-- 1-8 indexing as every other array above.
+	--
+	-- Slime i of a tier of n (1-indexed, ASCENDING income -- the same order
+	-- SLIME_INCOME_BY_TIER is written in) gets weight `ratio ^ -(i - 1)`,
+	-- normalised across that tier. So a ratio of 1.0 is exactly uniform (every
+	-- slime equally likely, which is what the game did everywhere before this
+	-- table existed) and a ratio above 1.0 makes each step up the tier's own
+	-- income ladder that much rarer than the step below it.
+	--
+	-- THIS REDISTRIBUTES WITHIN A TIER AND NEVER BETWEEN TIERS. The tier's
+	-- total mass is whatever SlimeRoll's window/Gaussian gave it, untouched --
+	-- P(Divine) is identical before and after, and only the split inside
+	-- Divine moves. Verified to 1e-12 (see REPORT.md); a change here can make
+	-- the best slime in a tier rarer, never the tier itself.
+	--
+	-- READ IN TWO PLACES, both through SlimeRoll.pickSlimeInTier: the mystery
+	-- box's roll (SlimeRoll.rollSlime) and the treasure chest's own roll
+	-- (LaunchServer's rollChestSlime). The chest picks its TIER from its own
+	-- table -- CHEST_DIVINE_CHANCE and CHEST_TIER_WEIGHT_RATIO, untouched by
+	-- this -- and then splits within that tier by the same rule, so a Divine
+	-- from a chest and a Divine from a box are the same lottery.
+	--
+	-- WHY ONLY DIVINE IS NON-UNIFORM. Divine is the one tier whose members
+	-- differ by more than an order of magnitude ($50K to $854K, 17x), so a
+	-- flat pick inside it makes the top Divine as common as the bottom one and
+	-- the tier's expected value sits well above what "a Divine" feels like.
+	-- 1.40 pulls the top entry to ~3% of the tier's own mass (from a flat
+	-- 12.5%) while leaving P(Divine) alone, which is what makes the steepened
+	-- income ladder land as a rare jackpot rather than as inflation. Every
+	-- other tier's members are within ~2x of each other, where a flat pick is
+	-- the honest model and this table is a no-op.
+	SLIME_TIER_WEIGHT_RATIO = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.40 },
 
 	-- ===== The roll: luck slides a WINDOW of tiers, and reshapes the
 	-- weighting within it -- see SlimeRoll.luau for the full model and why.

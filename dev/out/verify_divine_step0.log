@@ -1,0 +1,79 @@
+================ STEP 0 ================
+0a. within-tier split today
+    SlimeRoll.rollSlime:130-135 -- `local index = math.random(1, #pool)`, a flat
+    pick over the tier's own list, so every slime in a tier is equally likely.
+    tier sizes: Common=6 Uncommon=6 Rare=6 Epic=6 Legendary=6 Mythic=6 Secret=21 Divine=8
+
+0c. MoneyFormat at the new magnitudes
+    854297           -> $854.3K
+    245000000        -> $245M
+    14160000000      -> $14.2B
+    9007199254740992 -> $9Qa
+    1000000000000000000 -> $1Qi
+    1000000000000000000000 -> $1000Qi
+    exact-integer limit of float64: 2^53 = 9007199254740992
+
+0e. upgrade cost at the new top Divine
+    totalUpgradeCost(854297, 1, 25) = 14160063086.7279 ($14.2B), 24 levels, 16575.105715 seconds of base income
+    totalUpgradeCost(350000, 1, 25) = 5801287000.1355 ($5.8B), 24 levels, 16575.105715 seconds of base income
+
+0f. dev/analysis/common.luau clamp assumption
+    clampLuck hardcoded to SLIME_LUCK_ANCHOR_HIGH: YES (stale)
+    true clamp luck at T_MAX 1.35 = 1089047.3
+
+================ STEP 1: backward compatibility ================
+Uniform shares vs the ratio mechanism with every configured ratio -- the full
+65-slime PMF at all ten tier lucks and at the chest table, compared bitwise.
+  PASS PMF identical to the uniform rule (all ratios 1.0) expected exactly 0 (bitwise)            actual 0.000e+00
+
+================ STEP 3: verification ================
+
+3a. STOP CONDITION -- P(Divine) per tier unchanged by the within-tier split
+  PASS P(Divine) from the split vs the tier weight  expected identical to 1e-12             actual worst 6.939e-18 (road) at luck 75000, 2.776e-17 (chest)
+
+3b. STOP CONDITION -- monotonicity, road and extrapolated range
+  PASS worst decreasing step (74 bands / extrapolated) expected exactly 0 and 0                actual 0.0000e+00 / 0.0000e+00
+
+3c. STOP CONDITION -- every distribution well-formed
+  PASS worst |sum - 1| over 79 probes + chest       expected <= 1e-9, no NaN, no negative mass actual 1.110e-15 at luck 90000, NaN no, negative no
+
+3d. STOP CONDITION -- band 68 pre-box income tracks the Divine change
+     band 68 (luck 75000) pre-box E[base]/roll = $8.872K
+  PASS band 68 pre-box E[base]/roll                 expected $8.0K..$14.0K (was $8.872K)    actual $8.872K
+
+---- all four stop conditions passed ----
+
+3e. per tier
+tier  luck     P(Divine)  P(Divine 8)  P(Secret+)  E no box    E with box   vs pre-change
+   1  25          0.0036%      0.0004%     0.0314%  $25.47      $39.24       1.0000x
+   2  65          0.0115%      0.0014%     0.0762%  $25.71      $62.8        1.0000x
+   3  150         0.0210%      0.0026%     0.1392%  $25.93      $98.5        1.0000x
+   4  550         0.0691%      0.0086%     0.4590%  $66.39      $248.5       1.0000x
+   5  950         0.1246%      0.0156%     0.8309%  $66.86      $395.5       1.0000x
+   6  4500        0.4160%      0.0520%     2.7609%  $190.7      $1.16K       1.0000x
+   7  8500        0.7539%      0.0942%     5.0112%  $192.6      $1.949K      1.0000x
+   8  35000       2.4963%      0.3120%    13.3359%  $896.5      $5.445K      1.0000x
+   9  75000       4.5562%      0.5695%    20.8819%  $8.872K     $9.192K      1.0000x
+  10  chest      20.0000%      2.5000%    60.3150%  --          $33.57K      chest table
+
+3f. the top Divine at tier 9
+     P(Divine 8) = 0.569523%  =  one in 176 rolls  =  0.5 hours at 10.1s per roll
+
+3g. the Divine PMF at tier 9, with the box
+  slime      income/s     probability    share of the Divine mass   contribution to E[income]
+  Divine 1   $50K         0.569523%      12.5000%                  $284.8
+  Divine 2   $65K         0.569523%      12.5000%                  $370.2
+  Divine 3   $80K         0.569523%      12.5000%                  $455.6
+  Divine 4   $100K        0.569523%      12.5000%                  $569.5
+  Divine 5   $130K        0.569523%      12.5000%                  $740.4
+  Divine 6   $170K        0.569523%      12.5000%                  $968.2
+  Divine 7   $220K        0.569523%      12.5000%                  $1.253K
+  Divine 8   $350K        0.569523%      12.5000%                  $1.993K
+  spread of contributions: $284.8 to $1.993K (7.00x)
+
+3h/3i. the ceiling and what it costs
+     top Divine base income          $350K/s
+     ceiling: 10 slots x top x 28.6252  $100.2M/s
+     saturated slot price (x600)     $6.011B
+     cost to max ONE top Divine      $5.801B
+     cost to max a ceiling base      $58.01B

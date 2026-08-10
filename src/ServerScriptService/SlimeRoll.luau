@@ -123,15 +123,55 @@ local function rollTier(luck: number): number
 	return #weights -- floating-point safety net only; cumulative reaches 1 by construction
 end
 
--- ===== THE FULL ROLL: tier (weighted, luck-shaped) then slime (flat within
--- the tier) -- see the module doc above for the tier step; "within a tier
--- every slime is equally likely" is just a uniform pick over that tier's
--- list. =====
-function SlimeRoll.rollSlime(luck: number): SlimeData.Slime
-	local tier = rollTier(luck)
+-- ===== THE SECOND STEP OF A ROLL: which slime, once a tier is chosen.
+-- Was unconditionally flat -- math.random(1, #pool) -- and still is for every
+-- tier whose SlimeConfig.SLIME_TIER_WEIGHT_RATIO entry is 1.0, which is all of
+-- them except Divine. See that constant for the semantics and the reasoning.
+--
+-- weight_i = ratio ^ -(i - 1) over the tier's own list in ASCENDING income
+-- order, normalised. This never touches the tier's total mass -- it is handed
+-- a tier that has already been chosen and only decides which member of it
+-- comes out -- so P(any tier) is untouched by anything here, by construction.
+--
+-- THE ratio == 1 BRANCH IS NOT AN OPTIMISATION, it is a compatibility
+-- guarantee. It keeps the exact math.random(1, #pool) call the flat pick
+-- always used, so a uniform tier consumes the same one draw from the same RNG
+-- stream and produces the same slime it would have before this function
+-- existed -- identical behaviour, not merely an identical distribution. The
+-- weighted branch below costs one math.random() and a walk over at most 21
+-- entries, and only Divine (8) ever takes it.
+--
+-- SHARED WITH THE CHEST. LaunchServer's rollChestSlime picks its TIER from its
+-- own table (TreasureConfig.CHEST_DIVINE_CHANCE / CHEST_TIER_WEIGHT_RATIO,
+-- neither of which this touches) and then calls THIS to pick within it, so the
+-- two reward paths cannot disagree about how rare the best Divine is.
+function SlimeRoll.pickSlimeInTier(tier: number): SlimeData.Slime
 	local pool = SlimeData.SLIMES_BY_TIER[tier]
-	local index = math.random(1, #pool)
-	return pool[index]
+	local ratio = SlimeConfig.SLIME_TIER_WEIGHT_RATIO[tier]
+	if typeof(ratio) ~= "number" or ratio == 1 then
+		return pool[math.random(1, #pool)]
+	end
+
+	local total = 0
+	for i = 1, #pool do
+		total += ratio ^ -(i - 1)
+	end
+	local roll = math.random() * total
+	local cumulative = 0
+	for i = 1, #pool do
+		cumulative += ratio ^ -(i - 1)
+		if roll <= cumulative then
+			return pool[i]
+		end
+	end
+	return pool[#pool] -- floating-point safety net only; cumulative reaches total by construction
+end
+
+-- ===== THE FULL ROLL: tier (weighted, luck-shaped) then slime (see
+-- pickSlimeInTier just above) -- see the module doc at the top for the tier
+-- step. =====
+function SlimeRoll.rollSlime(luck: number): SlimeData.Slime
+	return SlimeRoll.pickSlimeInTier(rollTier(luck))
 end
 
 return SlimeRoll
