@@ -1,381 +1,371 @@
-# A steeper Divine ladder, with a rarer top
+# Five small items
 
-**Branch `ladder-renumber`. Started from `fcb914c502e6a63a50aee737959a92dc741bda95`** with a clean
-tree — nothing needed committing first.
+**Branch `ladder-renumber`. Started from `2ef9fc1967659d1e4a1775a95c060398fc51244e`** (the tip of the
+Divine-ladder pass) with a clean tree — nothing needed committing first.
 
-| commit | what |
-|---|---|
-| `fcb914c` | starting point (the anchor revert and its report) |
-| `54f2e88` | steps 1-2: the within-tier weighting mechanism, Divine's 1.40 ratio, the 1.50x income ladder |
-| `b0baa4e` | step 4: two stale assumptions fixed in `common.luau`, v2 baselines regenerated |
+Five commits, one per item, in the order the brief set:
 
-**Every prediction in the brief is confirmed.** Tier 9's expected income per roll moves
-$9,192 -> **$9,763** (1.062x, predicted ~$9,757); the ceiling moves $100M/s -> **$244.5M/s**
-(predicted ~$245M); P(Divine) is **unchanged to 0.0**; P(Divine 8) at tier 9 falls
-0.570% -> **0.132%** (predicted ~0.133%). Nothing contradicted.
+| # | commit | item |
+|---|---|---|
+| 1 | `f7ccc38` | the wrong Divine weighted-mean figure in `REPORT.md` |
+| 2 | `06bafed` | assert on `SLIME_TIER_WEIGHT_RATIO` |
+| 3 | `ce8df5f` | assert on `SLOT_COUNT` |
+| 4 | `22595c3` | `FLIGHT_DURATION_EXPONENT` 0.5 -> 0.35 |
+| 5 | `eeacd4a` | the `GetNetworkPing` probe (dev-only, not run in this pass) |
+
+Any one reverts alone with `git revert <hash>`. Nothing here touched the roll distribution, the
+ladder, or any price; no JSON in `dev/out/` was regenerated.
+
+**One item deviates from its brief and the deviation is argued, not slipped in: item 5 is NOT behind
+the `IsStudio()` gate**, because that gate is a hard early return and would make the probe
+unrunnable in the only environment where it can be measured. §5b has the reasoning and the one-line
+change to reverse it.
 
 ## Reproduce every number
 
 ```
-lune run dev/analysis/verify_divine.luau     # steps 0, 1 and 3, plus the step-4 clamp measurement
-lune run dev/analysis/roll_ev_v2.luau        # 2,000,000 rolls/tier, seed 20260810 (~2 min)
-lune run dev/analysis/slot_sim_v2.luau       # seed 20260811 (~80 s)
+lune run dev/analysis/flight_pacing.luau     # item 4: the before/after tables
+lune run dev/analysis/verify_divine.luau     # unchanged, re-run to confirm items 2-3 broke nothing
+lune run dev/run_gallery.luau                # loads BaseGeometry through the real builder (item 3)
 ```
 
-All from the repo root. `verify_divine.luau` is deterministic and was run three times: before any
-edit (`dev/out/verify_divine_step0.log`, which is where the step-0 answers and the
-backward-compatibility test come from), after the mechanism was added at uniform ratios, and after
-both edits (`dev/out/verify_divine.log`). Measured at **`54f2e88`** for gameplay figures;
-`roll_economics_v2.json` records that hash itself.
+All from the repo root, deterministic. Measured at **`eeacd4a`**.
 
 ---
 
-# Step 0 — read first
+# Item 1 — the wrong figure in the report
 
-## 0a. How mass is distributed within a tier today
+**Confirmed wrong, and the correct figure is $158,157.57.** Computed three independent ways before
+touching the prose:
 
-**Uniform, and it was uniform in both roll paths.**
+| check | result |
+|---|---|
+| `sum(income_i * share_i)` over the eight shipped incomes at the 1.40 ratio | **$158,157.5669** |
+| the sum of §3g's own "conditional contribution" column | **$158,157.5669** — identical |
+| consistency with band 68: pre-box P(Divine) x the mean shift, added to the old figure | 0.0434044 x $12,532.57 = **$543.97**; $8,872 + $544 = **$9,415.97** against the reported $9,416 |
+
+The old prose said $195,485 and a 1.34x rise. The rise over the old uniform mean ($145,625) is
+**1.086x**. Had $195,485 been right, band 68 would have come out at $11,036, not the $9,416 that was
+measured and reported — which is the check that settles it.
+
+**One extra number in the same sentence was also wrong and is corrected:** it said Divine is "only
+4.6% of that band's mass". 4.6% is the WITH-box P(Divine) at tier 9 (4.5562%); the pre-box figure
+the sentence needs is **4.340%**. Left alone it would have been an inconsistency inside the very
+sentence being fixed, so it moved too — the brief's own "measured: 4.340%" is what it now reads.
+
+Prose only. No code, no data, no JSON: everything downstream of the figure was already right.
+
+---
+
+# Item 2 — an assert on `SLIME_TIER_WEIGHT_RATIO`
+
+Two asserts in `SlimeData.luau`, beside the income and colour ones and in the same message format:
+
+- **Length**, outside the per-tier loop, because a per-tier check cannot see a table that is too
+  *long* — an entry at index 9 of an 8-tier ladder would never be read and never be noticed.
+- **Every entry a number >= 1.0**, inside the loop with the others. `>= 1.0` because the semantics
+  only run one way: the ratio makes each step *up* a tier's income ladder rarer
+  (`weight_i = ratio ^ -(i - 1)`), so a value below 1 silently inverts it and makes the best slime in
+  a tier the most common.
+
+**Confirmed to fire, by loading `SlimeData` against deliberately broken copies of the config rather
+than by reading the code:**
+
+| broken config | result |
+|---|---|
+| 7-entry array | `SlimeConfig.SLIME_TIER_WEIGHT_RATIO has 7 entries, expected 8 to match SLIME_TIER_NAMES` |
+| Divine set to 0.8 | `SlimeConfig.SLIME_TIER_WEIGHT_RATIO[8] (Divine) is 0.8, expected a number >= 1.0` |
+| Divine set to `"x"` | `SlimeConfig.SLIME_TIER_WEIGHT_RATIO[8] (Divine) is x, expected a number >= 1.0` |
+
+`SlimeConfig.luau` was restored byte-identical afterwards (`git diff --exit-code` clean).
+
+The runtime fallback in `pickSlimeInTier` is untouched, as instructed — the assert catches the
+config error at load, the fallback stays as defence in depth.
+
+**One thing beyond the letter of the item, because it sat two lines above the change:** the comment
+over `slimesByTier` still said *"every slime within a tier is equally likely"*, which stopped being
+true one pass ago. It now records that the list's ascending-income order is load-bearing for the
+weighting.
+
+---
+
+# Item 3 — an assert on `SLOT_COUNT`
+
+## 3a. The derivation, from the constants as they stand
+
+```
+row r's pads are centred at  BASE_SLOT_Z_START + r * BASE_SLOT_ROW_SPACING_STUDS
+their far edge is that       + BASE_SLOT_PAD_SIZE.Z / 2
+the plot's back boundary is  min(BASE_PLOT_CENTER_Z + BASE_MAT_SIZE.Z/2,
+                                 BASE_BACK_EDGE_Z  - BASE_BACK_EDGE_SIZE.Z/2)
+```
+
+| quantity | value |
+|---|---|
+| first row centre | 117.00 |
+| row pitch | 14.00 |
+| pad half-depth | 4.00 |
+| mat far edge | 192.00 |
+| back edge part, near face | **191.50** |
+| binding limit | **191.50 — the back edge part**, 0.5 studs tighter than the mat |
+
+`r <= (191.5 - 117 - 4) / 14 = 5.0357`, so `r_max = 5`, so **6 rows x 2 columns = 12 slots**.
+
+**The figure is 12, as the earlier pass found** — but the binding constraint is the back edge part
+rather than the mat itself, which the earlier pass recorded as "the mat's far edge at 192". Half a
+stud, no consequence for the answer, and the assert now names whichever of the two actually binds
+rather than asserting which one it will be.
+
+Row by row, to show where it breaks: rows 0-5 (slots 1-12) reach Z 121, 135, 149, 163, 177, 191 —
+all inside 191.5. Row 6 (slots 13-14) reaches **205, thirteen and a half studs past the boundary**,
+out over the grass with the edge part through it.
+
+## 3b. The assert
+
+In `BaseGeometry`, which is where the layout lives, re-deriving all of the above from the constants
+rather than hardcoding 12. Its message names the count, the maximum, the row layout, the offending
+row's actual reach, the limit, and which boundary binds:
+
+```
+BaseConfig.SLOT_COUNT is 13, but the plot holds at most 12 (6 rows of 2): row 6's pads
+would reach Z 205.0 against a back limit of 191.5 (the back edge part). Move
+BASE_SLOT_Z_START, BASE_SLOT_ROW_SPACING_STUDS, BASE_GRID_COLUMNS or the mat before
+raising it.
+```
+
+Confirmed by loading `BaseGeometry` against edited configs: **10 and 12 load; 13, 14 and 20 refuse.**
+
+## 3c. The derivation at the point of change
+
+Written onto `SLOT_COUNT` itself in `BaseConfig`, so someone raising it reads the ceiling there
+rather than discovering it at load. It also records what does *not* block a raise — the save is a
+positional array sized from the constant and tolerates a shorter one on load, and the pad name
+format (`Slot%02d`) is good to 99 — so the geometry is identified as the only real obstacle.
+
+`SLOT_COUNT`'s value is unchanged at 10.
+
+---
+
+# Item 4 — `FLIGHT_DURATION_EXPONENT` 0.5 -> 0.35
+
+**Shipped.** 4c and 4d both came back clean; the reasoning is below, and it was checked before the
+constant moved rather than after.
+
+The "old" columns recompute the same formula at the previous exponent, so both columns come out of
+the same code and can differ only by the exponent. Note these are the *current* ladder's distances,
+so tiers 2-9 differ from `cycle_economics.json`'s figures (which predate the renumber); tier 1 and
+the top tier match it exactly, their distances being unchanged.
+
+## 4a. Flight duration and speed
+
+| tier | distance | flight old | flight new | change | studs/s old | studs/s new |
+|---|---|---|---|---|---|---|
+| 1 | 200.00 | 1.8000 | **1.8000** | +0.00% | 111.1 | 111.1 |
+| 2 | 527.66 | 2.9237 | 2.5278 | -13.54% | 180.5 | 208.7 |
+| 3 | 846.64 | 3.7035 | 2.9827 | -19.46% | 228.6 | 283.9 |
+| 4 | 1165.48 | 4.3452 | 3.3357 | -23.23% | 268.2 | 349.4 |
+| 5 | 1484.10 | 4.9033 | 3.6301 | -25.97% | 302.7 | 408.8 |
+| 6 | 1802.56 | 5.4038 | 3.8857 | -28.09% | 333.6 | 463.9 |
+| 7 | 2120.78 | 5.8615 | 4.1133 | -29.83% | 361.8 | 515.6 |
+| 8 | 2438.72 | 6.2855 | 4.3194 | -31.28% | 388.0 | 564.6 |
+| 9 | 2756.36 | 6.6823 | 4.5085 | -32.53% | 412.5 | 611.4 |
+| 10 | 3071.04 | 7.0534 | **4.6823** | -33.62% | 435.4 | 655.9 |
+
+The top tier lands at **4.68 s**, matching the prediction. Tier 1 is unchanged to the last digit —
+its distance *is* `baseDistance`, so the ratio is 1 and no exponent can move it.
+
+## 4b. Cycle time and launches per minute, perfect play
+
+Phases held fixed from `cycle_economics.json` (bar 1.20 s, reward 2.00 s box / 3.35 s chest, return
+0.25 s); only the flight term moves. Those phases carry that pass's assumptions — perfect play hits
+the sweet spot on the first pass, and the walk speed is Roblox's default 16, which this repo never
+configures.
+
+| tier | cycle old | cycle new | change | launches/min old | new | gain |
+|---|---|---|---|---|---|---|
+| 1 | 5.25 | 5.25 | +0.00% | 11.43 | 11.43 | +0.00% |
+| 2 | 6.37 | 5.98 | -6.21% | 9.41 | 10.04 | +6.62% |
+| 3 | 7.15 | 6.43 | -10.08% | 8.39 | 9.33 | +11.20% |
+| 4 | 7.80 | 6.79 | -12.95% | 7.70 | 8.84 | +14.88% |
+| 5 | 8.35 | 7.08 | -15.24% | 7.18 | 8.47 | +17.98% |
+| 6 | 8.85 | 7.34 | -17.15% | 6.78 | 8.18 | +20.69% |
+| 7 | 9.31 | 7.56 | -18.77% | 6.44 | 7.93 | +23.11% |
+| 8 | 9.74 | 7.77 | -20.20% | 6.16 | 7.72 | +25.31% |
+| 9 | 10.13 | 7.96 | -21.45% | 5.92 | 7.54 | +27.31% |
+| 10 | 11.85 | **9.48** | -20.00% | 5.06 | **6.33** | +25.01% |
+
+The flight's share of the cycle at the top tier falls from **59.5% to 49.4%**; at tier 9, from 66.0%
+to 56.6%. Buying a tier still slows each roll — tier 10's cycle is 9.48 s against tier 1's 5.25 s —
+but by 1.81x rather than 2.26x.
+
+## 4c. Frame-rate dependence in landing — none, and it is structural
+
+**A faster flight cannot land a player on a different band than a slower one from the same release.**
+
+The landing is not integrated over frames. `onRelease` computes
+`trajectoryPosition(startPosition, distance, archHeight, 1)` **once, at release** — a closed form in
+which `u = 1` is a literal, with no time, no elapsed, and no frame term — and immediately resolves
+`bandLuckForLandingZ(landingPosition.Z)`, storing the luck and the zone on the flight record. So the
+band and the `short`/`road`/`past` branch are decided before the first frame of flight exists.
+
+The Heartbeat handler's only use of duration is `u = (now - flight.startTime) / flight.duration`
+compared against 1 — a decision about *when* to place the character, not *where*. When it fires, it
+places at that same precomputed `u = 1` point. Measured at both exponents, all ten tiers: landing Z
+identical to four decimals, band identical.
+
+The one thing that does change is the wall clock: a shorter flight ends sooner, and the placement
+still happens up to one Heartbeat (~16 ms at 60 fps) after `u` crosses 1, exactly as before. That
+timing slack is unchanged by the exponent and does not touch position. At the shortest flight in the
+game (tier 1, 1.8 s, unchanged) that is still ~108 frames, so there is no degenerate zero-frame case.
+
+## 4d. Everything that reads flight duration
+
+| reader | what it does | scales? |
+|---|---|---|
+| `LaunchServer` Heartbeat landing check | `u = (now - startTime) / flight.duration` against 1 | yes — reads the per-flight stored value, not the constant |
+| `pivot:SetAttribute("FlightDuration", duration)` -> `LaunchRemoteLanes:160-194` | renders OTHER players' flights from the attribute | yes — same `u` formula, and it already rejects `duration <= 0` |
+| `flightStartedRemote` -> `LaunchClient:978, :1318` | this client's own render loop | yes — `u = clamp((now - startTime) / flightDuration, 0, 1)` |
+| flight trail | `Trail.Lifetime` is `visual.trailLifetime`, a per-tier constant; destroyed at landing and on cancellation | no duration term — a shorter flight simply draws a shorter ribbon |
+| release/chase camera | `releaseCameraPullback` is a function of **distance**; framing is set once at release | no duration term |
+| death / disconnect cancellation | `clearActiveRider` drops the flight and destroys the trail | no duration term, no timeout keyed to it |
+
+**Nothing assumes a duration range.** The closest thing to an assumption is a comment on
+`OUTCOME_RAINBOW_CYCLES_PER_SECOND`, which reasons that the outcome word is on screen for "the
+flight plus RESET_DELAY -- a few seconds -- so 0.6 gives it two or three visible sweeps". At the top
+tier that goes from ~4.2 sweeps to ~2.8, and tier 1 is unchanged — still inside the "two or three"
+the comment is aiming at. Cosmetic, no change made.
+
+---
+
+# Item 5 — the `GetNetworkPing` probe
+
+Added, **not run** — it needs a published place and a human.
+
+## 5a. What it measures, and how many samples
+
+It times the **`RidingAssigned` -> `RiderReady` handshake** that every mount already performs, and
+logs the interval beside `Player:GetNetworkPing()` on the same connection, with the running mean of
+both and their ratio:
+
+```
+[PingProbe] Ante sample 7/20: round trip 121.4ms, GetNetworkPing 62.1ms | means: trip 118.9ms, ping 60.4ms, RATIO 1.969
+```
+
+**Twenty samples.** Ping jitters by tens of milliseconds against a 60-150 ms signal, and the mean's
+standard error falls as `1/sqrt(n)`, so 20 cuts it by ~4.5x — ample for a question whose two
+candidate answers are a *factor of two* apart. It costs nothing to collect: one sample per mount, so
+20 arrive within a few minutes of ordinary play with no special procedure.
+
+**Deviation from the brief's stated mechanism, and why.** §5a asks for a `RemoteFunction:InvokeClient`
+round trip; §5b asks for "no new remote if an existing one can carry it". Those pull opposite ways
+and I followed 5b, because the existing handshake carries it and `InvokeClient` costs two things
+worth avoiding: a new remote living in a published place, and a server thread parked on a client's
+willingness to answer (an unanswered `InvokeClient` yields indefinitely). The price of reusing the
+handshake is that the measured interval includes the client's own handling of `RidingAssigned`
+(`setMounted`/`setGrounded`, a few UI property writes) before it acks — so the figure is an **upper
+bound** on round-trip time. A few milliseconds of UI work cannot move a ratio that is either ~1 or
+~2, so it does not affect the answer; if a precise RTT is ever wanted for its own sake, that is when
+the dedicated remote earns its cost.
+
+## 5b. The gate — and the one place this pass departs from its brief
+
+**The probe is behind the allowlist (`DevConfig.ALLOWLISTED_USER_IDS`, the same list and the same
+`table.find` check `DevPanelServer` uses) and deliberately NOT behind `RunService:IsStudio()`.**
+
+The brief says "the same allowlist/IsStudio path DevPanelServer already uses". Reading that path
+first is what turned up the conflict: `DevPanelServer`'s Gate 1 is a **hard early return** —
 
 ```lua
--- SlimeRoll.luau:130-135 (pre-change)
-function SlimeRoll.rollSlime(luck: number): SlimeData.Slime
-	local tier = rollTier(luck)
-	local pool = SlimeData.SLIMES_BY_TIER[tier]
-	local index = math.random(1, #pool)     -- flat pick over that tier's list
-	return pool[index]
+if not RunService:IsStudio() then
+	return
 end
 ```
 
-`rollTier` returns a tier from the luck-shaped window; the second step was an unweighted
-`math.random(1, #pool)`. The chest did the same thing independently at
-`LaunchServer.server.luau:1444` (`pool[math.random(1, #pool)]`). Tier sizes are
-6/6/6/6/6/6/21/8, so a Divine roll was 12.5% likely to be each of the eight.
+— placed above everything else in the file, deliberately, so that in a published server the dev
+remotes are never created at all. `DevPanelClient` and `LaunchServer`'s dev bindable do the same.
+There is no allowlist-only path anywhere in the tree to reuse.
 
-## 0b. Every consumer of `SLIME_INCOME_BY_TIER`
+So the two halves of item 5 cannot both hold: behind `IsStudio()` the probe can only run in Studio,
+where the brief's own reasoning says the measurement is undefined (a local test client has ~0 ping,
+so the ratio is 0/0). Shipping it fully gated would mean shipping something that can never produce
+the number it exists to produce.
 
-The constant itself is read in exactly one place — `SlimeData.luau:47`, the generator that turns it
-into the 65 slime records' `incomePerSecond`. Everything else reads that field:
+What tips the decision is what the probe actually is. It creates **no remote**, changes **no
+behaviour** for anyone, and the allowlist gates only whether a `print` happens. The worst a
+non-allowlisted player can do is nothing; the worst an allowlisted one can do is delay their own ack
+and corrupt their own log line. That is a very different object from the dev panel's money-granting
+remote, and the `IsStudio()` gate exists for the latter.
 
-| consumer | what it does with it | affected by a Divine income change? |
-|---|---|---|
-| `SlimeData.luau:47-76` | builds the catalog; asserts the row length against `SLIME_TIER_COUNTS` | yes, and the assert still passes (8 entries) |
-| `PlayerProfile.luau:1182` | `totalIncomePerSecond` — sums placed slimes | yes, this is the point |
-| `PlayerProfile.luau:997` | sell value = income x 60 | yes: a top Divine now sells for $51.2M |
-| `PlayerProfile.luau:1057-1079` | upgrade cost, via `SlimeUpgrade.totalUpgradeCost` | yes, see 0e |
-| `PlayerProfile.luau:488, 523` | the world billboard over a placed slime, via `formatIncomePerSecond` | yes, see 0c |
-| `InventoryClient.luau:346, 358, 412, 420-424, 482` | income preview, upgrade cost, row label, sell buttons, sort order | yes, all via `MoneyFormat` |
-| `SlimeUpgradeTagClient.luau:271, 284` | the on-slime upgrade strip | yes, via `MoneyFormat` |
-
-**Nothing assumes a maximum slime income.** No cap, no clamp, no reverse lookup from income back to
-tier — the last of those existed once and was deleted in the upgrade rebuild (`SlimeUpgrade.luau`'s
-own header records it, and notes it was fragile precisely because it assumed distinct incomes).
-
-## 0c. `MoneyFormat` at the new magnitudes
-
-| value | renders as |
-|---|---|
-| $854,297/s | `$854.3K` |
-| $245,000,000/s | `$245M` |
-| $14,160,000,000 | `$14.2B` |
-| 2^53 = 9,007,199,254,740,992 | `$9Qa` |
-| 1e18 | `$1Qi` |
-| 1e21 | `$1000Qi` |
-
-Suffixes run to Qi (1e18) and the loop degrades gracefully past it (`$1000Qi`) rather than
-breaking. Precision is float64's exact-integer range, 2^53 ~= 9.007e15 — every figure this change
-produces is at most $141.6B, six orders of magnitude inside it. **`MoneyFormat` renders the new
-magnitudes cleanly, so the step-4 stop-before condition does not fire.**
-
-One thing to flag, not fix: `PlayerProfile.formatIncomePerSecond` (`:242`) is a separate local
-formatter for the world billboard. It handles K/M/B correctly, so $854.3K/s and a maxed $24.4M/s
-both render — but its comment claims per-slime income "tops out at 1200" and names a constant
-(`SLIME_TIER_BASE_INCOME`) that no longer exists. The code is fine; the comment was already stale
-and this change makes it more so.
-
-## 0d. What a save stores
-
-**Only `globalIndex`.** `toSaveShape` (`PlayerProfile.luau:578-608`) writes `slots` as an array of
-`globalIndex` (0 for empty), `levels` as an array of integers, and `inventory` as
-`{globalIndex, count}` records. No income is persisted anywhere; `applyLoadedData:621-634` looks the
-slime up in `SlimeData.SLIMES[globalIndex]`. **Income changes therefore apply retroactively to every
-existing save with no migration** — a player holding Divine 8 wakes up owning an $854K/s slime.
-Confirmed.
-
-## 0e. `SlimeUpgrade.totalUpgradeCost(854297, 1, 25)`
-
-**$14,160,063,086.73** — 24 levels, exactly 16,575.105715 seconds of base income, the same
-multiplier every slime in the game pays. For the value actually shipped (854,000):
-**$14,155,140,280.33**.
-
-Nothing overflows, clamps or loses precision: the cost is a closed form
-(`PAYBACK * income * (GROWTH^n - 1)`), $14.16B is 636,000x below 2^53, and the seconds-of-base
-figure is identical to five decimal places for both bases — which is the invariant that says the
-arithmetic did not drift.
-
-## 0f. The stale clamp in `common.luau`
-
-**Confirmed still present at the start of this pass**: `clampLuck = M.SlimeConfig.SLIME_LUCK_ANCHOR_HIGH`
-(then line 135). With `T_MAX = 1.35` the true clamp is `220 * (120000/220)^1.35` = **1,089,047**, so
-the box tail was being collapsed 9x early. Fixed in step 4 — along with a second stale assumption in
-the same function that this pass created.
-
----
-
-# Step 1 — the within-tier weighting mechanism
-
-New config, one entry per tier:
+**To reverse this** — if you would rather have a probe that cannot run than a log line in
+production — wrap the `devPingProbeEnabled` body in the same check:
 
 ```lua
-SLIME_TIER_WEIGHT_RATIO = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.40 },
+local function devPingProbeEnabled(player: Player): boolean
+	return RunService:IsStudio() and table.find(DevConfig.ALLOWLISTED_USER_IDS, player.UserId) ~= nil
+end
 ```
 
-Semantics: slime i of a tier of n (1-indexed, ascending income) gets weight `ratio ^ -(i - 1)`,
-normalised across that tier. Ratio 1.0 is exactly uniform.
+One line, and `git revert eeacd4a` removes the probe entirely.
 
-Implemented once, in `SlimeRoll.pickSlimeInTier`, and called from both roll paths. **The `ratio == 1`
-branch keeps the original `math.random(1, #pool)` call** — that is a compatibility guarantee, not an
-optimisation: a uniform tier consumes the same single draw from the same RNG stream and returns the
-same slime it would have before the function existed. Only Divine takes the weighted branch.
+## 5c. The removal marker
 
-## The backward-compatibility stop condition — PASSED, before Divine's ratio was set
+`TODO: REMOVE BEFORE LAUNCH` appears on all four pieces — the `DevConfig` require, the per-player
+state beside the other per-player tables, the cleanup line in `clearActiveRider`, and the probe
+block itself — each pointing at the dev panel so the whole thing leaves in one sweep. Searching
+`PingProbe` finds every piece.
 
-Run twice, as a distinct result:
+## 5d. The run procedure
 
-| when | comparison | result |
+1. **Add your UserId** to `DevConfig.ALLOWLISTED_USER_IDS` if it is not already there (it currently
+   holds one entry) and publish the place.
+2. **Join the published place** — not Studio, and not a local server. The measurement needs real
+   latency; a Studio client reads ~0 ms and the ratio is meaningless.
+3. **Mount the swing twenty times.** Any ordinary play does this: walk into the swing, launch, come
+   back, walk in again. Each mount emits one line to the **server** output (View -> Output with the
+   server context selected, or the Developer Console's Server tab, F9).
+4. **Read the RATIO on the line marked `<-- STABLE`** (sample 20). Earlier lines show the running
+   mean converging; the marked one is where it is worth trusting.
+
+What the answer means:
+
+| ratio | reading | consequence |
 |---|---|---|
-| before any config existed (mechanism defaulting to 1.0) | full 65-slime PMF at all ten tier lucks + the chest table | **worst difference 0.000e+00 (bitwise identical)** |
-| with `SLIME_TIER_WEIGHT_RATIO` present and **every entry 1.0** | same comparison | **worst difference 0.000e+00 (bitwise identical)** |
+| **~2.0** | `GetNetworkPing` reports **one-way** time | The current code and its comment are correct. `releasePingCompensationSeconds` rewinds by the right amount and nothing needs changing. |
+| **~1.0** | `GetNetworkPing` reports **round-trip** time | The rewind is **twice** what it should be. A 60 ms player is over-compensated by ~30 ms — biased the wrong way by 42% of the top tier's 0.072 s snap half-window. The fix would be halving the value before the clamp, and the 0.12 s clamp itself would want re-deriving against one-way rather than round-trip latency. |
+| anything else | the handshake's client-side work is not negligible after all | Re-measure with a dedicated `RemoteFunction`, accepting the costs in 5a. |
 
-Only after the second run passed was Divine's entry changed to 1.40. Bitwise identity — not
-"identical to 1e-15" — is achievable because the uniform path evaluates the same `mass / #pool`
-expression it always did, rather than `mass * (1/n)`, which would differ by an ulp at n = 6.
-
-## The chest
-
-**The chest rolls its own distribution and it IS affected, deliberately.** Its *tier* comes from its
-own table — `CHEST_DIVINE_CHANCE = 0.20` off the top, the rest geometric at
-`CHEST_TIER_WEIGHT_RATIO = 2.0` — and neither of those was touched. What changed is the line after:
-it used to do its own flat `pool[math.random(1, #pool)]` and now calls
-`SlimeRoll.pickSlimeInTier(tier)`, the same function the box uses. So a Divine from a chest and a
-Divine from a box are the same lottery, and P(Divine) from a chest is still exactly 0.20 (verified,
-§3a). Left uniform, the chest would have paid the top Divine 12.5% of the time while the box paid it
-2.9%, which is the kind of split nobody discovers until it is being exploited.
-
----
-
-# Step 2 — the Divine income ladder
-
-```lua
-{ 50000, 75000, 113000, 169000, 253000, 380000, 570000, 854000 }, -- Divine
-```
-
-Rounded to three significant figures, matching the table's existing style. The first entry is
-exactly 50,000, so the Secret-to-Divine boundary does not move. **Achieved ratios after rounding:**
-
-| step | 1->2 | 2->3 | 3->4 | 4->5 | 5->6 | 6->7 | 7->8 |
-|---|---|---|---|---|---|---|---|
-| ratio | 1.5000 | 1.5067 | 1.4956 | 1.4970 | 1.5020 | 1.5000 | 1.4982 |
-
-Geometric mean **1.4999x**, total spread **17.08x** (was 7.0x). Worst deviation from the exact
-1.50x series is +0.44% (113,000 against 112,500). No other tier's incomes were touched.
-
----
-
-# Step 3 — verification
-
-`dev/analysis/verify_divine.luau`, fresh code: its own per-slime PMF, its own box integrator with
-the clamp derived from `T_MAX`, sharing nothing with `verify_anchor.luau`, `clamp_effect.luau` or
-`common.luau`.
-
-## The four stop conditions — all pass
-
-| # | check | expected | actual | |
-|---|---|---|---|---|
-| 3a | P(Divine) per tier, split vs tier weight | identical to 1e-12 | **0.000e+00** road, **0.000e+00** chest | PASS |
-| 3b | worst decreasing step, 74 bands / extrapolated to 1e6 | exactly 0 and 0 | **0.0000e+00 / 0.0000e+00** | PASS |
-| 3c | worst \|sum - 1\| over 79 probes + chest | <= 1e-9, no NaN, no negative | **1.110e-15**, none, none | PASS |
-| 3d | band 68 pre-box E[base]/roll | ~$8.87K x the Divine change | **$9.416K** (1.061x) | PASS |
-
-**3a** is the one that matters most and it came out exact, not merely within tolerance: the
-within-tier split is applied to a tier mass the roll already fixed, so it cannot move it. P(Divine)
-at tier 9 is 4.5562% before and after; P(Divine) from a chest is 0.20 before and after.
-
-**3d**: $8.872K -> $9.416K is 1.061x, and the Divine tier's own mean income rose 1.086x
-(old uniform mean $145,625 -> new weighted mean $158,158 -- which is exactly the sum of §3g's
-conditional-contribution column). The band-68 figure moves less because Divine is only 4.340% of
-that band's PRE-BOX mass: 0.04340 x $12,533 = $544, and $8,872 + $544 = $9,416.
-
-## 3e. Per tier
-
-Pre-change comparison figures are the ones the brief supplied, which came from `verify_anchor.luau`
-on the same true-clamp integrator, so this is like for like.
-
-| tier | luck | P(Divine) | P(Divine 8) | P(Secret+) | E no box | E with box | vs pre-change |
-|---|---|---|---|---|---|---|---|
-| 1 | 25 | 0.0036% | 0.0001% | 0.0314% | $25.47 | $39.68 | 1.0113x |
-| 2 | 65 | 0.0115% | 0.0003% | 0.0762% | $25.71 | $64.24 | 1.0229x |
-| 3 | 150 | 0.0210% | 0.0006% | 0.1392% | $25.93 | $101.1 | 1.0267x |
-| 4 | 550 | 0.0691% | 0.0020% | 0.4590% | $66.39 | $257.2 | 1.0348x |
-| 5 | 950 | 0.1246% | 0.0036% | 0.8309% | $66.86 | $411.1 | 1.0395x |
-| 6 | 4,500 | 0.4160% | 0.0121% | 2.7609% | $190.7 | $1.212K | 1.0450x |
-| 7 | 8,500 | 0.7539% | 0.0219% | 5.0112% | $192.6 | $2.043K | 1.0485x |
-| 8 | 35,000 | 2.4963% | 0.0726% | 13.3359% | $896.5 | $5.758K | 1.0575x |
-| 9 | 75,000 | 4.5562% | 0.1325% | 20.8819% | $9.416K | $9.763K | **1.0621x** |
-| 10 | chest | 20.0000% | 0.5815% | 60.3150% | — | $36.07K | chest table |
-
-Expected income rises 1.1% to 6.2%, increasing with tier — the two changes very nearly cancel, which
-is what they were designed to do. P(Divine) and P(Secret+) are unchanged everywhere (the small
-apparent differences against `roll_ev_v2.json`'s earlier run are the stale-clamp fix in step 4, not
-this change).
-
-## 3f. The top Divine at tier 9
-
-**P(Divine 8) = 0.1325%, one in 755 rolls, 2.1 hours of perfect play** at the 10.1 s cycle measured
-for tier 9. Before: 0.570%, one in 175 rolls, 29 minutes. The best slime in the game went from
-something a player meets in half an hour to something they meet in an afternoon.
-
-## 3g. The Divine PMF at tier 9
-
-| slime | income/s | probability | share of Divine mass | conditional contribution | unconditional |
-|---|---|---|---|---|---|
-| Divine 1 | $50K | 1.396388% | 30.65% | $15.32K | $698.2 |
-| Divine 2 | $75K | 0.997420% | 21.89% | $16.42K | $748.1 |
-| Divine 3 | $113K | 0.712443% | 15.64% | $17.67K | $805.1 |
-| Divine 4 | $169K | 0.508888% | 11.17% | $18.88K | $860.0 |
-| Divine 5 | $253K | 0.363491% | 7.98% | $20.18K | $919.6 |
-| Divine 6 | $380K | 0.259637% | 5.70% | $21.65K | $986.6 |
-| Divine 7 | $570K | 0.185455% | 4.07% | $23.20K | $1.057K |
-| Divine 8 | $854K | 0.132468% | 2.91% | $24.83K | $1.131K |
-
-**Yes, they are roughly equal in contribution, and the brief's $15K-$25K band is exactly right** —
-conditional contributions run **$15.32K to $24.83K**, a 1.62x spread against a 17.1x income spread.
-(The "conditional" column is contribution to the mean of a Divine roll, which is what that band
-refers to; the unconditional column is the same figures times P(Divine), $698 to $1,131, the same
-1.62x.) A ratio of 1.50 rather than 1.40 would have made them exactly equal; 1.40 deliberately
-leaves the top slightly ahead so chasing it is still worth something.
-
-## 3h/3i. The ceiling and what it costs
-
-| | before | after |
-|---|---|---|
-| top Divine base income | $350K/s | **$854K/s** |
-| ceiling: 10 slots x top x 28.6252 | $100.2M/s | **$244.5M/s** |
-| saturated slot price (ceiling slot x $600) | $6,011,287,000 | **$14,666,300,000** |
-| cost to max one top Divine | $5.80B | **$14.16B** |
-| cost to max a full ceiling base | $58.0B | **$141.6B** |
-
-The saturated-slot price is now **2.44x** what it was. Maxing a full ceiling base costs $141.6B
-against the top swing tier's $800B, so the swing ladder is still the larger sink at the very top —
-by 5.65x, down from 13.8x before this change.
-
----
-
-# Step 4 — the stale assumptions, and the rebaseline
-
-## Two fixes in `common.luau`, not one
-
-The brief directed the clamp fix. Applying only that would have left the regenerated baseline
-describing a game that no longer exists, so a second assumption in the same function was fixed too,
-and that is flagged here rather than buried:
-
-1. **The clamp** — `clampLuck = SLIME_LUCK_ANCHOR_HIGH` became
-   `LOW * (HIGH/LOW)^T_MAX` = 1,089,047. Measured on this tree, per tier:
-
-| tier | luck | E with box, stale clamp | true clamp | understated by |
-|---|---|---|---|---|
-| 1 | 25 | $39.56 | $39.68 | 0.32% |
-| 2 | 65 | $63.77 | $64.24 | 0.72% |
-| 3 | 150 | $100.3 | $101.1 | 0.82% |
-| 4 | 550 | $254.4 | $257.2 | 1.08% |
-| 5 | 950 | $406.0 | $411.1 | 1.25% |
-| 6 | 4,500 | $1.196K | $1.212K | 1.38% |
-| 7 | 8,500 | $2.013K | $2.043K | 1.51% |
-| 8 | 35,000 | $5.658K | $5.758K | 1.76% |
-| 9 | 75,000 | $9.584K | $9.763K | **1.86%** |
-
-   Which reproduces the previous pass's 0.3%-1.8% estimate closely.
-
-2. **The within-tier split** — the same function divided a tier's mass by `#pool`
-   unconditionally. That was correct until this pass gave Divine a 1.40 ratio; left alone, every
-   regenerated figure would have modelled a uniform Divine while the game rolled a weighted one.
-   It now calls a shared `withinTierShares` helper that mirrors `SlimeRoll.pickSlimeInTier`, with
-   uniform tiers keeping the identical `mass / #pool` expression so their numbers stay bit-identical.
-   `chestPmf` got the same treatment, for the same reason.
-
-Cross-checked afterwards: `common.luau`'s box-integrated expected income now agrees with the
-independent `verify_divine.luau` figures at every tier and at the chest, to the precision of the
-comparison (four significant figures).
-
-## The regenerated baselines
-
-`dev/out/roll_ev_v2.json` and `dev/out/roll_economics_v2.json`, at commit `54f2e88`, same seeds
-(20260810 / 20260811), same sample counts (2,000,000 rolls per tier; 10,000 sims x 10,000 rolls).
-The four `e12ca51` baselines — `roll_economics.json`, `cycle_economics.json`, `slot_sweep.json`,
-`roll_ev.json` — are untouched.
-
-| tier | band | luck | E[base]/roll (exact) | (2M sampled) | P(Divine) | P(Secret+) | ratio vs previous tier |
-|---|---|---|---|---|---|---|---|
-| 1 | 4 | 25 | $39.68 | $38.12 | 0.0036% | 0.0314% | — |
-| 2 | 12 | 65 | $64.24 | $62.82 | 0.0115% | 0.0762% | 1.62x |
-| 3 | 20 | 150 | $101.1 | $100.8 | 0.0210% | 0.1392% | 1.57x |
-| 4 | 28 | 550 | $257.2 | $257.0 | 0.0691% | 0.4590% | 2.54x |
-| 5 | 36 | 950 | $411.1 | $417.0 | 0.1246% | 0.8309% | 1.60x |
-| 6 | 44 | 4,500 | $1.212K | $1.201K | 0.4160% | 2.7609% | 2.95x |
-| 7 | 52 | 8,500 | $2.043K | $2.038K | 0.7539% | 5.0112% | 1.69x |
-| 8 | 60 | 35,000 | $5.758K | $5.741K | 2.4963% | 13.3359% | 2.82x |
-| 9 | 68 | 75,000 | $9.763K | $9.733K | 4.5562% | 20.8819% | 1.70x |
-| 10 | chest | — | $36.07K | $35.98K | 20.0000% | 60.3150% | 3.69x |
-
-Ratios run **1.57x to 3.69x**, against 1.57x-3.72x before this pass and 1.16x-2.47x under the broken
-anchor. Per the brief, the ratios are reported and no conclusion is drawn about whether the even
-8-band spacing is right.
-
-Ten-slot equilibrium income from `roll_economics_v2.json`, for the next pass to join against:
-$47.1K, $161.8K, $319.5K, $1.045M, $1.703M, $3.851M, $5.224M, $7.688M, $8.540M, $8.540M per second
-of base income by tier.
+**Nothing was changed in the grading path**: `releasePingCompensationSeconds`,
+`RELEASE_PING_COMPENSATION_MAX_SECONDS` and the release phase math are untouched. The fix, if the
+ratio says one is needed, is a later decision informed by the number.
 
 ---
 
 # What this leaves
 
-1. **Sell value scales with the change and nobody has looked at it.** A top Divine now sells for
-   $51.2M (60 seconds of income x $854K). `InventoryConfig.SELL_VALUE_INCOME_MULTIPLIER` was not
-   touched, and selling is still 60 seconds of income for every slime — but the *absolute* number a
-   Divine sells for is now 2.44x larger, against unchanged swing prices.
-
-2. **The ceiling grew 2.44x while prices did not move.** Equilibrium base income at the top tiers is
-   up correspondingly (tier 9's ten-slot equilibrium is now $8.54M/s against $3.5M/s), so measured
-   progression times will be shorter than the last full measurement pass reported. No repricing was
-   in scope.
-
-3. **`cycle_economics.json` and `slot_sweep.json` still describe `e12ca51`.** Only the two roll-side
-   baselines were regenerated. A full re-measurement of cycle time and the slot sweep against this
-   tree is still outstanding, and the slot sweep in particular now has a different answer available
-   to it: the ceiling it measured as $3.5M/s of base income is $8.54M/s here.
-
-4. **`PlayerProfile.formatIncomePerSecond`'s comment is stale** (0c) — it claims per-slime income
-   tops out at 1200 and names a deleted constant. The code handles the new magnitudes correctly;
-   only the comment lies. Not fixed, since this pass was scoped to two gameplay constants.
-
-5. **Untouched, as required:** incomes for tiers 1-7, `SLIME_TIER_COUNTS`, all four luck/extrapolation
-   constants, `SLIME_PEAK_OFFSET_*`, both spreads, the shape and both NaN floors, the sliding window
-   and the generalised Gaussian, `CHEST_DIVINE_CHANCE` and `CHEST_TIER_WEIGHT_RATIO`, the whole
-   renumbered ladder and its prices, the 74-band curve, the upgrade curve, `SLOT_COUNT`, the flight
-   formulas, the ping compensation, the box mechanics, and `LaunchRewardScene.luau` — not opened.
+1. **Item 4 shifted the cycle times the economy passes measured.** `cycle_economics.json` and
+   everything joined to it (`slot_sweep.json`'s minutes, the dead-time totals) are now optimistic by
+   6-27% on cycle length at tiers 2-10. Those JSONs describe `e12ca51` and were deliberately not
+   regenerated; a re-measurement of cycle time against this branch is outstanding, and item 4 is one
+   more reason for it.
+2. **The `GetNetworkPing` question is open until someone runs the probe** (§5d). Until then the
+   compensation is correct-or-doubled and nobody knows which.
+3. **The item-5 gating decision is yours to confirm.** It is the one place this pass did not do what
+   its brief literally said, the reasoning is in §5b, and the reversal is one line.
+4. **Untouched, as required:** `SlimeRoll.luau` entirely, `SLIME_INCOME_BY_TIER`, the ratio values,
+   `SLIME_TIER_COUNTS`, all four luck/extrapolation constants, the spreads, the shape, the chest
+   constants and landing path, the whole ladder and its prices, the 74-band curve,
+   `FLIGHT_DURATION_SECONDS`, `ARC_HEIGHT_SQRT_COEFFICIENT`, `MAX_FLIGHT_PITCH`,
+   `DISTANCE_PER_MULTIPLIER`, every `SWEET_SPOT_*`, `SWING_PERIOD_SECONDS`,
+   `releasePingCompensationSeconds` and its clamp, `SLOT_COUNT`'s value, the upgrade curve, the base
+   layout geometry, the box mechanics, `LaunchRewardScene.luau` (not opened), and every file in
+   `dev/out/`.
 
 # Files
 
-**Edited (gameplay), three files:**
-
-- `src/ReplicatedStorage/Config/SlimeConfig.luau` — added `SLIME_TIER_WEIGHT_RATIO` (and its type
-  entry), replaced Divine's income row.
-- `src/ServerScriptService/SlimeRoll.luau` — new `pickSlimeInTier`, with the uniform fast path;
-  `rollSlime` now delegates to it.
-- `src/ServerScriptService/LaunchServer.server.luau` — `rollChestSlime`'s final pick goes through
-  the same function (one line plus its comment).
-
-**Edited (analysis):** `dev/analysis/common.luau` — the clamp and the within-tier split.
-
-**Created:** `dev/analysis/verify_divine.luau`; `dev/out/verify_divine.log`,
-`verify_divine_step0.log`. Regenerated: `dev/out/roll_ev_v2.json`, `roll_economics_v2.json` and
-their logs.
+| item | files |
+|---|---|
+| 1 | `REPORT.md` (prose only, superseded by this report) |
+| 2 | `src/ReplicatedStorage/Config/SlimeData.luau` |
+| 3 | `src/ReplicatedStorage/Config/BaseGeometry.luau`, `src/ReplicatedStorage/Config/BaseConfig.luau` |
+| 4 | `src/ReplicatedStorage/Config/LaunchConfig.luau`; new `dev/analysis/flight_pacing.luau` and its log |
+| 5 | `src/ServerScriptService/LaunchServer.server.luau` |
