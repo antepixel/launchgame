@@ -1,383 +1,380 @@
-# The luck anchor, reverted; `T_MAX` raised instead
+# A steeper Divine ladder, with a rarer top
 
-**Branch `ladder-renumber`. Started from `a5235f41a82a706d631a0ba90e3d7f7c720afca6`** (the report
-commit sitting directly on top of `526bda0`), with a clean tree — nothing needed committing first.
+**Branch `ladder-renumber`. Started from `fcb914c502e6a63a50aee737959a92dc741bda95`** with a clean
+tree — nothing needed committing first.
 
 | commit | what |
 |---|---|
-| `a5235f4` | starting point — the ladder renumber and its report |
-| `5a0423f` | steps 1-2: `SLIME_LUCK_ANCHOR_HIGH` back to 120,000, `SLIME_EXTRAPOLATION_T_MAX` to 1.35 |
-| `be2b31a` | step 4: the fresh v2 baseline |
+| `fcb914c` | starting point (the anchor revert and its report) |
+| `54f2e88` | steps 1-2: the within-tier weighting mechanism, Divine's 1.40 ratio, the 1.50x income ladder |
+| `b0baa4e` | step 4: two stale assumptions fixed in `common.luau`, v2 baselines regenerated |
 
-**Two gameplay constants changed in this pass, both in `SlimeConfig.luau`, and nothing else.**
-`git diff a5235f4 5a0423f --stat` is one file, and the only non-comment lines in it are those two
-values.
+**Every prediction in the brief is confirmed.** Tier 9's expected income per roll moves
+$9,192 -> **$9,763** (1.062x, predicted ~$9,757); the ceiling moves $100M/s -> **$244.5M/s**
+(predicted ~$245M); P(Divine) is **unchanged to 0.0**; P(Divine 8) at tier 9 falls
+0.570% -> **0.132%** (predicted ~0.133%). Nothing contradicted.
 
 ## Reproduce every number
 
 ```
-lune run dev/analysis/verify_anchor.luau      # step 0 + step 3, all four stop conditions
-lune run dev/analysis/roll_ev_v2.luau         # step 4a: 2,000,000 rolls/tier, seed 20260810 (~2 min)
-lune run dev/analysis/slot_sim_v2.luau        # step 4b: seed 20260811 (~75 s)
+lune run dev/analysis/verify_divine.luau     # steps 0, 1 and 3, plus the step-4 clamp measurement
+lune run dev/analysis/roll_ev_v2.luau        # 2,000,000 rolls/tier, seed 20260810 (~2 min)
+lune run dev/analysis/slot_sim_v2.luau       # seed 20260811 (~80 s)
 ```
 
-All from the repo root. `verify_anchor.luau` is deterministic and safe to run before or after the
-edit — it was run both ways, and the pre-edit run is kept at `dev/out/verify_anchor_before.log` as
-evidence the verifier detects the broken state rather than merely agreeing with whatever it finds.
-
-Measured at **`5a0423f`** (steps 0-3) and **`5a0423f`** (step 4 — `roll_economics_v2.json` records
-that hash itself).
-
-## The finding that matters
-
-**The revert works exactly as the brief predicted, and the thing it was meant to fix stays broken.**
-Band 68's pre-box income is back to `$8.872K`, all four window transitions are back on the road, and
-the box now gets four live doublings there instead of one. But band 68's box multiple only moves
-**1.01x -> 1.04x**, because past `t = 0.875` the window is saturated — there is no fifth window
-above Legendary-Divine for extra `t` to unlock, so all the extrapolation can do is sharpen the shape
-inside the top window, worth about 10% of expected income. **New tier 9 still has a near-dead box.**
-The 2.55x the anchor change bought was not headroom; it was the mapping being broken in a way that
-left band 68 far enough down the window progression to have somewhere to climb.
+All from the repo root. `verify_divine.luau` is deterministic and was run three times: before any
+edit (`dev/out/verify_divine_step0.log`, which is where the step-0 answers and the
+backward-compatibility test come from), after the mechanism was added at uniform ratios, and after
+both edits (`dev/out/verify_divine.log`). Measured at **`54f2e88`** for gameplay figures;
+`roll_economics_v2.json` records that hash itself.
 
 ---
 
-# Step 0 — the peak lerp, before anything was edited
+# Step 0 — read first
 
-Run against the unedited tree (`dev/out/verify_anchor_before.log`).
+## 0a. How mass is distributed within a tier today
 
-## 0a. What `peak` is
+**Uniform, and it was uniform in both roll paths.**
 
 ```lua
--- SlimeRoll.luau:79
-local peakOffset = lerp(SlimeConfig.SLIME_PEAK_OFFSET_LOW, SlimeConfig.SLIME_PEAK_OFFSET_HIGH, t)
--- SlimeRoll.luau:94
-local peak = windowStart + peakOffset
--- SlimeRoll.luau:98-104 -- the only place it is used
-for i = windowStart, windowStart + windowWidth - 1 do
-	local dist = i - peak
-	local spread = if dist <= 0 then spreadDown else spreadUp
-	local w = math.exp(-(math.abs(dist) / spread) ^ shape)
+-- SlimeRoll.luau:130-135 (pre-change)
+function SlimeRoll.rollSlime(luck: number): SlimeData.Slime
+	local tier = rollTier(luck)
+	local pool = SlimeData.SLIMES_BY_TIER[tier]
+	local index = math.random(1, #pool)     -- flat pick over that tier's list
+	return pool[index]
+end
 ```
 
-**Endpoints: `SLIME_PEAK_OFFSET_LOW = 1.0`, `SLIME_PEAK_OFFSET_HIGH = 1.0` — identical, so
-`peakOffset` is a constant 1.0 and does not vary with `t` at all.** `SlimeConfig`'s own comment says
-this is deliberate: a fixed offset is what gives every stage the same three-part shape.
+`rollTier` returns a tier from the luck-shaped window; the second step was an unweighted
+`math.random(1, #pool)`. The chest did the same thing independently at
+`LaunchServer.server.luau:1444` (`pool[math.random(1, #pool)]`). Tier sizes are
+6/6/6/6/6/6/21/8, so a Divine roll was 12.5% likely to be each of the eight.
 
-**It is not an index, of either kind.** It is the real-valued centre of the generalised Gaussian, in
-slime-tier units, and it is only ever read as `dist = i - peak` inside the window loop. No table is
-subscripted with it, so it cannot index `nil` and cannot wrap. What it *could* do — if the endpoints
-ever differed — is drift outside `[windowStart, windowStart + 3]`, which would put the modal weight
-on a tier that never gets a weight assigned. That is the failure mode worth watching, and it is
-structurally impossible while the two endpoints are equal.
+## 0b. Every consumer of `SLIME_INCOME_BY_TIER`
 
-## 0b/0c. Every `t`-dependent quantity at the probe values
+The constant itself is read in exactly one place — `SlimeData.luau:47`, the generator that turns it
+into the 65 slime records' `incomePerSecond`. Everything else reads that field:
 
-| t | windowStart | peakOffset | peak | peak inside the window? | spreadDown | spreadUp | shape | floors engaged |
-|---|---|---|---|---|---|---|---|---|
-| 1.00 | 5 | 1.0000 | 6.00 | yes | 0.3780 | 0.6400 | 0.9000 | none |
-| 1.10 | 5 | 1.0000 | 6.00 | yes | 0.3618 | 0.6350 | 0.8820 | none |
-| 1.20 | 5 | 1.0000 | 6.00 | yes | 0.3456 | 0.6300 | 0.8640 | none |
-| 1.30 | 5 | 1.0000 | 6.00 | yes | 0.3294 | 0.6250 | 0.8460 | none |
-| **1.35** | 5 | 1.0000 | **6.00** | **yes** | 0.3213 | 0.6225 | 0.8370 | **none** |
-| 1.40 | 5 | 1.0000 | 6.00 | yes | 0.3132 | 0.6200 | 0.8280 | none |
-| 1.50 | 5 | 1.0000 | 6.00 | yes | 0.2970 | 0.6150 | 0.8100 | none |
-
-`peak` is 6.00 at every one of them — Mythic, one tier inside the Legendary-Divine window. **Nothing
-falls outside any valid range at any probed `t`, and no floor engages.**
-
-## 0d. `windowStart` range check
-
-| t | raw lerp | rounded | after clamp | saturated at 5? |
-|---|---|---|---|---|
-| 0.875 | 4.5000 | 5 | 5 | yes |
-| 1.000 | 5.0000 | 5 | 5 | yes |
-| 1.100 | 5.4000 | 5 | 5 | yes |
-| 1.200 | 5.8000 | 6 | **5** | yes |
-| 1.300 | 6.2000 | 6 | **5** | yes |
-| 1.350 | 6.4000 | 6 | **5** | yes |
-| 1.400 | 6.6000 | 7 | **5** | yes |
-| 1.500 | 7.0000 | 7 | **5** | yes |
-| 3.000 | 13.0000 | 13 | **5** | yes |
-
-Confirmed: it saturates at 5 for every `t >= 0.875` and can never index out of range — the clamp in
-`SlimeRoll.luau:77` is doing real work from `t = 1.2` upward, and the ceiling it clamps to
-(`tierCount - windowWidth + 1` = 5) is derived, not hardcoded.
-
-## 0e. `T_MAX_SAFE` and `T_MAX_TARGET`
-
-| quantity | lerp | reaches its floor at |
+| consumer | what it does with it | affected by a Divine income change? |
 |---|---|---|
-| `spreadDown` | 0.54 -> 0.378, floor `SLIME_SPREAD_FLOOR` = 0.05 | **t = 3.0247** |
-| `shape` | 1.08 -> 0.90, floor `SLIME_SHAPE_FLOOR` = 0.10 | t = 5.4444 |
-| `spreadUp` | 0.69 -> 0.640, floor 0.05 | t = 12.8000 |
-| `peak` | constant 1.0 offset | never leaves range |
-| `windowStart` | saturates at 5 | never out of range |
+| `SlimeData.luau:47-76` | builds the catalog; asserts the row length against `SLIME_TIER_COUNTS` | yes, and the assert still passes (8 entries) |
+| `PlayerProfile.luau:1182` | `totalIncomePerSecond` — sums placed slimes | yes, this is the point |
+| `PlayerProfile.luau:997` | sell value = income x 60 | yes: a top Divine now sells for $51.2M |
+| `PlayerProfile.luau:1057-1079` | upgrade cost, via `SlimeUpgrade.totalUpgradeCost` | yes, see 0e |
+| `PlayerProfile.luau:488, 523` | the world billboard over a placed slime, via `formatIncomePerSecond` | yes, see 0c |
+| `InventoryClient.luau:346, 358, 412, 420-424, 482` | income preview, upgrade cost, row label, sell buttons, sort order | yes, all via `MoneyFormat` |
+| `SlimeUpgradeTagClient.luau:271, 284` | the on-slime upgrade strip | yes, via `MoneyFormat` |
 
-```
-T_MAX_SAFE   = 3.0247      (bound: spreadDown, the first floor to engage)
-T_MAX_TARGET = min(1.35, 3.0247) = 1.35
-```
+**Nothing assumes a maximum slime income.** No cap, no clamp, no reverse lookup from income back to
+tier — the last of those existed once and was deleted in the upgrade rebuild (`SlimeUpgrade.luau`'s
+own header records it, and notes it was fragile precisely because it assumed distinct incomes).
 
-Well above the 1.10 stop threshold, so I proceeded. **Note this is a tighter bound than the previous
-pass reported**: that pass gave `spreadDown`'s *zero crossing* at t = 3.3333, but the floor engages
-earlier, at 3.0247, and "no floor engaged" is the stricter condition the brief asked for.
+## 0c. `MoneyFormat` at the new magnitudes
 
-**One correction found while doing this.** The comment that justified `T_MAX = 1.0` claimed the shape
-exponent "crosses ZERO at t=1.21 and goes NEGATIVE beyond that". Against the current constants that
-is false — shape lerps 1.08 -> 0.90 and crosses zero at t = 6.0, not 1.21. The 1.21 predates the
-retune that set these values. It was the stated reason `T_MAX` could not be raised, so anyone
-trusting it would have concluded this change was unsafe. The comment has been rewritten with the
-measured figure and the correction recorded in place.
+| value | renders as |
+|---|---|
+| $854,297/s | `$854.3K` |
+| $245,000,000/s | `$245M` |
+| $14,160,000,000 | `$14.2B` |
+| 2^53 = 9,007,199,254,740,992 | `$9Qa` |
+| 1e18 | `$1Qi` |
+| 1e21 | `$1000Qi` |
+
+Suffixes run to Qi (1e18) and the loop degrades gracefully past it (`$1000Qi`) rather than
+breaking. Precision is float64's exact-integer range, 2^53 ~= 9.007e15 — every figure this change
+produces is at most $141.6B, six orders of magnitude inside it. **`MoneyFormat` renders the new
+magnitudes cleanly, so the step-4 stop-before condition does not fire.**
+
+One thing to flag, not fix: `PlayerProfile.formatIncomePerSecond` (`:242`) is a separate local
+formatter for the world billboard. It handles K/M/B correctly, so $854.3K/s and a maxed $24.4M/s
+both render — but its comment claims per-slime income "tops out at 1200" and names a constant
+(`SLIME_TIER_BASE_INCOME`) that no longer exists. The code is fine; the comment was already stale
+and this change makes it more so.
+
+## 0d. What a save stores
+
+**Only `globalIndex`.** `toSaveShape` (`PlayerProfile.luau:578-608`) writes `slots` as an array of
+`globalIndex` (0 for empty), `levels` as an array of integers, and `inventory` as
+`{globalIndex, count}` records. No income is persisted anywhere; `applyLoadedData:621-634` looks the
+slime up in `SlimeData.SLIMES[globalIndex]`. **Income changes therefore apply retroactively to every
+existing save with no migration** — a player holding Divine 8 wakes up owning an $854K/s slime.
+Confirmed.
+
+## 0e. `SlimeUpgrade.totalUpgradeCost(854297, 1, 25)`
+
+**$14,160,063,086.73** — 24 levels, exactly 16,575.105715 seconds of base income, the same
+multiplier every slime in the game pays. For the value actually shipped (854,000):
+**$14,155,140,280.33**.
+
+Nothing overflows, clamps or loses precision: the cost is a closed form
+(`PAYBACK * income * (GROWTH^n - 1)`), $14.16B is 636,000x below 2^53, and the seconds-of-base
+figure is identical to five decimal places for both bases — which is the invariant that says the
+arithmetic did not drift.
+
+## 0f. The stale clamp in `common.luau`
+
+**Confirmed still present at the start of this pass**: `clampLuck = M.SlimeConfig.SLIME_LUCK_ANCHOR_HIGH`
+(then line 135). With `T_MAX = 1.35` the true clamp is `220 * (120000/220)^1.35` = **1,089,047**, so
+the box tail was being collapsed 9x early. Fixed in step 4 — along with a second stale assumption in
+the same function that this pass created.
 
 ---
 
-# Steps 1 and 2 — the two constants
+# Step 1 — the within-tier weighting mechanism
+
+New config, one entry per tier:
 
 ```lua
-SLIME_LUCK_ANCHOR_HIGH     = 120000   -- was 1000000
-SLIME_EXTRAPOLATION_T_MAX  = 1.35     -- was 1.0
+SLIME_TIER_WEIGHT_RATIO = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.40 },
 ```
 
-`SLIME_LUCK_ANCHOR_LOW` (220) and `SLIME_EXTRAPOLATION_T_MIN` (-0.5) are untouched, as is every
-other line of `SlimeRoll.luau` — the sliding window, the generalised Gaussian, both NaN floors.
+Semantics: slime i of a tier of n (1-indexed, ascending income) gets weight `ratio ^ -(i - 1)`,
+normalised across that tier. Ratio 1.0 is exactly uniform.
 
-Both comment blocks were rewritten. The anchor's now records that it does **two** jobs — it sets
-where `t` clamps *and* the rate at which `t` advances, because `t = ln(luck/220) / ln(HIGH/220)` —
-and that this is exactly why it is not the knob for box headroom. `T_MAX`'s names the binding
-quantity (`spreadDown` reaching its floor at t = 3.0247), states that `peak` cannot leave range at
-any `t`, corrects the stale 1.21 claim, and says plainly that window saturation at t = 0.875 is what
-caps the gain.
+Implemented once, in `SlimeRoll.pickSlimeInTier`, and called from both roll paths. **The `ratio == 1`
+branch keeps the original `math.random(1, #pool)` call** — that is a compatibility guarantee, not an
+optimisation: a uniform tier consumes the same single draw from the same RNG stream and returns the
+same slime it would have before the function existed. Only Divine takes the weighted branch.
 
-## Verifying the arithmetic the brief supplied
+## The backward-compatibility stop condition — PASSED, before Divine's ratio was set
 
-| the brief's figure | measured | agrees |
+Run twice, as a distinct result:
+
+| when | comparison | result |
 |---|---|---|
-| `ln(120000/220) = 6.3016` | 6.30157 | yes |
-| top band luck 100,000 -> t = 0.9711 | 0.97110 | yes |
-| band 68, luck 75,000 -> t = 0.9254 | 0.92541 | yes |
-| 150,000 -> t = 1.0354 | 1.03539 | yes |
-| 300,000 -> t = 1.1454 | 1.14537 | yes |
-| 600,000 -> t = 1.2554 | 1.25534 | yes |
-| 1,200,000 -> t = 1.3654 | 1.36532, **clamped to 1.35** | yes |
+| before any config existed (mechanism defaulting to 1.0) | full 65-slime PMF at all ten tier lucks + the chest table | **worst difference 0.000e+00 (bitwise identical)** |
+| with `SLIME_TIER_WEIGHT_RATIO` present and **every entry 1.0** | same comparison | **worst difference 0.000e+00 (bitwise identical)** |
 
-The clamp now bites at luck `220 * (120000/220)^1.35` = **1.0887M**, which is why the fourth doubling
-from band 68 (1.2M) is the last one that moves anything.
+Only after the second run passed was Divine's entry changed to 1.40. Bitwise identity — not
+"identical to 1e-15" — is achievable because the uniform path evaluates the same `mass / #pool`
+expression it always did, rather than `mass * (1/n)`, which would differ by an ulp at n = 6.
+
+## The chest
+
+**The chest rolls its own distribution and it IS affected, deliberately.** Its *tier* comes from its
+own table — `CHEST_DIVINE_CHANCE = 0.20` off the top, the rest geometric at
+`CHEST_TIER_WEIGHT_RATIO = 2.0` — and neither of those was touched. What changed is the line after:
+it used to do its own flat `pool[math.random(1, #pool)]` and now calls
+`SlimeRoll.pickSlimeInTier(tier)`, the same function the box uses. So a Divine from a chest and a
+Divine from a box are the same lottery, and P(Divine) from a chest is still exactly 0.20 (verified,
+§3a). Left uniform, the chest would have paid the top Divine 12.5% of the time while the box paid it
+2.9%, which is the kind of split nobody discovers until it is being exploited.
+
+---
+
+# Step 2 — the Divine income ladder
+
+```lua
+{ 50000, 75000, 113000, 169000, 253000, 380000, 570000, 854000 }, -- Divine
+```
+
+Rounded to three significant figures, matching the table's existing style. The first entry is
+exactly 50,000, so the Secret-to-Divine boundary does not move. **Achieved ratios after rounding:**
+
+| step | 1->2 | 2->3 | 3->4 | 4->5 | 5->6 | 6->7 | 7->8 |
+|---|---|---|---|---|---|---|---|
+| ratio | 1.5000 | 1.5067 | 1.4956 | 1.4970 | 1.5020 | 1.5000 | 1.4982 |
+
+Geometric mean **1.4999x**, total spread **17.08x** (was 7.0x). Worst deviation from the exact
+1.50x series is +0.44% (113,000 against 112,500). No other tier's incomes were touched.
 
 ---
 
 # Step 3 — verification
 
-`dev/analysis/verify_anchor.luau`, written fresh. It shares no code with `clamp_effect.luau` and
-does not use `common.luau`'s box integrator — that one hardcodes the clamp at
-`SLIME_LUCK_ANCHOR_HIGH`, which is only correct while `T_MAX = 1.0`; this file derives the clamp
-from `T_MAX` instead. See §"A defect in the v2 numbers" for what that assumption costs elsewhere.
+`dev/analysis/verify_divine.luau`, fresh code: its own per-slime PMF, its own box integrator with
+the clamp derived from `T_MAX`, sharing nothing with `verify_anchor.luau`, `clamp_effect.luau` or
+`common.luau`.
 
-## The four stop conditions — all four pass
+## The four stop conditions — all pass
 
 | # | check | expected | actual | |
 |---|---|---|---|---|
-| 3a | band 68 (luck 75,000) pre-box E[base]/roll | $8.0K..$9.8K (~$8.87K) | **$8.872K** | PASS |
-| 3b | window transitions, by band | 0, 27, 40, 56, 64 | **0, 27, 40, 56, 64** | PASS |
-| 3c | worst decreasing step across 74 band lucks | 0 | **0.000000e+00** | PASS |
-| 3d | worst \|sum - 1\| past the old clamp | <= 1e-9, no NaN/negative/out-of-range | **2.220e-16** | PASS |
+| 3a | P(Divine) per tier, split vs tier weight | identical to 1e-12 | **0.000e+00** road, **0.000e+00** chest | PASS |
+| 3b | worst decreasing step, 74 bands / extrapolated to 1e6 | exactly 0 and 0 | **0.0000e+00 / 0.0000e+00** | PASS |
+| 3c | worst \|sum - 1\| over 79 probes + chest | <= 1e-9, no NaN, no negative | **1.110e-15**, none, none | PASS |
+| 3d | band 68 pre-box E[base]/roll | ~$8.87K x the Divine change | **$9.416K** (1.061x) | PASS |
 
-**3a** is the number that proves the mapping is back: `$8.872K` against the `$8.87K` recorded in the
-pre-change `dev/out/roll_ev.json`, and against the `$877` the broken anchor produced — a 10.1x
-recovery, to four significant figures the original value.
+**3a** is the one that matters most and it came out exact, not merely within tolerance: the
+within-tier split is applied to a tier mass the roll already fixed, so it cannot move it. P(Divine)
+at tier 9 is 4.5562% before and after; P(Divine) from a chest is 0.20 before and after.
 
-**3b**, in full:
+**3d**: $8.872K -> $9.416K is 1.061x, and the Divine tier's own mean income rose 1.34x
+(uniform mean $145,625 -> weighted mean $195,485). The band-68 figure moves less because Divine is
+only 4.6% of that band's mass.
 
-| band | luck | t | window becomes |
-|---|---|---|---|
-| 0 | 5 | -0.5000 (clamped at T_MIN) | Common-Epic |
-| 27 | 500 | 0.1303 | Uncommon-Legendary |
-| 40 | 2,500 | 0.3857 | Rare-Mythic |
-| 56 | 15,000 | 0.6700 | Epic-Secret |
-| **64** | **55,000** | **0.8762** | **Legendary-Divine** |
+## 3e. Per tier
 
-The t = 0.875 transition is back on the road at band 64, where three measurement passes validated
-it. Under the broken anchor it needed luck 349,000 against a top band of 100,000 and did not exist
-on the road at all.
+Pre-change comparison figures are the ones the brief supplied, which came from `verify_anchor.luau`
+on the same true-clamp integrator, so this is like for like.
 
-**3d**, per probe — every one sums to 1.000000000000000 with no NaN, no negative mass and no weight
-outside the 8 real tiers (65 slimes): luck 120K, 250K, 500K, 1M, 5M. Worst deviation 2.220e-16, which
-is one float ulp.
+| tier | luck | P(Divine) | P(Divine 8) | P(Secret+) | E no box | E with box | vs pre-change |
+|---|---|---|---|---|---|---|---|
+| 1 | 25 | 0.0036% | 0.0001% | 0.0314% | $25.47 | $39.68 | 1.0113x |
+| 2 | 65 | 0.0115% | 0.0003% | 0.0762% | $25.71 | $64.24 | 1.0229x |
+| 3 | 150 | 0.0210% | 0.0006% | 0.1392% | $25.93 | $101.1 | 1.0267x |
+| 4 | 550 | 0.0691% | 0.0020% | 0.4590% | $66.39 | $257.2 | 1.0348x |
+| 5 | 950 | 0.1246% | 0.0036% | 0.8309% | $66.86 | $411.1 | 1.0395x |
+| 6 | 4,500 | 0.4160% | 0.0121% | 2.7609% | $190.7 | $1.212K | 1.0450x |
+| 7 | 8,500 | 0.7539% | 0.0219% | 5.0112% | $192.6 | $2.043K | 1.0485x |
+| 8 | 35,000 | 2.4963% | 0.0726% | 13.3359% | $896.5 | $5.758K | 1.0575x |
+| 9 | 75,000 | 4.5562% | 0.1325% | 20.8819% | $9.416K | $9.763K | **1.0621x** |
+| 10 | chest | 20.0000% | 0.5815% | 60.3150% | — | $36.07K | chest table |
 
-## 3e. Does the extrapolation reach?
+Expected income rises 1.1% to 6.2%, increasing with tier — the two changes very nearly cancel, which
+is what they were designed to do. P(Divine) and P(Secret+) are unchanged everywhere (the small
+apparent differences against `roll_ev_v2.json`'s earlier run are the stale-clamp fix in step 4, not
+this change).
 
-**Yes — the distributions differ, so `T_MAX` bought something. It is just small.**
+## 3f. The top Divine at tier 9
 
-| luck | t | P(Divine) | E[base]/roll | TV distance from the previous probe |
-|---|---|---|---|---|
-| 120K | 1.0000 | 4.4686% | $9.062K | — |
-| 250K | 1.1165 | 4.6760% | $9.370K | 0.003732 |
-| 500K | 1.2265 | 4.8801% | $9.673K | 0.003456 |
-| 1M | 1.3365 | 5.0924% | $9.988K | 0.003393 |
+**P(Divine 8) = 0.1325%, one in 755 rolls, 2.1 hours of perfect play** at the 10.1 s cycle measured
+for tier 9. Before: 0.570%, one in 175 rolls, 29 minutes. The best slime in the game went from
+something a player meets in half an hour to something they meet in an afternoon.
 
-No two are identical, so the fix is reaching. Across the whole extrapolated range the gain is
-**+10.2% of expected income and +0.62 points of P(Divine)** — the window cannot advance past
-Legendary-Divine, so all `t` can do above 0.875 is sharpen the shape inside it.
+## 3g. The Divine PMF at tier 9
 
-## 3f. Box multiple per tier, three trees side by side
+| slime | income/s | probability | share of Divine mass | conditional contribution | unconditional |
+|---|---|---|---|---|---|
+| Divine 1 | $50K | 1.396388% | 30.65% | $15.32K | $698.2 |
+| Divine 2 | $75K | 0.997420% | 21.89% | $16.42K | $748.1 |
+| Divine 3 | $113K | 0.712443% | 15.64% | $17.67K | $805.1 |
+| Divine 4 | $169K | 0.508888% | 11.17% | $18.88K | $860.0 |
+| Divine 5 | $253K | 0.363491% | 7.98% | $20.18K | $919.6 |
+| Divine 6 | $380K | 0.259637% | 5.70% | $21.65K | $986.6 |
+| Divine 7 | $570K | 0.185455% | 4.07% | $23.20K | $1.057K |
+| Divine 8 | $854K | 0.132468% | 2.91% | $24.83K | $1.131K |
 
-Integrating the doubling chain exactly (geometric at `BOX_DOUBLE_CHANCE = 0.55`, tail collapsed at
-the true clamp). **The three columns are not on the same bands** — the original tree is the
-11-tier ladder, the other two the renumbered 10-tier one — so only tier 1 (band 4, luck 25) is a
-like-for-like comparison across all three.
+**Yes, they are roughly equal in contribution, and the brief's $15K-$25K band is exactly right** —
+conditional contributions run **$15.32K to $24.83K**, a 1.62x spread against a 17.1x income spread.
+(The "conditional" column is contribution to the mean of a Divine roll, which is what that band
+refers to; the unconditional column is the same figures times P(Divine), $698 to $1,131, the same
+1.62x.) A ratio of 1.50 rather than 1.40 would have made them exactly equal; 1.40 deliberately
+leaves the top slightly ahead so chasing it is still worth something.
 
-| tier | original tree (anchor 120K, T_MAX 1.0) | anchor-1,000,000 tree | **this tree** |
-|---|---|---|---|
-| 1 | 1.53x | 1.24x | **1.54x** |
-| 2 | 2.53x | 1.42x | **2.44x** |
-| 3 | 4.09x | 1.76x | **3.80x** |
-| 4 | 3.95x | 3.47x | **3.74x** |
-| 5 | 3.78x | 2.16x | **5.92x** |
-| 6 | 5.99x | 4.77x | **6.08x** |
-| 7 | 9.95x | 2.79x | **10.12x** |
-| 8 | 3.79x | 6.81x | **6.07x** |
-| 9 | 5.94x | 2.55x | **1.04x** |
-| 10 | 1.01x | (chest) | (chest) |
+## 3h/3i. The ceiling and what it costs
 
-**Plainly: one tier is under 1.5x — tier 9, at 1.04x.** Tiers 1 and 2 are fixed (1.54x and 2.44x,
-back above where the original tree had them), and every other tier is at or above 3.7x. But the dead
-box that the ladder renumber deleted old tier 10 to remove is now sitting on new tier 9, at 1.04x
-instead of 1.01x. Raising `T_MAX` moved it by three percentage points.
-
-The reason is structural and worth stating exactly: **band 68 sits at t = 0.9254, already inside the
-final window.** Its four remaining doublings all land in the range where the window cannot advance,
-so they buy the ~10% of shape sharpening from 3e and nothing else. No value of `T_MAX` fixes this —
-`T_MAX = 3.0` would add perhaps another few percent. What band 68's box would need is a *fifth*
-window, which needs more slime tiers, or a top band placed lower in the window progression.
-
-## 3g. Doublings that still change the distribution, per tier
-
-| tier | band luck | live doublings |
+| | before | after |
 |---|---|---|
-| 1 | 25 | 16 |
-| 2 | 65 | 15 |
-| 3 | 150 | 13 |
-| 4 | 550 | 11 |
-| 5 | 950 | 11 |
-| 6 | 4,500 | 8 |
-| 7 | 8,500 | 8 |
-| 8 | 35,000 | 5 |
-| 9 | 75,000 | **4** |
-| 10 | chest — no box on that path | — |
+| top Divine base income | $350K/s | **$854K/s** |
+| ceiling: 10 slots x top x 28.6252 | $100.2M/s | **$244.5M/s** |
+| saturated slot price (ceiling slot x $600) | $6,011,287,000 | **$14,666,300,000** |
+| cost to max one top Divine | $5.80B | **$14.16B** |
+| cost to max a full ceiling base | $58.0B | **$141.6B** |
 
-Band 68 gets the four the brief predicted. Under the old `T_MAX = 1.0` it had one.
-
-## 3h. Expected base income per roll, per tier
-
-| tier | band luck | no box | with box | box multiple |
-|---|---|---|---|---|
-| 1 | 25 | $25.47 | $39.24 | 1.54x |
-| 2 | 65 | $25.71 | $62.80 | 2.44x |
-| 3 | 150 | $25.93 | $98.50 | 3.80x |
-| 4 | 550 | $66.39 | $248.5 | 3.74x |
-| 5 | 950 | $66.86 | $395.5 | 5.92x |
-| 6 | 4,500 | $190.7 | $1.160K | 6.08x |
-| 7 | 8,500 | $192.6 | $1.949K | 10.12x |
-| 8 | 35,000 | $896.5 | $5.445K | 6.07x |
-| 9 | 75,000 | $8.872K | $9.192K | 1.04x |
-| 10 | chest | — | $33.6K (chest table) | — |
+The saturated-slot price is now **2.44x** what it was, and maxing a ceiling base costs more than the
+top swing tier ($800B) by a factor of... under one — $141.6B against $800B, so the swing ladder is
+still the larger sink at the very top.
 
 ---
 
-# Step 4 — the fresh baseline, beside the old one
+# Step 4 — the stale assumptions, and the rebaseline
 
-`dev/out/roll_economics.json`, `cycle_economics.json`, `slot_sweep.json` and `roll_ev.json` are
-untouched and still describe commit `e12ca51`.
+## Two fixes in `common.luau`, not one
 
-**Deviation from the brief, stated because it changes the file list.** The brief asked for
-`roll_ev.luau` to write both `roll_ev_v2.json` and `roll_economics_v2.json`. It cannot: those two
-files come from two different scripts (`roll_ev.luau` writes the first, `slot_sim.luau` the second),
-and both hardcode their paths with no argument to override. So both were copied:
+The brief directed the clamp fix. Applying only that would have left the regenerated baseline
+describing a game that no longer exists, so a second assumption in the same function was fixed too,
+and that is flagged here rather than buried:
 
-- `dev/analysis/roll_ev_v2.luau` — one change, the output path. Verified by diffing against the
-  original with `_v2` stripped: the only remaining difference is the added header paragraph.
-- `dev/analysis/slot_sim_v2.luau` — two changes, its input path (it reads the v2 roll data) and its
-  output path.
+1. **The clamp** — `clampLuck = SLIME_LUCK_ANCHOR_HIGH` became
+   `LOW * (HIGH/LOW)^T_MAX` = 1,089,047. Measured on this tree, per tier:
 
-Neither needed a tier-count edit; both already read `#SWING_TIER_DISTANCE_SCALE`. Seeds (20260810 /
-20260811) and sample counts (2,000,000 rolls per tier; 10,000 sims x 10,000 rolls) are unchanged.
-`roll_economics_v2.json` records `gitCommit 5a0423f`.
+| tier | luck | E with box, stale clamp | true clamp | understated by |
+|---|---|---|---|---|
+| 1 | 25 | $39.56 | $39.68 | 0.32% |
+| 2 | 65 | $63.77 | $64.24 | 0.72% |
+| 3 | 150 | $100.3 | $101.1 | 0.82% |
+| 4 | 550 | $254.4 | $257.2 | 1.08% |
+| 5 | 950 | $406.0 | $411.1 | 1.25% |
+| 6 | 4,500 | $1.196K | $1.212K | 1.38% |
+| 7 | 8,500 | $2.013K | $2.043K | 1.51% |
+| 8 | 35,000 | $5.658K | $5.758K | 1.76% |
+| 9 | 75,000 | $9.584K | $9.763K | **1.86%** |
 
-## The renumbered ladder, measured on this tree
+   Which reproduces the previous pass's 0.3%-1.8% estimate closely.
 
-Sampled and analytic figures agree to a max per-slime PMF deviation of 3.5e-04.
+2. **The within-tier split** — the same function divided a tier's mass by `#pool`
+   unconditionally. That was correct until this pass gave Divine a 1.40 ratio; left alone, every
+   regenerated figure would have modelled a uniform Divine while the game rolled a weighted one.
+   It now calls a shared `withinTierShares` helper that mirrors `SlimeRoll.pickSlimeInTier`, with
+   uniform tiers keeping the identical `mass / #pool` expression so their numbers stay bit-identical.
+   `chestPmf` got the same treatment, for the same reason.
 
-| tier | band | pre-box luck | E[base]/roll (exact) | (2M sampled) | P(Divine) | P(Secret+) | ratio vs previous tier |
+Cross-checked afterwards: `common.luau`'s box-integrated expected income now agrees with the
+independent `verify_divine.luau` figures at every tier and at the chest, to the precision of the
+comparison (four significant figures).
+
+## The regenerated baselines
+
+`dev/out/roll_ev_v2.json` and `dev/out/roll_economics_v2.json`, at commit `54f2e88`, same seeds
+(20260810 / 20260811), same sample counts (2,000,000 rolls per tier; 10,000 sims x 10,000 rolls).
+The four `e12ca51` baselines — `roll_economics.json`, `cycle_economics.json`, `slot_sweep.json`,
+`roll_ev.json` — are untouched.
+
+| tier | band | luck | E[base]/roll (exact) | (2M sampled) | P(Divine) | P(Secret+) | ratio vs previous tier |
 |---|---|---|---|---|---|---|---|
-| 1 | 4 | 25 | $39.12 | $38.57 | 0.0035% | 0.0313% | — |
-| 2 | 12 | 65 | $62.37 | $61.23 | 0.0112% | 0.0759% | **1.59x** |
-| 3 | 20 | 150 | $97.74 | $98.72 | 0.0205% | 0.1386% | **1.57x** |
-| 4 | 28 | 550 | $246.0 | $252.5 | 0.0674% | 0.4568% | **2.52x** |
-| 5 | 36 | 950 | $390.8 | $391.1 | 0.1215% | 0.8269% | **1.59x** |
-| 6 | 44 | 4,500 | $1.145K | $1.167K | 0.4057% | 2.7478% | **2.93x** |
-| 7 | 52 | 8,500 | $1.921K | $1.962K | 0.7351% | 4.9872% | **1.68x** |
-| 8 | 60 | 35,000 | $5.353K | $5.463K | 2.4344% | 13.2568% | **2.79x** |
-| 9 | 68 | 75,000 | $9.027K | $9.201K | 4.4451% | 20.7400% | **1.69x** |
-| 10 | chest | — | $33.57K | $33.56K | 20.0000% | 60.3150% | **3.72x** |
+| 1 | 4 | 25 | $39.68 | $38.12 | 0.0036% | 0.0314% | — |
+| 2 | 12 | 65 | $64.24 | $62.82 | 0.0115% | 0.0762% | 1.62x |
+| 3 | 20 | 150 | $101.1 | $100.8 | 0.0210% | 0.1392% | 1.57x |
+| 4 | 28 | 550 | $257.2 | $257.0 | 0.0691% | 0.4590% | 2.54x |
+| 5 | 36 | 950 | $411.1 | $417.0 | 0.1246% | 0.8309% | 1.60x |
+| 6 | 44 | 4,500 | $1.212K | $1.201K | 0.4160% | 2.7609% | 2.95x |
+| 7 | 52 | 8,500 | $2.043K | $2.038K | 0.7539% | 5.0112% | 1.69x |
+| 8 | 60 | 35,000 | $5.758K | $5.741K | 2.4963% | 13.3359% | 2.82x |
+| 9 | 68 | 75,000 | $9.763K | $9.733K | 4.5562% | 20.8819% | 1.70x |
+| 10 | chest | — | $36.07K | $35.98K | 20.0000% | 60.3150% | 3.69x |
 
-**Income ratios are now 1.57x to 3.72x**, against the 1.16x-2.47x the previous pass measured under
-the broken anchor. They alternate — roughly 1.6x, then 2.5-2.9x, then 1.6x again — because a tier
-whose 8-band step crosses a window transition gains far more than one whose step stays inside a
-window. Per the brief I am reporting the ratios and stopping; whether the even 8-band spacing is the
-right choice is a separate decision.
+Ratios run **1.57x to 3.69x**, against 1.57x-3.72x before this pass and 1.16x-2.47x under the broken
+anchor. Per the brief, the ratios are reported and no conclusion is drawn about whether the even
+8-band spacing is right.
 
-## A defect in the v2 numbers, found while checking them
-
-The with-box figures in `roll_ev_v2.json` are **understated by 0.3% to 1.8%**, and the cause is worth
-recording. `roll_ev.luau` gets its box mixture from `dev/analysis/common.luau`, whose
-`rollPmfForBandLuck` sets `clampLuck = SlimeConfig.SLIME_LUCK_ANCHOR_HIGH`. That was correct while
-`t` clamped exactly at the anchor. With `T_MAX = 1.35` the clamp moved to 1.0887M, so the integrator
-now collapses the doubling tail 3.2x too early:
-
-| tier | v2 JSON (stale clamp) | verify_anchor (clamp derived from T_MAX) | understated by |
-|---|---|---|---|
-| 1 | $39.12 | $39.24 | 0.3% |
-| 5 | $390.8 | $395.5 | 1.2% |
-| 8 | $5.353K | $5.445K | 1.7% |
-| 9 | $9.027K | $9.192K | 1.8% |
-
-`common.luau` is on this pass's read-only list, so it was **not** edited — the bias is reported
-instead. It is small enough not to change any conclusion here, and the correct figures are the
-`verify_anchor.luau` ones in §3f/3h. Any future pass that touches `T_MAX` again should fix
-`common.luau` first, or its baselines will drift further.
+Ten-slot equilibrium income from `roll_economics_v2.json`, for the next pass to join against:
+$47.1K, $161.8K, $319.5K, $1.045M, $1.703M, $3.851M, $5.224M, $7.688M, $8.540M, $8.540M per second
+of base income by tier.
 
 ---
 
 # What this leaves
 
-1. **New tier 9's box is still dead (1.04x).** The renumber deleted old tier 10 for having a 1.01x
-   box; the same band, now under new tier 9, has 1.04x. `T_MAX` cannot fix it — the window is
-   saturated from t = 0.875 and there is no sixth tier-window to unlock. The options are a fifth
-   window (more slime tiers), a top band placed lower in the progression (a shorter road or a
-   different band target for tier 9), or accepting that the top road tier's box is decorative.
+1. **Sell value scales with the change and nobody has looked at it.** A top Divine now sells for
+   $51.2M (60 seconds of income x $854K). `InventoryConfig.SELL_VALUE_INCOME_MULTIPLIER` was not
+   touched, and selling is still 60 seconds of income for every slime — but the *absolute* number a
+   Divine sells for is now 2.44x larger, against unchanged swing prices.
 
-2. **The road is exactly as three measurement passes measured it.** Transitions at bands
-   0/27/40/56/64, band 68 at $8.87K, monotonicity intact. Anything those passes concluded about
-   per-band income holds again.
+2. **The ceiling grew 2.44x while prices did not move.** Equilibrium base income at the top tiers is
+   up correspondingly (tier 9's ten-slot equilibrium is now $8.54M/s against $3.5M/s), so measured
+   progression times will be shorter than the last full measurement pass reported. No repricing was
+   in scope.
 
-3. **The v2 baseline is ready for the next pass** at `dev/out/roll_ev_v2.json` and
-   `dev/out/roll_economics_v2.json`, both recording `5a0423f`, with the 0.3-1.8% box understatement
-   noted above. `cycle_economics.json` and `slot_sweep.json` have **not** been regenerated — they
-   still describe `e12ca51`, so a full re-measurement of cycle time and the slot sweep against this
-   tree is still outstanding.
+3. **`cycle_economics.json` and `slot_sweep.json` still describe `e12ca51`.** Only the two roll-side
+   baselines were regenerated. A full re-measurement of cycle time and the slot sweep against this
+   tree is still outstanding, and the slot sweep in particular now has a different answer available
+   to it: the ceiling it measured as $3.5M/s of base income is $8.54M/s here.
 
-4. **Untouched, as required:** `SLIME_LUCK_ANCHOR_LOW`, `SLIME_EXTRAPOLATION_T_MIN`, every other line
-   of `SlimeRoll.luau`, the whole renumbered ladder (`SWING_TIER_DISTANCE_SCALE`, the visual scales,
-   `SWING_TIER_SNAP_THRESHOLD` with 1.95 at index 10, `SWING_TIER_PRICES`, the design targets), the
-   74-band curve, `RUNWAY_BAND_LENGTH_STUDS`, `RUNWAY_START_Z`, the box mechanics, the chest table
-   and landing path, the flight and arch formulas, the upgrade curve, `SLOT_COUNT`, the base layout,
-   the ping compensation, and `LaunchRewardScene.luau` — which was not opened.
+4. **`PlayerProfile.formatIncomePerSecond`'s comment is stale** (0c) — it claims per-slime income
+   tops out at 1200 and names a deleted constant. The code handles the new magnitudes correctly;
+   only the comment lies. Not fixed, since this pass was scoped to two gameplay constants.
+
+5. **Untouched, as required:** incomes for tiers 1-7, `SLIME_TIER_COUNTS`, all four luck/extrapolation
+   constants, `SLIME_PEAK_OFFSET_*`, both spreads, the shape and both NaN floors, the sliding window
+   and the generalised Gaussian, `CHEST_DIVINE_CHANCE` and `CHEST_TIER_WEIGHT_RATIO`, the whole
+   renumbered ladder and its prices, the 74-band curve, the upgrade curve, `SLOT_COUNT`, the flight
+   formulas, the ping compensation, the box mechanics, and `LaunchRewardScene.luau` — not opened.
 
 # Files
 
-**Edited (gameplay):** `src/ReplicatedStorage/Config/SlimeConfig.luau` — two constants and their
-comment blocks. Nothing else.
+**Edited (gameplay), three files:**
 
-**Created:** `dev/analysis/verify_anchor.luau`, `dev/analysis/roll_ev_v2.luau`,
-`dev/analysis/slot_sim_v2.luau`, and in `dev/out/`: `verify_anchor.log`,
-`verify_anchor_before.log`, `roll_ev_v2.json`, `roll_ev_v2.log`, `roll_economics_v2.json`,
-`slot_sim_v2.log`.
+- `src/ReplicatedStorage/Config/SlimeConfig.luau` — added `SLIME_TIER_WEIGHT_RATIO` (and its type
+  entry), replaced Divine's income row.
+- `src/ServerScriptService/SlimeRoll.luau` — new `pickSlimeInTier`, with the uniform fast path;
+  `rollSlime` now delegates to it.
+- `src/ServerScriptService/LaunchServer.server.luau` — `rollChestSlime`'s final pick goes through
+  the same function (one line plus its comment).
+
+**Edited (analysis):** `dev/analysis/common.luau` — the clamp and the within-tier split.
+
+**Created:** `dev/analysis/verify_divine.luau`; `dev/out/verify_divine.log`,
+`verify_divine_step0.log`. Regenerated: `dev/out/roll_ev_v2.json`, `roll_economics_v2.json` and
+their logs.
