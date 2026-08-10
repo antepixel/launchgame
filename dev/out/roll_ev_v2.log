@@ -1,0 +1,31 @@
+SLOT_COUNT = 10 (BaseConfig.SLOT_COUNT)
+MAX_LEVEL = 25, UPGRADE_GROWTH_RATE = 0.15, UPGRADE_PAYBACK_SECONDS = 600
+max-level multiplier = 28.625176x, cost to max from L1 = 16575.1057 seconds of base income
+BOX_DOUBLE_CHANCE = 0.55, bands = 74, slimes = 65, swing tiers = 10
+
+-- perfect-launch landing per swing tier --
+tier  scale  tierScale  distance  seatZ    landZ     fromStart  band  zone   bandLuck  price
+   1   1.00     1.0000    200.00   24.264   -175.74     171.48     4  road         25  0
+   2   1.15     2.6383    527.66   23.404   -504.26     500.00    12  road         65  100K
+   3   1.33     4.2332    846.64   22.371   -824.27     820.01    20  road        150  450K
+   4   1.53     5.8274   1165.48   21.224  -1144.26    1140.00    28  road        550  5M
+   5   1.77     7.4205   1484.10   19.848  -1464.25    1459.99    36  road        950  20M
+   6   2.04     9.0128   1802.56   18.299  -1784.26    1780.00    44  road       4500  250M
+   7   2.35    10.6039   2120.78   16.521  -2104.26    2100.00    52  road       8500  3B
+   8   2.71    12.1936   2438.72   14.456  -2424.26    2420.00    60  road      35000  6B
+   9   3.12    13.7818   2756.36   12.104  -2744.26    2740.00    68  road      75000  110B
+  10   3.60    15.3552   3071.04    9.351  -3061.69    3057.43    76  past          0  800B
+
+monotonicity over 74 band lucks: decreasing steps worst drop = 0.000e+00 (none)
+tier  1  luck       25 (mysteryBox)  E[base income]/roll: sampled $38.6  analytic $39.1  (max |dev| 2.36e-04)  P(Divine) 0.0035%  P(Secret+) 0.0313%
+tier  2  luck       65 (mysteryBox)  E[base income]/roll: sampled $61.2  analytic $62.4  (max |dev| 2.89e-04)  P(Divine) 0.0112%  P(Secret+) 0.0759%
+tier  3  luck      150 (mysteryBox)  E[base income]/roll: sampled $98.7  analytic $97.7  (max |dev| 3.16e-04)  P(Divine) 0.0205%  P(Secret+) 0.1386%
+tier  4  luck      550 (mysteryBox)  E[base income]/roll: sampled $252  analytic $246  (max |dev| 3.49e-04)  P(Divine) 0.0674%  P(Secret+) 0.4568%
+tier  5  luck      950 (mysteryBox)  E[base income]/roll: sampled $391  analytic $391  (max |dev| 2.45e-04)  P(Divine) 0.1215%  P(Secret+) 0.8269%
+tier  6  luck     4500 (mysteryBox)  E[base income]/roll: sampled $1.17K  analytic $1.14K  (max |dev| 3.25e-04)  P(Divine) 0.4057%  P(Secret+) 2.7478%
+tier  7  luck     8500 (mysteryBox)  E[base income]/roll: sampled $1.96K  analytic $1.92K  (max |dev| 4.59e-04)  P(Divine) 0.7351%  P(Secret+) 4.9872%
+tier  8  luck    35000 (mysteryBox)  E[base income]/roll: sampled $5.46K  analytic $5.35K  (max |dev| 5.28e-04)  P(Divine) 2.4344%  P(Secret+) 13.2568%
+tier  9  luck    75000 (mysteryBox)  E[base income]/roll: sampled $9.2K  analytic $9.03K  (max |dev| 4.48e-04)  P(Divine) 4.4451%  P(Secret+) 20.7400%
+tier 10  luck        0 (chest)  E[base income]/roll: sampled $33.6K  analytic $33.6K  (max |dev| 2.60e-04)  P(Divine) 20.0000%  P(Secret+) 60.3150%
+
+wrote dev/out/roll_ev_v2.json
