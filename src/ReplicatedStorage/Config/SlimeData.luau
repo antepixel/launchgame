@@ -34,10 +34,23 @@ local SlimeData = {}
 -- client looks up name/tier/colour/income from THIS SAME shared table, not
 -- from anything the server sends alongside it.
 local slimes: { Slime } = {}
--- One list per tier -- what SlimeRoll indexes into once it's already chosen
--- a tier (see SlimeRoll.luau): "every slime within a tier is equally likely"
--- is just "pick a uniformly random index into this list."
+-- One list per tier -- what SlimeRoll.pickSlimeInTier picks from once a tier
+-- is already chosen (see SlimeRoll.luau). ASCENDING INCOME ORDER, which is
+-- load-bearing now that the pick is not always flat: entry i of this list is
+-- entry i of SLIME_INCOME_BY_TIER and gets weight ratio^-(i-1) from
+-- SLIME_TIER_WEIGHT_RATIO, so a tier whose incomes were written out of order
+-- would silently weight the wrong slimes. Uniform tiers (every tier but
+-- Divine today) still take a flat pick over this same list.
 local slimesByTier: { { Slime } } = {}
+
+-- Checked once, outside the per-tier loop below, because a per-tier check
+-- cannot see a table that is too LONG: an entry at index 9 of an 8-tier ladder
+-- would never be read and never be noticed. Same failure class as the
+-- per-tier asserts, different shape.
+assert(
+	#SlimeConfig.SLIME_TIER_WEIGHT_RATIO == #SlimeConfig.SLIME_TIER_NAMES,
+	string.format("SlimeConfig.SLIME_TIER_WEIGHT_RATIO has %d entries, expected %d to match SLIME_TIER_NAMES", #SlimeConfig.SLIME_TIER_WEIGHT_RATIO, #SlimeConfig.SLIME_TIER_NAMES)
+)
 
 for tier = 1, #SlimeConfig.SLIME_TIER_NAMES do
 	local tierName = SlimeConfig.SLIME_TIER_NAMES[tier]
@@ -58,6 +71,26 @@ for tier = 1, #SlimeConfig.SLIME_TIER_NAMES do
 	assert(
 		#colors == count,
 		string.format("SlimeConfig.SLIME_COLOR_BY_TIER[%d] (%s) has %d entries, expected %d to match SLIME_TIER_COUNTS[%d]", tier, tierName, #colors, count, tier)
+	)
+	-- SLIME_TIER_WEIGHT_RATIO is checked here too, for the same reason and in
+	-- the same place, even though this generator does not read it: it is the
+	-- one loop that already walks every tier with SlimeConfig open, and a
+	-- missing or malformed entry there fails SILENTLY rather than loudly.
+	-- SlimeRoll.pickSlimeInTier's `typeof(ratio) ~= "number"` fallback treats a
+	-- nil entry as uniform, which is a perfectly reasonable runtime default and
+	-- a terrible way to find out the table is short -- a silently-uniform
+	-- Divine is exactly the bug the analysis layer shipped one pass ago and
+	-- only caught by cross-checking two integrators. The fallback stays; this
+	-- is what makes sure it never has to fire.
+	--
+	-- >= 1.0 because the semantics only run one way: the ratio makes each step
+	-- UP a tier's income ladder rarer than the step below it (weight_i =
+	-- ratio ^ -(i - 1)). A value below 1 would silently invert that and make
+	-- the best slime in a tier the most common one.
+	local ratio = SlimeConfig.SLIME_TIER_WEIGHT_RATIO[tier]
+	assert(
+		typeof(ratio) == "number" and ratio >= 1.0,
+		string.format("SlimeConfig.SLIME_TIER_WEIGHT_RATIO[%d] (%s) is %s, expected a number >= 1.0", tier, tierName, tostring(ratio))
 	)
 
 	slimesByTier[tier] = {}
