@@ -22,6 +22,8 @@
 export type BaseConfig = {
 	SLOT_COUNT: number,
 	BASE_INCOME_TICK_SECONDS: number,
+	OFFLINE_CAP_SECONDS: number,
+	OFFLINE_RATE_MULTIPLIER: number,
 	BASE_GRID_COLUMNS: number,
 	BASE_SLOT_COLUMN_SPACING_STUDS: number,
 	BASE_SLOT_ROW_SPACING_STUDS: number,
@@ -184,6 +186,48 @@ local BaseConfig: BaseConfig = {
 	-- effective EARN RATE stays the same either way, only how coarsely it's
 	-- paid out changes.
 	BASE_INCOME_TICK_SECONDS = 1,
+
+	-- ===== OFFLINE EARNINGS. Income accrues into a PENDING POT rather than
+	-- straight to cash (see PlayerProfile's income loop), and the time a player
+	-- spends logged off accrues into that same pot -- one pot, banked in full by
+	-- walking over any collect pad.
+	--
+	-- How many seconds of absence are paid for. Everything past this is simply
+	-- not credited, so a player who leaves for a week is paid for eight hours.
+	--
+	-- WHY A GENEROUS CAP IS LESS DANGEROUS HERE THAN IT LOOKS, and this is the
+	-- thing to hold on to when retuning it: offline income is SELF-SCALING. It
+	-- is not a flat grant, it is a multiple of THE PLAYER'S OWN CURRENT RATE --
+	-- the exact same totalIncomePerSecond the online tick uses, from the exact
+	-- same slots and levels. Eight hours offline pays precisely what eight hours
+	-- online would have paid, so it can never outrun the progression the player
+	-- has actually built; it can only refund time. A player with an empty base
+	-- earns nothing from a week away. What the cap really tunes is how much of a
+	-- reason there is to come back TODAY rather than in three days, which is a
+	-- retention question, not a balance one.
+	--
+	-- 28800 = 8 hours. Chosen as "a night's sleep plus a working day," the
+	-- interval the genre converges on, and EXPECTED TO BE RETUNED once there is
+	-- real player data -- the number that should decide it is the observed gap
+	-- between sessions, which nothing here can predict. Note it interacts with
+	-- nothing else: raising it cannot break a formula, only change how much a
+	-- returning player banks.
+	OFFLINE_CAP_SECONDS = 28800,
+	-- What fraction of the online rate offline time earns. 1.0 means an hour
+	-- away is worth exactly an hour present.
+	--
+	-- 1.0 DELIBERATELY, for this pass, because the alternative cannot be
+	-- evaluated yet: a discount below 1.0 exists to stop offline play dominating
+	-- online play, and nothing here knows how long a real session is or how much
+	-- of a player's income arrives from launches rather than from slots. Shipping
+	-- 1.0 makes the pot trivially legible ("you earn what you would have earned")
+	-- and leaves exactly one number to turn if it proves too strong.
+	--
+	-- EXPECTED TO BE RETUNED after real player data, together with the cap above
+	-- -- they are one knob in two parts, and the cap should move first, since
+	-- shortening the window is a smaller promise to break than devaluing the
+	-- rate.
+	OFFLINE_RATE_MULTIPLIER = 1.0,
 
 	-- ===== One player's own grid (see BaseGeometry.luau's slotPosition) --
 	-- a real 2x5 grid, not a 5x2 one: 2 columns (X = baseX +-15) x 5 rows

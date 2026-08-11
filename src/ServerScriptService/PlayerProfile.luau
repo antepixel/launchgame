@@ -38,6 +38,29 @@ type Profile = {
 	baseIndex: number,
 	baseFolder: Folder,
 	money: number,
+	-- ===== THE PENDING POT: income earned but not yet banked. Every second of
+	-- income -- online (the tick below) and offline (creditOfflineIncome, on
+	-- load) -- lands HERE, never straight in `money`. Walking over any collect
+	-- pad moves the whole pot to `money` at once and zeroes this.
+	--
+	-- NOT SPENDABLE, and that is structural rather than enforced: the only two
+	-- balance checks in this file (upgradeSlime, buyNextTier) compare against
+	-- `money` and nothing sums the two. There is deliberately no
+	-- spendableMoney() helper -- adding one is the single change that would
+	-- break the property, so the absence is the guarantee.
+	--
+	-- ONE POT PER PLAYER, not one per pad or per slot. The eleven pads are
+	-- plural because they are places to stand, not because they hold separate
+	-- money -- see BaseConfig's return-pad block.
+	pendingIncome: number,
+	-- How much of `pendingIncome` was credited by THIS session's offline
+	-- accrual. Purely for the UI's one-time "while you were away" line, which is
+	-- why it is tracked apart from the pot rather than inferred from it -- once
+	-- the tick has added a second of online income the two are no longer
+	-- separable. Zeroed by the first collect, and NEVER persisted: it describes
+	-- this session's arrival, and a save that carried it would re-announce a
+	-- credit the player has already been shown.
+	offlineCredit: number,
 	slots: { [number]: number }, -- slot number -> globalIndex, missing = empty
 	visualParts: { [number]: Model }, -- slot number -> that slot's slime Model (see SlimeBuilder.luau), missing = empty
 	-- UNPLACED copies held, stacked by globalIndex -> count (missing/0 =
@@ -280,6 +303,12 @@ local function buildBaseFolder(player: Player, baseIndex: number): Folder
 	returnPad.Parent = folder
 
 	folder:SetAttribute("Money", 0)
+	-- Replicated exactly the way Money is -- a plain attribute on this player's
+	-- own base folder, which Roblox replicates for free. No remote: the pad
+	-- labels and the HUD readout are pure renderings of these two numbers (see
+	-- BaseClient.client.luau), and the client is never asked what they are.
+	folder:SetAttribute("PendingIncome", 0)
+	folder:SetAttribute("OfflineCredit", 0)
 	folder:SetAttribute("SwingTier", 1)
 	folder:SetAttribute("SaveDisabled", false)
 	return folder
@@ -614,6 +643,22 @@ local function syncClientState(profile: Profile)
 	profile.baseFolder:SetAttribute("ChestsOpened", profile.chestsOpened)
 end
 
+-- ===== The pending pot's one writer. Every path that changes the pot (the
+-- income tick, offline accrual on load, a collect) goes through here, so the
+-- replicated attribute can never drift from the field it mirrors -- the same
+-- "one place sets it" rule Money already follows, just made explicit because
+-- this one has three writers rather than Money's several scattered ones.
+--
+-- OfflineCredit rides along because the UI treats the two as one state: the
+-- "while you were away" line is shown only while offlineCredit > 0, and the
+-- first collect zeroes both together (see collectPending).
+local function setPending(profile: Profile, pendingIncome: number, offlineCredit: number)
+	profile.pendingIncome = pendingIncome
+	profile.offlineCredit = offlineCredit
+	profile.baseFolder:SetAttribute("PendingIncome", pendingIncome)
+	profile.baseFolder:SetAttribute("OfflineCredit", offlineCredit)
+end
+
 -- ===== Save-shape adapters: the ONLY place that translates between the
 -- in-memory Profile (a hash-set for `seen`, a sparse map for `slots`) and
 -- the plain, DataStore-safe table PlayerStore reads/writes (a dense array
@@ -653,6 +698,13 @@ local function toSaveShape(profile: Profile): { [string]: any }
 	end
 	return {
 		money = profile.money,
+		-- Persisted, so a player who logs off holding an uncollected pot still
+		-- has it on their next join. It is real earned income that simply has
+		-- not been walked over yet -- dropping it on disconnect would punish
+		-- exactly the player this whole system exists to bring back.
+		-- `offlineCredit` is deliberately NOT here; see its own comment on the
+		-- Profile type.
+		pendingIncome = profile.pendingIncome,
 		slots = slotsOut,
 		levels = levelsOut,
 		seen = seenOut,
@@ -669,6 +721,15 @@ local function applyLoadedData(profile: Profile, data: { [string]: any }?)
 	end
 	if typeof(data.money) == "number" then
 		profile.money = data.money
+	end
+	-- Absent on every save written before this feature existed, which reads as
+	-- 0 -- no migration needed, same as `levels` and `chestsOpened` before it.
+	-- Clamped to >= 0 for the same reason those are: a hand-edited or corrupted
+	-- value must not be able to produce a negative pot, which would silently eat
+	-- the next collect. NaN also fails `> 0` here, so it lands on 0 rather than
+	-- poisoning every later addition.
+	if typeof(data.pendingIncome) == "number" and data.pendingIncome > 0 then
+		profile.pendingIncome = data.pendingIncome
 	end
 	local slots = data.slots
 	local levels = data.levels
@@ -775,6 +836,8 @@ local function onPlayerAdded(player: Player)
 		baseIndex = baseIndex,
 		baseFolder = baseFolder,
 		money = 0,
+		pendingIncome = 0,
+		offlineCredit = 0,
 		slots = {},
 		visualParts = {},
 		inventory = {},
@@ -823,6 +886,9 @@ local function onPlayerAdded(player: Player)
 		refreshSignCrown(profile)
 		baseFolder:SetAttribute("Money", profile.money)
 		baseFolder:SetAttribute("SwingTier", profile.swingTier)
+		-- Publishes the loaded pot (and, once step 4's accrual runs just above
+		-- this, whatever it credited) in the same post-load burst as Money.
+		setPending(profile, profile.pendingIncome, profile.offlineCredit)
 		for i = 1, BaseConfig.SLOT_COUNT do
 			local globalIndex = profile.slots[i]
 			if globalIndex then
@@ -1241,14 +1307,25 @@ local function totalIncomePerSecond(profile: Profile): number
 	return total
 end
 
+-- ===== INCOME NOW ACCRUES INTO THE PENDING POT, NOT INTO CASH. This is the
+-- one line of the loop that changed (`money` -> `pendingIncome`); the RATE
+-- calculation above is untouched, and so is the interval. The player banks it by
+-- walking over any collect pad -- see collectPending.
+--
+-- The pot is the same destination offline time credits to (creditOfflineIncome),
+-- from the same totalIncomePerSecond, which is what makes "an hour away is worth
+-- an hour present" true by construction rather than by two formulas agreeing.
 task.spawn(function()
 	while true do
 		task.wait(BaseConfig.BASE_INCOME_TICK_SECONDS)
 		for _, profile in profiles do
 			local income = totalIncomePerSecond(profile)
 			if income > 0 then
-				profile.money += income * BaseConfig.BASE_INCOME_TICK_SECONDS
-				profile.baseFolder:SetAttribute("Money", profile.money)
+				setPending(
+					profile,
+					profile.pendingIncome + income * BaseConfig.BASE_INCOME_TICK_SECONDS,
+					profile.offlineCredit
+				)
 			end
 		end
 	end
@@ -1370,6 +1447,10 @@ function PlayerProfile.devWipeProfile(player: Player)
 	PlayerProfile.devClearBase(player)
 	profile.money = 0
 	profile.baseFolder:SetAttribute("Money", 0)
+	-- The pot is part of "fresh-player state" -- a wipe that left it would have
+	-- the player collect the pre-wipe base's earnings a moment later, which is
+	-- exactly the confusion this button exists to avoid.
+	setPending(profile, 0, 0)
 	profile.inventory = {}
 	profile.seen = {}
 	profile.swingTier = 1
