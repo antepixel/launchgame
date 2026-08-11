@@ -448,10 +448,52 @@ local ReplicatedStorage = newInstance("Folder")
 ReplicatedStorage.Name = "ReplicatedStorage"
 ConfigFolder.Parent = ReplicatedStorage
 
+-- ===== AUDIO-ADJACENT SERVICE STUBS, and their limits stated loudly.
+--
+-- These exist so dev/analysis/verify_sound.luau can load the REAL
+-- ReplicatedStorage/SoundPlayer.luau and exercise its missing-key / nil-id path,
+-- which is the one behaviour of that module that can be checked without a
+-- speaker (see REPORT.md §6a/§6e).
+--
+-- THEY ARE NOT ENOUGH TO PLAY ANYTHING, deliberately. SoundPlayer bails out of
+-- play2D/playAt/startLoop at `resolve()` -- before it ever reaches
+-- Instance.new("Sound"), SoundService or Debris -- for exactly the entries this
+-- pass ships, because every asset id is nil. A test that got PAST resolve would
+-- need real Sound/SoundGroup instances, real rolloff and a listener, none of
+-- which this shim models and none of which anyone here can hear. So a passing
+-- verify_sound run proves the nil-safety and the wiring, NOT that audio works.
+-- Do not extend these into a fake audio engine; the honest boundary is here.
+local RunServiceStub = {
+	-- verify_sound loads SoundPlayer as if on a client, because that is the only
+	-- context it is ever used in (see its own header -- the server creates no
+	-- Sound at all).
+	IsClient = function()
+		return true
+	end,
+	IsServer = function()
+		return false
+	end,
+	IsStudio = function()
+		return false
+	end,
+}
+
+local SoundServiceStub = newInstance("Folder")
+SoundServiceStub.Name = "SoundService"
+
+local DebrisStub = {
+	-- No-op: lifetime management is a timing behaviour, and nothing reachable
+	-- with a nil asset id ever schedules anything through it.
+	AddItem = function() end,
+}
+
 local services = {
 	Workspace = Workspace,
 	ServerScriptService = ServerScriptService,
 	ReplicatedStorage = ReplicatedStorage,
+	RunService = RunServiceStub,
+	SoundService = SoundServiceStub,
+	Debris = DebrisStub,
 }
 
 local game = {
@@ -500,6 +542,17 @@ local function loadLuauModule(relPath)
 		end,
 		select = select,
 		print = print,
+		-- REAL GAP, found by dev/analysis/verify_sound.luau rather than reasoned
+		-- about: `warn` is a Roblox global and several modules in src/ call it
+		-- (PlayerProfile's load-failure path, BaseClient's missing-base warning,
+		-- SoundPlayer's warn-once), but this env never provided it -- so any
+		-- analysis script that reached one of those lines died on "attempt to
+		-- call a nil value" instead of warning. Routed to print with a prefix so
+		-- the message is visible in analysis output, which is also what lets a
+		-- test observe warnings at all.
+		warn = function(...)
+			print("[warn]", ...)
+		end,
 		error = error,
 		assert = assert,
 		require = function(handle)

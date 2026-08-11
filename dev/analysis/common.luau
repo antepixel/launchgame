@@ -98,6 +98,27 @@ function M.perfectLaunchForTier(tier: number): { [string]: any }
 	}
 end
 
+-- ===== Reading SOURCE FILES for structural checks =====
+-- Any test that greps the tree must go through this rather than fs.readFile.
+--
+-- WHY, and it is not hypothetical -- it silently broke a check before it was
+-- noticed: this repo is developed on Windows with git's autocrlf on, so files
+-- arrive from disk with CRLF line endings. A needle written the obvious way,
+-- "someCall()\n\tnextLine", then matches NOTHING, because the real bytes are
+-- "someCall()\r\n\tnextLine". The failure mode is the dangerous direction: a
+-- structural assertion that silently stops finding what it was written to find
+-- still PASSES if it was phrased as "this must not appear", and a `find`
+-- falling back to a default still produces a plausible-looking result.
+--
+-- Normalising to LF here means every needle in every analysis script can be
+-- written the way it reads in the editor, and none of them has to know what
+-- platform produced the checkout.
+local fs = require("@lune/fs")
+
+function M.readSource(relPath: string): string
+	return (string.gsub(fs.readFile(relPath), "\r\n", "\n"))
+end
+
 -- ===== Flight duration for a tier =====
 -- Mirrors LaunchServer.server.luau's onRelease, which is now:
 --   duration = FLIGHT_DURATION_BASE_SECONDS + tier * FLIGHT_DURATION_PER_TIER_SECONDS

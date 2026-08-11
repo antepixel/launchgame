@@ -218,7 +218,7 @@ local fs = require("@lune/fs")
 -- spendableMoney() helper, and a raw search finds that sentence and calls it a
 -- violation. Stripping also makes the positive checks below mean what they say:
 -- a gate that had been commented out would no longer count as present.
-local rawSource = fs.readFile("src/ServerScriptService/PlayerProfile.luau")
+local rawSource = C.readSource("src/ServerScriptService/PlayerProfile.luau")
 local sourceLines = {}
 for line in string.gmatch(rawSource, "([^\n]*)\n?") do
 	table.insert(sourceLines, (string.gsub(line, "%-%-.*$", "")))
