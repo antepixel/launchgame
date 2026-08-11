@@ -19,6 +19,9 @@ local MoneyFormat = require(ReplicatedStorage.Config.MoneyFormat)
 local SlimeData = require(ReplicatedStorage.Config.SlimeData)
 local SlimeUpgrade = require(ReplicatedStorage.Config.SlimeUpgrade)
 local SlimeUpgradeConfig = require(ReplicatedStorage.Config.SlimeUpgradeConfig)
+-- The only module that creates a Sound. The four calls below sit beside status
+-- text that was already being set; no inventory or upgrade behaviour changes.
+local SoundPlayer = require(ReplicatedStorage.SoundPlayer)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -523,9 +526,14 @@ inventoryActionResultRemote.OnClientEvent:Connect(function(success: boolean, rea
 	if success then
 		statusLabel.Text = "Done!"
 		statusLabel.TextColor3 = Color3.new(0.3, 1, 0.4)
+		-- One sound for place, remove and sell alike: they are the same kind of
+		-- small physical confirmation, and this remote does not distinguish them
+		-- anyway (see InventoryServer -- it reports success, not which action).
+		SoundPlayer.play2D("UI_INVENTORY_ACTION")
 	else
 		statusLabel.Text = reason or "Action failed"
 		statusLabel.TextColor3 = Color3.new(1, 0.4, 0.3)
+		SoundPlayer.play2D("UI_ACTION_DENIED")
 	end
 end)
 
@@ -533,8 +541,13 @@ upgradeResultRemote.OnClientEvent:Connect(function(success: boolean, reason: str
 	if success then
 		statusLabel.Text = string.format("Upgraded +%d level%s!", boughtCount or 0, if boughtCount == 1 then "" else "s")
 		statusLabel.TextColor3 = Color3.new(0.3, 1, 0.4)
+		-- Same chime a swing-tier purchase gets: both are "money spent, base got
+		-- stronger", and giving them separate sounds would be two assets to shop
+		-- for and no clearer to the player.
+		SoundPlayer.play2D("UI_PURCHASE_SUCCESS")
 	else
 		statusLabel.Text = reason or "Upgrade failed"
 		statusLabel.TextColor3 = Color3.new(1, 0.4, 0.3)
+		SoundPlayer.play2D("UI_ACTION_DENIED")
 	end
 end)

@@ -14,6 +14,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local ShopConfig = require(ReplicatedStorage.Config.ShopConfig)
 local MoneyFormat = require(ReplicatedStorage.Config.MoneyFormat)
+-- The only module that creates a Sound. The two calls below sit beside status
+-- text that was already being set; nothing about the purchase changes.
+local SoundPlayer = require(ReplicatedStorage.SoundPlayer)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -310,8 +313,13 @@ buyTierResultRemote.OnClientEvent:Connect(function(success: boolean, reason: str
 	if success then
 		statusLabel.Text = "Purchased! New swing shows next time you sit down or release."
 		statusLabel.TextColor3 = Color3.new(0.3, 1, 0.4)
+		-- Driven off the RESULT remote, not off the button press, so the chime
+		-- can only ever follow a purchase the server actually granted -- the
+		-- same reason the status text itself lives here.
+		SoundPlayer.play2D("UI_PURCHASE_SUCCESS")
 	else
 		statusLabel.Text = reason or "Purchase failed"
 		statusLabel.TextColor3 = Color3.new(1, 0.4, 0.3)
+		SoundPlayer.play2D("UI_ACTION_DENIED")
 	end
 end)
