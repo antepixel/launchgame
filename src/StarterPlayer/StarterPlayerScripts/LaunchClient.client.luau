@@ -460,6 +460,11 @@ local flightWindLoop: SoundPlayer.LoopHandle? = nil
 -- tick they hear is a real entry.
 local wasInSweetSpot = true
 
+-- Set by ChestRevealStarted and consumed by the SlimeRevealed that follows it
+-- (see both handlers below): a chest pull gets REWARD_CHEST_REVEAL INSTEAD of
+-- the ordinary tier-scaled reveal, not on top of it.
+local chestRevealPending = false
+
 -- The instantaneous 3D speed range a flight can occupy, across every tier,
 -- measured rather than guessed (dev/analysis/verify_sound.luau recomputes both
 -- ends from the real config and fails if they drift): 100.0 studs/s at the
@@ -753,6 +758,10 @@ local function setGrounded(value: boolean)
 	-- costs nothing.
 	if value then
 		stopFlightWind()
+		-- Same reasoning, for the chest/reveal pairing: every route back to
+		-- neutral clears it, so a reveal that never arrived cannot leave the
+		-- flag set and silence the NEXT one.
+		chestRevealPending = false
 	end
 	-- hideFlightBoxRevealUI FIRST, then the refresh: it clears
 	-- rewardSequenceActive, so by the time this runs both of the gate's inputs
@@ -1185,8 +1194,29 @@ end)
 -- BoxStarted: fired once per landing that earned luck > 0 (see LaunchServer's
 -- Heartbeat landing handler) -- a 0-luck landing never fires this, so the box
 -- simply never appears for a whiff (see the written report).
+-- ===== THE DOUBLING CHAIN'S PITCH CLIMB (see REPORT.md §4a).
+--
+-- Counts links in THIS box's chain so each doubling can sound a step higher
+-- than the last. Reset on BoxStarted rather than on BoxResult, so it tracks one
+-- box from first press to open and cannot inherit a previous box's height.
+local boxDoublingCount = 0
+-- Semitone-ish step per link, and a hard ceiling of one octave.
+--
+-- The chain is geometric at BOX_DOUBLE_CHANCE = 0.55: the mean is 1.22
+-- doublings, 99% of boxes stop by 7, 99.9% by 11 and 99.99% by 15. At +0.06 per
+-- link the pitch reaches the 2.0 ceiling on the 18th doubling, which happens
+-- roughly once in 47,000 boxes -- so in normal play the climb never runs out of
+-- range, and the rare monster chain that does simply HOLDS at one octave up
+-- rather than continuing into inaudibility or into a click. Rejected: a
+-- multiplicative climb (x1.06 per link), which sounds identical for the first
+-- few links and then runs away far faster on exactly the chains worth hearing.
+local BOX_DOUBLE_PITCH_STEP = 0.06
+local BOX_DOUBLE_PITCH_CEILING = 2.0
+
 boxStartedRemote.OnClientEvent:Connect(function(luck: number)
 	setBoxActive(true)
+	boxDoublingCount = 0
+	SoundPlayer.play2D("REWARD_BOX_APPEAR")
 	-- The wider flag, which does NOT come back down when the box opens -- it
 	-- keeps the flight HUD off through the thrash, the burst and the whole
 	-- slime reveal, until hideFlightBoxRevealUI clears it at ResetReady.
@@ -1220,6 +1250,11 @@ end)
 boxResultRemote.OnClientEvent:Connect(function(opened: boolean, luck: number)
 	if opened then
 		setBoxActive(false)
+		-- Resolves the tension the chain built. Its 0.3-0.6 s length is bounded
+		-- against SlimeConfig.REVEAL_BOX_TO_SLIME_DELAY_SECONDS (0.6) so it has
+		-- decayed by the time the slime arrives rather than ringing under it --
+		-- see REPORT.md §5c on collisions with the reward scene's camera work.
+		SoundPlayer.play2D("REWARD_BOX_OPEN")
 		-- Recolours the luck readout and starts the thrash -- both inside
 		-- markBoxOpened, so the box's own colours stay private to the scene.
 		--
@@ -1235,6 +1270,15 @@ boxResultRemote.OnClientEvent:Connect(function(opened: boolean, luck: number)
 		-- REVEAL_BOX_TO_SLIME_DELAY_SECONDS -- see the motion block's header.
 		RewardScene.markBoxOpened(luck)
 	else
+		-- Each link a step higher than the last, clamped at one octave -- see
+		-- BOX_DOUBLE_PITCH_STEP. The first doubling plays at the entry's own
+		-- pitch (count 1 -> scale 1.0), so the climb is audible as a climb from
+		-- the second link rather than starting already raised.
+		boxDoublingCount += 1
+		SoundPlayer.play2D(
+			"REWARD_BOX_DOUBLE",
+			math.min(1 + BOX_DOUBLE_PITCH_STEP * (boxDoublingCount - 1), BOX_DOUBLE_PITCH_CEILING)
+		)
 		RewardScene.markBoxDoubled(luck)
 		-- Deliberately no startBoxMotion call: the nudge is already running and
 		-- IS the fail's animation. Starting anything here would make the
@@ -1266,7 +1310,42 @@ end)
 --
 -- Everything armed here is released in endRewardScene, the same single point
 -- that already releases the box, the camera and the character.
+-- ===== THE REVEAL, SCALED BY THE SLIME'S TIER (see REPORT.md §4b).
+--
+-- BY TIER, NOT BY LUCK, deliberately. Luck is what the box was worth going in;
+-- tier is what actually came out, and they diverge constantly -- a huge luck
+-- roll can still land a Common. The player is looking at the slime, so the
+-- sound has to describe the slime.
+--
+-- Rarer reads as LOWER, LOUDER and LONGER, which is the convention this genre
+-- has settled on: pitch falls from 1.15 at Common to 0.90 at Divine while
+-- volume climbs from 0.85 to 1.15. Both ends are derived from the tier count
+-- (#SlimeConfig.SLIME_TIER_NAMES = 8) rather than hardcoded, so adding a tier
+-- rescales the ramp instead of leaving the top two indistinguishable.
+local REVEAL_PITCH_AT_LOWEST_TIER = 1.15
+local REVEAL_PITCH_AT_HIGHEST_TIER = 0.90
+local REVEAL_VOLUME_AT_LOWEST_TIER = 0.85
+local REVEAL_VOLUME_AT_HIGHEST_TIER = 1.15
+
+-- Set by ChestRevealStarted and consumed by the SlimeRevealed that follows it
+-- one line later on the server (see LaunchServer's chest prompt). A chest pull
+-- gets REWARD_CHEST_REVEAL INSTEAD of the ordinary reveal, not on top of it:
+-- the chest sound IS the fanfare, and layering the box's reveal plus the rarity
+-- swell under it would be three celebratory sounds at once on a table that is
+-- 20% Divine.
+-- Declared with the other reward-scene flags near the top of the file rather
+-- than here, so setGrounded can clear it -- see its own comment. The two server
+-- fires are back-to-back and synchronous, so a leak is not reachable today; the
+-- clear exists because the failure mode if it ever were would be a SILENT
+-- reveal, which is exactly the kind of bug nobody can hear their way to.
+
 chestRevealRemote.OnClientEvent:Connect(function(anchor: CFrame, toward: Vector3)
+	chestRevealPending = true
+	-- The single biggest reward in the game, and the only reveal with its own
+	-- asset. Plays over the 3D WORLD_CHEST_OPEN the server broadcast from the
+	-- lid -- deliberately in a different register (that one is wood and metal,
+	-- this one is light and air) so the two layer rather than mask.
+	SoundPlayer.play2D("REWARD_CHEST_REVEAL")
 	-- Arms the anchor AND this reveal's own rise and duration -- all four
 	-- assignments moved into the scene module together, since that is where the
 	-- reveal reads them. See LaunchRewardScene.armChestReveal.
@@ -1278,6 +1357,38 @@ slimeRevealedRemote.OnClientEvent:Connect(function(globalIndex: number, isNew: b
 	if not slime then
 		return
 	end
+	-- ===== SOUND, before the visuals, so the audio lands on the same frame the
+	-- slime is armed rather than after the model work.
+	local tierCount = #SlimeConfig.SLIME_TIER_NAMES
+	-- 0 at the lowest tier, 1 at the highest. Guarded against a one-tier table
+	-- so this can never divide by zero if the tier list is ever collapsed.
+	local tierT = if tierCount > 1 then (slime.tier - 1) / (tierCount - 1) else 0
+	if chestRevealPending then
+		-- Already sounded by the chest branch above; the chest's own swell
+		-- replaces the ordinary reveal entirely.
+		chestRevealPending = false
+	else
+		SoundPlayer.play2D(
+			"REWARD_SLIME_REVEAL",
+			REVEAL_PITCH_AT_LOWEST_TIER + (REVEAL_PITCH_AT_HIGHEST_TIER - REVEAL_PITCH_AT_LOWEST_TIER) * tierT,
+			REVEAL_VOLUME_AT_LOWEST_TIER + (REVEAL_VOLUME_AT_HIGHEST_TIER - REVEAL_VOLUME_AT_LOWEST_TIER) * tierT
+		)
+		-- Layered ON TOP for the top three tiers, which is what makes a Divine
+		-- categorically different from a Common rather than merely lower --
+		-- pitch alone across eight tiers is a gradient nobody can name. Skipped
+		-- on the chest path, where the chest swell already is the fanfare.
+		if slime.tier >= SoundConfig.RARE_REVEAL_MIN_TIER then
+			SoundPlayer.play2D("REWARD_SLIME_REVEAL_RARE")
+		end
+	end
+	-- Fires on BOTH paths, including the chest: "you have never seen this one
+	-- before" is orthogonal to where it came from, and a first Divine out of a
+	-- chest deserves it most of all. `isNew` is already on the wire (see
+	-- LaunchServer's slimeRevealedRemote), so this costs nothing to know.
+	if isNew then
+		SoundPlayer.play2D("REWARD_SLIME_NEW")
+	end
+
 	-- Normally already gone: the burst destroys the box after
 	-- BOX_OPEN_BURST_SECONDS (0.3), and this fires at 0.6. Kept as the
 	-- structural guarantee that the box and the slime can never share the

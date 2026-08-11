@@ -2488,6 +2488,25 @@ local function onBoxPress(player: Player)
 	end
 	box.pending = true
 
+	-- ===== THE PRESS SOUND, AND IT IS PLAYED FROM THE SERVER ON PURPOSE (see
+	-- REPORT.md §4a). Every route into a press -- Space, a tap anywhere, and the
+	-- ClickDetector on the box itself -- converges on boxPressRemote and
+	-- therefore on this function, so this is the only place that sees ALL of
+	-- them. The client-side alternative was hooking RewardScene.press() at its
+	-- two LaunchClient call sites, which would have been latency-free but would
+	-- have missed the ClickDetector route entirely: clicking the box would have
+	-- been silent while clicking beside it was not, which is worse than a late
+	-- sound.
+	--
+	-- The cost is one round trip before the thump is heard. Accepted, and it
+	-- buys something real: this fires only for presses the server ACCEPTED, so
+	-- it never promises a roll that the rate limit above just swallowed.
+	--
+	-- Placed after the pending guard and after `box.pending = true`, so a
+	-- rate-limited press stays silent rather than sounding identical to one that
+	-- actually rolled.
+	SoundBroadcast.playFor(player, "REWARD_BOX_PRESS")
+
 	-- THE CLEAR, on its own timer. Guarded on identity, not just presence:
 	-- if this player left, died, or resolved this box and started another
 	-- one (see clearActiveRider and the landing handler), activeBoxes[player]
