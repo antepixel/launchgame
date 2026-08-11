@@ -1,441 +1,711 @@
-# Accumulate-and-collect — STEP 0 report, and a STOP
+# Accumulate-and-collect, offline earnings, and one-second-per-tier flights
 
-**Branch `ladder-renumber`. Started from `735e246f1c79fcdd56c39ac805c9de7971674c0b`** ("Report the
-five small items").
+**Branch `ladder-renumber`. Started from `e419ac77dd87ec1fbf7708cf767b36cfce2241ac`.**
 
-**On the dirty tree:** the tree was reported dirty, but it was dirty *against `master`*, not against
-real work. `git diff --stat ladder-renumber` over the whole working tree came back empty — the
-checkout was byte-identical to `ladder-renumber`'s tip, with `master` simply 12 commits behind it.
-Switching branches was therefore a no-op on file contents and left a clean tree. **No commit was
-needed and none was made**; there was nothing uncommitted to preserve. `735e246` is both the hash I
-started from and the hash the tree is still at.
+A note on that hash, since the brief said to start from `735e246`: `e419ac7` *is* `735e246` plus
+the previous pass's STEP 0 report, and it changed `REPORT.md` and nothing else
+(`git diff --stat 735e246 e419ac7` → `REPORT.md | 666 +++---`). So the code this pass started from
+is byte-identical to `735e246`. The tree was clean; nothing needed committing first.
 
-**No code was written.** §0d's answer is the STOP condition the brief specified, and §4 below is the
-argument. Everything in STEP 0 is answered first, because most of it stands regardless of how the
-0d decision goes and the next pass should not have to re-derive it.
+Eight commits, one per step, each independently revertable:
 
----
-
-# 1. The STOP, stated first
-
-> **0d.** Confirm from the map geometry that a player returning from the landing spot to the swing
-> passes within touching distance of at least one collect pad. **If they do not pass a pad, STOP and
-> report** — decision A above depends on this and the pads would need moving first.
-
-**They do not pass a pad. They do not pass within 61 studs of one, and there is no walk back from
-the landing spot at all — the return is a teleport.**
-
-Decision A ("income accrues to the pot ALWAYS... the pads sit on the walk back from the landing
-spot, so collecting is passive within the existing loop") rests on a premise the map does not
-support. Per the brief's MUST NOT CHANGE list I have not moved the pads, and per the STOP I have not
-built the system on top of the wrong premise.
-
-The rest of STEP 0 is answered in full below; §4 is the geometry, §5 is what it costs, §6 is what I
-would need from you to proceed.
-
----
-
-# 2. STEP 0 answers
-
-## 0a — the income tick
-
-`BASE_INCOME_TICK_SECONDS` is consumed in exactly one place: `PlayerProfile.luau:1189-1200`.
-
-```lua
-task.spawn(function()
-	while true do
-		task.wait(BaseConfig.BASE_INCOME_TICK_SECONDS)
-		for _, profile in profiles do
-			local income = totalIncomePerSecond(profile)
-			if income > 0 then
-				profile.money += income * BaseConfig.BASE_INCOME_TICK_SECONDS
-				profile.baseFolder:SetAttribute("Money", profile.money)
-			end
-		end
-	end
-end)
-```
-
-| question | answer |
-|---|---|
-| loop kind | `while true` + `task.wait(interval)` inside one `task.spawn`. **Not** Heartbeat. |
-| per-player or global | **One global loop**, iterating the module-level `profiles` map each tick. |
-| what it computes | `totalIncomePerSecond(profile) * BASE_INCOME_TICK_SECONDS` — a rate times the *nominal* interval. |
-| what it writes | `profile.money` (in-memory, authoritative) and the `Money` attribute on `Base_<UserId>` (replicated, display). |
-
-The constant is defined at `BaseConfig.luau:183` and is `1`.
-
-**One thing worth flagging for whoever does write step 1b.** The lump uses the *config* interval, not
-the *elapsed* interval. `task.wait(1)` returns after *at least* 1 second, typically 1 frame more, and
-much more on a loaded server — so this loop already under-pays slightly and unboundedly under load.
-It is a pre-existing bug, not one this pass introduces, and 1b ("the tick's rate calculation is
-unchanged; only its destination moves") correctly does not ask me to fix it. But note that moving the
-destination to a pot makes it *more* visible, not less: an under-paying pot is a number the player
-watches accumulate, where an under-paying cash balance was invisible against income arriving from
-launches. Recommend fixing it in the same pass with an `os.clock()` delta, as a separate commit.
-
-## 0b — income per second from a profile
-
-`PlayerProfile.totalIncomePerSecond`, `PlayerProfile.luau:1175-1187`. Local to the module, not
-exported.
-
-```lua
-local function totalIncomePerSecond(profile: Profile): number
-	local total = 0
-	for i = 1, BaseConfig.SLOT_COUNT do
-		local globalIndex = profile.slots[i]
-		if globalIndex then
-			local slime = SlimeData.SLIMES[globalIndex]
-			if slime then
-				total += SlimeUpgrade.incomeForLevel(slime.incomePerSecond, profile.levels[i] or 1)
-			end
-		end
-	end
-	return total
-end
-```
-
-**Yes, it already accounts for slot levels via `SlimeUpgrade.incomeForLevel`** (`:1182`), which is
-`baseIncomePerSecond * SlimeUpgrade.incomeMultiplier(level)` (`SlimeUpgrade.luau:59-61`). It reads
-`profile.slots` and `profile.levels` only — placed slimes. Inventory contributes nothing.
-
-This is the function §5f would have compared against, and it is the right one to reuse for offline
-accrual: **there is only one, so online and offline cannot diverge as long as offline calls this
-exact function rather than re-deriving the sum.** It is currently `local`; offline accrual can call
-it directly from inside the same module (which is where profile load already lives), so it need not
-be exported at all.
-
-## 0c — the collect pads
-
-| | |
-|---|---|
-| **where built** | `PlayerProfile.spawnSlimeVisual`, `PlayerProfile.luau:391-415`. **Not** `MapBuilder`, and **not** `BaseGeometry` (which only computes the placement). |
-| **how many** | Up to `SLOT_COUNT` = 10 per player — but **one per *occupied* slot, not one per slot.** They are created inside `spawnSlimeVisual`, so an empty slot has no pad and a fresh player has none at all. |
-| **class** | `Part` (`:392`). Anchored, `CanCollide = false`, `CanTouch` left at its default `true`. |
-| **name** | `"CollectPad"` (`:393`) — all of them, in every base. Not unique; disambiguated only by parent. |
-| **parent** | The **slime `Model`** (`:415`), not the base folder — deliberately, so destroying a slot visual destroys its pad (`:363-377` explains the teardown reasoning). |
-| **size** | `(4, 0.4, 8)` — width and depth from `BaseGeometry.collectPadPlacement`, `BaseGeometry.luau:175-179`. |
-| **position** | Derived, `BaseGeometry.collectPadPlacement:164-188`. Centred in the channel between the slot pad's inner edge and the central path's edge, on the slot's own Z. |
-
-**Behaviour: none. They are purely visual.** I grepped the whole repo for `CollectPad` and
-`COLLECT_PAD` (`*.luau`); every hit is either the construction block above, the `BaseConfig` tuning
-constants, or the `BaseGeometry` derivation. Specifically:
-
-- no `Touched` connection anywhere in the repo (`.Touched` has **zero** hits in `src/`)
-- no `ProximityPrompt` on them (prompts exist, but only on the treasure chest — `MapBuilder.server.luau:616`, `ChestBuilder.luau:264` — and the mystery box uses a `ClickDetector`, `LaunchRewardScene.luau:900`)
-- no `ClickDetector`
-- no attributes set on them
-- no `SetAttribute`, no tag, no registry — nothing anywhere reads a `CollectPad` back
-
-`BaseConfig.luau:226-229` states this outright: *"THIS PASS IS THE PAD ONLY: geometry, colour and
-placement. There is no collection logic and no accumulated-money system behind it yet."*
-
-**Exact world positions**, for lane *i* with `baseX = LaneConfig.baseLaneCenterX(i)` (which is
-`laneCenterX(i)` — the plots ride the swing pitch now, `LaneConfig.luau:105-107`), so
-`baseX ∈ {-150, -90, -30, 30, 90, 150}`:
-
-- **X** = `baseX ± 8`. Derivation: slot pads sit at `baseX ± 15` (`BaseConfig.luau:193`, half of `BASE_SLOT_COLUMN_SPACING_STUDS` = 30); the inner edge is `baseX ∓ 11`; the path edge is `baseX ∓ 5` (`BASE_PATH_SIZE.X` = 10); midpoint `baseX ∓ 8`. Odd slots take `-8`, even slots `+8`.
-- **Z** = the slot's own row: **117, 131, 145, 159, 173** (`BASE_SLOT_Z_START` = 117, `BASE_SLOT_ROW_SPACING_STUDS` = 14, `BaseConfig.luau:195-200`).
-- **Y** = mat top + half pad height = `groundY + 0.2 + 0.2 + 0.2` = `groundY + 0.6`.
-
-So slot 1's pad occupies X `[baseX-10, baseX-6]`, Z `[113, 121]`.
-
-## 0d — the walking loop
-
-**There is no walk from the landing spot. See §1 and §4.**
-
-## 0e — the profile schema
-
-The `Profile` type is `PlayerProfile.luau:37-92`. What `toSaveShape` (`:578-609`) actually persists is
-narrower than the type — the DataStore record is exactly these eight keys:
-
-| key | shape | notes |
+| step | commit | what |
 |---|---|---|
-| `money` | number | |
-| `slots` | dense array of `SLOT_COUNT`, `0` = empty | |
-| `levels` | dense array of `SLOT_COUNT`, default `1` | |
-| `seen` | array of globalIndex | |
-| `swingTier` | number | re-clamped on load, `:653-656` |
-| `inventory` | array of `{globalIndex, count}` | |
-| `chestsOpened` | number | |
-| `chestPending` | boolean | |
+| 1 | `7f36dbf` | flight duration keys off tier index — tier N flies N + 1 s |
+| 2 | `880b956` | the return collect pad on the approach link |
+| 3b | `9443827` | income accrues into a pending pot instead of cash |
+| 3c | `d1986bb` | the tick pays for elapsed time, not the nominal interval |
+| 4 | `b76582b` | offline accrual on load |
+| 5 | `0a55ed8` | all eleven pads wired to bank the pot on touch |
+| 6 | `a5e542f` | pad label, "while you were away" line, HUD readout |
+| 7 | `1c8c337` | verification, and the refactor that made it real |
 
-The in-memory-only fields (`baseIndex`, `baseFolder`, `visualParts`, `canSave`) are deliberately not
-saved.
+## Reproduce every number
 
-**Is there a timestamp / `lastSeen` / `lastSave` / session marker already?** **Yes — and it is a trap,
-not a gift.** `PlayerStore.save` stamps two extra fields onto the record
-(`PlayerStore.luau:127-134`):
-
-```lua
-if releasingSession then
-	profileData.sessionJobId = nil
-	profileData.sessionHeartbeat = nil
-else
-	profileData.sessionJobId = game.JobId
-	profileData.sessionHeartbeat = os.time()
-end
+```
+lune run dev/analysis/flight_tier_pacing.luau   # step 1: 1a, 1c, 1e, 1f
+lune run dev/analysis/verify_offline.luau       # step 7: 7a-7h, exits non-zero on failure
+lune run dev/analysis/verify_ladder.luau        # unchanged, re-run to confirm step 1 broke nothing
+rojo build default.project.json -o <path>       # whole-tree syntax check, run after every step
 ```
 
-`sessionHeartbeat` **is** an `os.time()` written server-side. It looks exactly like the `lastSeen`
-step 2a asks for. **It cannot be used as one.** It is a session *lock*, and on the single most common
-exit path — a clean leave, `releasingSession = true`, `PlayerProfile.luau:794` — it is explicitly set
-to `nil`. A player who logs off normally leaves *no* heartbeat behind, so reusing this field would
-credit every clean-leave player **zero** offline income and only pay out after a crash. That is
-precisely backwards. Step 2a needs its own field written unconditionally in `toSaveShape`, and the
-next pass must not "reuse the timestamp that's already there."
+All from the repo root, deterministic. Nothing in `dev/out/` was regenerated or touched.
 
-Read at load: `PlayerStore.luau:92-97`, purely to decide whether another server looks live. Nothing
-else reads it.
+## Two things to read before anything else
 
-**Save cadence — both, plus a third:**
+**1. The brief contradicted itself about where the pad goes, and the geometry settled it — but not
+at the Z either clause named.** §2 has the measurement. Short version: the post-flight walk is
+**four studs, not 22**, because auto-mount fires at Z 48. The pad is at Z 46–54.
 
-1. **Periodic**, every `AUTO_SAVE_INTERVAL_SECONDS` = **120 s** (`PersistenceConfig.luau:27`), loop at `PlayerProfile.luau:1205-1214`, gated on `profile.canSave`.
-2. **On leave**, `onPlayerRemoving` → `PlayerStore.save(..., true)`, `PlayerProfile.luau:793-795`.
-3. **On shutdown**, `game:BindToClose`, `PlayerProfile.luau:1228-1242` — concurrent, not serial, waiting on a pending counter.
-
-**What happens to an unsaved profile if the server crashes:** it loses **at most 120 seconds** of
-progress. A hard crash skips both `PlayerRemoving` and `BindToClose`, so the last periodic save is
-all that survives. **Step 2a's requirement is therefore already met with no new save loop needed** —
-the bound exists and is 120 s. That is the one item in the brief that turns out to be free. (The
-bound applies to the pot too, once it is persisted: a crash can lose up to 120 s of pot, same as it
-can lose 120 s of cash today.)
-
-Load failure is handled separately and correctly: `canSave` stays `false` for the whole session
-(`PlayerProfile.luau:744-758`) so a blank profile can never overwrite a real save that merely failed
-to read. **Offline accrual must respect this flag** — a profile that failed to load has no `lastSeen`
-and no slots, and must credit zero rather than treating the failure as a fresh player.
-
-## 0f — every site that reads or writes cash
-
-Grepped `profile\.money|\.money\s*[-+]?=|SetAttribute\("Money"` across `src/`. **Every hit is in
-`PlayerProfile.luau`.** No other server module touches money directly; `ShopServer`, `UpgradeServer`,
-`InventoryServer` and `DevPanelServer` all route through the functions below. This is the list step
-1c would have to keep reading banked cash only:
-
-| # | site | line | direction | balance check? |
-|---|---|---|---|---|
-| 1 | income tick | `:1195-1196` | **+** | no |
-| 2 | `sellFromInventory` | `:998-999` | **+** | no |
-| 3 | `upgradeSlime` | `:1060`, `:1072`, `:1086-1088` | **−** | **yes** — `profile.money < cost`, plus the binary search at `:1068-1079` |
-| 4 | `buyNextTier` | `:1154`, `:1158-1160` | **−** | **yes** — `profile.money < price` |
-| 5 | `applyLoadedData` | `:615-617` | set | no |
-| 6 | `buildBaseFolder` | `:227` | init 0 | no |
-| 7 | join, post-load | `:769` | replicate | no |
-| 8 | `devSetMoney` | `:1268-1269` | set | no (dev, Studio-gated) |
-| 9 | `devAddMoney` | `:1279-1280` | ± | no (dev, Studio-gated) |
-| 10 | `devWipeProfile` | `:1316-1317` | zero | no (dev, Studio-gated) |
-| 11 | `toSaveShape` | `:600` | read → save | no |
-
-**Only sites 3 and 4 are balance checks**, and both compare against `profile.money` directly. A
-`pendingIncome` field added alongside would be non-spendable *by construction* — neither site sums
-anything — provided nobody later writes a `spendableMoney()` helper. Client-side affordability
-displays (`SlimeUpgradeTagClient`, `ShopClient`, `InventoryClient` read the `Money` attribute) are
-display only and are re-validated server-side at sites 3 and 4.
-
-## 0g — the HUD's money display
-
-`BaseClient.client.luau`. It is a pure renderer of replicated attributes on this player's own
-`Base_<UserId>` folder — **no remotes at all** (`:1-9`, `:141-146`).
-
-- `MoneyReadout`, `:70-82`. Bottom-left, `AnchorPoint (0,1)`, `Position (0.02, 0, 0.98, 0)`, `Size (0, 480, 0, 110)`, `GothamBlack`, `TextScaled`, green `(0.25, 1, 0.35)`.
-- Updates via `baseFolder:GetAttributeChangedSignal("Money"):Connect(refreshMoney)` (`:141`), formatted through `MoneyFormat.format` (`:127-130`).
-- Two siblings stack **upward** from it: `TierReadout` at Y offset `-110` (`:88-100`) and `SaveWarning` at `-140` (`:107-120`), each 30 px tall.
-
-**Is there room for a pending indicator? Yes.** The stack currently ends at `-170`; a fourth 30 px
-line at `-170` continues the established pattern exactly, and a new `PendingIncome` attribute on the
-same base folder would need no remote and no new plumbing — one more
-`GetAttributeChangedSignal` connection. That is the cheapest possible 4c, and it is the right shape.
-
-## 0h — `BillboardGui` vs `SurfaceGui`
-
-**Both are used, and the codebase draws a clean, consistent line between them.** It is not a matter
-of taste here — it is a rule with a written rationale:
-
-- **`SurfaceGui` = text painted on real geometry.** The entrance sign board (`SignBuilder.luau:248`), the runway band numbers (`RunwayBuilder.server.luau:179`), the slot-pad numbers (`MapBuilder.server.luau:184`), the mystery box's six "?" faces (`LaunchRewardScene.luau:836`).
-- **`BillboardGui` = a label floating in the air above a thing.** The slot nametags (`PlayerProfile.luau:451`), the upgrade button strips (`SlimeUpgradeTagClient.client.luau:311`), the box's luck readout (`LaunchRewardScene.luau:862`).
-
-The rationale is recorded twice and is a scar, not a preference: `SignBuilder.luau:4-7` and
-`PlayerProfile.luau:173-182` both explain that the base sign *used* to be a `BillboardGui`, that a
-`BillboardGui`'s `Offset` is **screen pixels** so it held a constant size at every distance, and that
-this read as "a grey band on the horizon" from anywhere on the map. It was replaced with real
-geometry carrying a `SurfaceGui`.
-
-**For step 4a — "a world-space label above each collect pad" — the matching class is `BillboardGui`**,
-since it floats above a part rather than being painted on one. But it must carry the three settings
-the existing nametag learned the hard way (`PlayerProfile.luau:451-457`): a finite `MaxDistance`
-(the nametags use 40 studs, `:292`), `AlwaysOnTop = false`, and no stroke — otherwise it reproduces
-the horizon-haze bug on ten more labels per base, six bases at once.
-
-**Note a direct conflict with 4a, which the brief should know about.** `BaseConfig.luau:231-234`
-records a deliberate decision *against* labelling these pads:
-
-> NO TEXT ON IT, deliberately. A green pad on the floor already reads as "stand here" — a SurfaceGui
-> saying COLLECT would be ten more labels per base competing with the nametags and the button strips
-> already hanging over these same pads.
-
-Step 4a reverses that. I think 4a is right — a pad that pays a *variable amount* needs to say the
-amount, which the old decision was not weighing — but it is a reversal, and the comment says
-`SurfaceGui` where 4a wants a floating label, which would put a third GUI layer above pads that
-already carry a nametag and an upgrade strip. Flagging rather than deciding.
+**2. One thing I could not verify and you should check in Studio.** §7i. Everything else in step 7
+is measured or read off the source.
 
 ---
 
-# 3. Decision B — the code makes it awkward, but not wrong
+# 1. Flight duration becomes one second per tier
 
-The brief asked me to report if the code makes either decision wrong. Decision A is §4. Decision B
-("ONE pending pot per player... The pads are plural because they are on the path, not because they
-hold separate money") is **sound and I would keep it**, but two facts about the pads cut against it
-and both need a deliberate answer:
+## 1a — the exponent form really cannot do this
 
-1. **The pads are per-*occupied-slot*, and they live *inside* the slime model** (`PlayerProfile.luau:415`). Visually a pad is glued to one specific slime, directly in front of it, on that slime's row. A player will read "this pad is *that slime's* money" — which is exactly what decision B says it is not. Showing the same `Collect $X` on all ten simultaneously makes the shared-pot reading obvious the moment there are two, so 4a happens to fix this. With one slime placed, it is unresolvable and also harmless.
+Verified before implementing, as asked, and **my numbers agree with the brief exactly**, so no stop.
 
-2. **A player can hold a pot with zero pads to collect it from.** Pads exist only where a slime is placed, and `removeToInventory` destroys the model and its pad with it (`:956-960`). Remove all ten slimes while holding an uncollected pot and the money is stranded — unreachable until something is placed again. It is a corner, but it is reachable through ordinary UI, it strands *real* money, and it gets worse with offline accrual, since the pot can be large. The fix is not more pads; it is one pad that does not depend on a slime — which is the same conversation as §6.
+Fitting the exponent through *both* endpoints (2 s at tier 1, 11 s at tier 10) is a solve, not a
+search: `2 · s₁₀^e = 11` → `e = ln(5.5) / ln(15.3552)` = **0.624117**.
 
----
+| tier | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| want | 2.00 | 3.00 | 4.00 | 5.00 | 6.00 | 7.00 | 8.00 | 9.00 | 10.00 | 11.00 |
+| power law | 2.00 | 3.66 | 4.92 | **6.01** | 6.99 | 7.89 | 8.73 | 9.53 | 10.28 | 11.00 |
+| error | 0.00 | +0.66 | +0.92 | **+1.01** | +0.99 | +0.89 | +0.73 | +0.53 | +0.28 | 0.00 |
 
-# 4. The geometry behind the STOP
+Worst deviation **+1.0086 s at tier 4** — a fifth of that tier's intended flight, in the middle of
+the ladder where most buying happens.
 
-## The loop as the code actually runs it
+**The cause is structural, and worth recording because it rules out retuning rather than just this
+fit.** `SWING_TIER_DISTANCE_SCALE` is solved so each tier lands on an evenly spaced *band*, which
+makes distance very nearly linear in tier. Any power of a near-linear sequence is a curve, and the
+target is a straight line. No exponent fixes that; only a linear function does. And once the
+function is linear in tier, routing it through distance buys nothing — hence
+`BASE + tier * PER_TIER`, both `1.0`.
 
-The player never walks back from a landing. `LaunchServer.server.luau:2266-2275` is explicit:
+## 1b — what happened to the two old constants
 
-> **FROZEN AT LANDING** [...] the root **STAYS anchored** and AutoRotate **STAYS off** here [...]
-> The landing spot is up to ~2,900 studs down an empty road with nothing to walk to; freeing the
-> player here just let them wander off with no reason to.
+**Both `FLIGHT_DURATION_SECONDS` and `FLIGHT_DURATION_EXPONENT` are DELETED** — from the
+`LaunchConfig` type export and from the table. Not left in place unread. `grep` for either name
+across `--include=*.luau` now returns only prose in comments explaining what was removed.
 
-They stay frozen through the box and the reveal, and are then **teleported** by `moveToLaneReturn`
-(`:1293-1312`):
+That is the answer the brief asked for, but the interesting half is what else read them. **Five
+files did**, all in `dev/analysis/`, and leaving them broken was not an option:
 
-```lua
-local returnPosition = Vector3.new(
-	LaneConfig.laneCenterX(laneIndex),
-	groundY + standingHeight,
-	LaneConfig.SWING_PIVOT_Z + LaunchConfig.SWING_RETURN_CLEARANCE_STUDS
-)
-character:PivotTo(CFrame.lookAt(returnPosition, returnPosition + Vector3.new(0, 0, -1)))
-```
-
-`SWING_PIVOT_Z` = 30 (`LaneConfig.luau:38`), `SWING_RETURN_CLEARANCE_STUDS` = 22
-(`LaunchConfig.luau:438`) → **Z = 52**, at the lane's own X. Both landing outcomes go through this
-one function — the luckless auto-return (`:1337-1366`) and the click-driven reward return — and so
-does the chest-landing safety net (`:1403`), so there is no branch that walks.
-
-The full cycle in Z: mount the swing at **Z 30** → fly to **Z −176 … −2,900** → teleport to **Z 52**
-→ walk 22 studs back to **Z 30**. **The cycle never exceeds Z 52.**
-
-## Where the pads are relative to that
-
-The plot sits *behind* the return position, past two intervening structures:
-
-| Z | what | source |
+| file | was | now |
 |---|---|---|
-| 30 | swing pivot | `LaneConfig.luau:38` |
-| **52** | **return position — the furthest +Z the loop ever reaches** | `LaunchServer.server.luau:1298` |
-| 67 | approach link ends | `PathConfig.luau:116` |
-| 67–85 | **conveyor belt walkway** | `PathConfig.luau:165-167` |
-| 85–108 | spur | `PathConfig.luau:138-140` |
-| 108 | plot front edge (mat) | `BaseConfig.luau:309`, `:82` |
-| **113–121** | **nearest collect pads (slots 1 & 2)** | `BaseGeometry.luau:164-188` |
-| 173 | furthest collect pads (slots 9 & 10) | `BaseConfig.luau:195-200` |
+| `cycle_time.luau:125,453` | inlined the formula, wrote both constants into the JSON | `C.flightDurationForTier(tier)`; JSON keys renamed to the new pair |
+| `slot_sim.luau:364` | inlined the formula | `C.flightDurationForTier(tier)` |
+| `slot_sim_v2.luau:370` | inlined the formula | `C.flightDurationForTier(tier)` |
+| `verify_ladder.luau:105` | inlined the formula | `C.flightDurationForTier(tier)` |
+| `flight_pacing.luau:31,35,44` | *is* the 0.5→0.35 comparison | carries both as locals marked historical |
 
-**Distances from the return position `(baseX, 52)`** — and `baseX == swingX`, since
-`baseLaneCenterX` delegates to `laneCenterX` (`LaneConfig.luau:105-107`), so there is no X offset to
-help:
+Four of them now go through one new mirror, `common.flightDurationForTier`, so there is a single
+copy of the live formula in that directory instead of five. `flight_pacing.luau` is the exception on
+purpose: it exists to document the *previous* pass's change, so it keeps the retired values as its
+own locals and still reproduces `dev/out/flight_pacing.log` byte for byte. Its header now says
+loudly that neither constant is live and points at the new script.
 
-| measurement | value |
-|---|---|
-| to the nearest pad's **centre** `(baseX−8, 117)` | `√(8² + 65²)` = **65.5 studs** |
-| to the nearest pad's **nearest corner** `(baseX−6, 113)` | `√(6² + 61²)` = **61.3 studs** |
-| to the **furthest** pad (slot 9/10, Z 173) | **121.3 studs** |
-| character touch radius, generously | ~3 studs |
+Three now-dead locals were removed with them (`BASE_DISTANCE` in `verify_ladder`, `baseDistance` and
+a `facts` that lost its only use in both `slot_sim` files).
 
-**61.3 studs versus ~3. The pads are off the loop by a factor of twenty.**
+**One stale comment fixed, not left:** `ARC_HEIGHT_SQRT_COEFFICIENT` reasoned that the square root
+"matches `FLIGHT_DURATION_EXPONENT` (0.5)". That pairing is gone — height is still √distance while
+time is now linear in tier — so the comment now states the real consequence: time grows 11× up the
+ladder against the arch's 3.9×, so high-tier flights trace a **flatter, longer** arc, which reads as
+a cruise. The coefficient itself is untouched.
 
-They are not merely far, they are *behind a barrier of purpose*: reaching them means crossing the
-two-way conveyor at Z 67–85, which is the map's explicit boundary between "the swing area" and "the
-base area." The plots were moved +46 studs precisely so the shop walkway would sit between the two
-(`BaseConfig.luau:300-308`).
+## 1c — the landing is unaffected, confirmed per tier
 
-## This is corroborated by your own analysis, not just by me
+`trajectoryPosition` is `z = startPosition.Z - distance * u`. **There is no time term in it at
+all**, and `onRelease` calls it once with `u = 1` as a literal and resolves `bandLuckForLandingZ`
+immediately — so the band and zone are decided before the first frame of flight exists. Duration
+only decides *when* the Heartbeat loop places the character.
 
-`dev/out/cycle_economics.json` already models the cycle, and its constants include
-`"returnZ": 52` and `"beltWalkwayZ": 76`. Its per-cycle breakdown is:
+Evaluated at both durations for all ten tiers. Identical, not merely close:
 
-```
-barWaitSeconds + flightSeconds (1.8) + returnSeconds (0.25) + rewardSceneSeconds (2)
-```
+| tier | flight old | flight new | landing Z (both) | band (both) | zone |
+|---|---|---|---|---|---|
+| 1 | 1.8000 | 2.0000 | −175.7358 | 4 | road |
+| 2 | 2.5278 | 3.0000 | −504.2561 | 12 | road |
+| 3 | 2.9827 | 4.0000 | −824.2686 | 20 | road |
+| 4 | 3.3357 | 5.0000 | −1144.2557 | 28 | road |
+| 5 | 3.6301 | 6.0000 | −1464.2523 | 36 | road |
+| 6 | 3.8857 | 7.0000 | −1784.2610 | 44 | road |
+| 7 | 4.1133 | 8.0000 | −2104.2590 | 52 | road |
+| 8 | 4.3194 | 9.0000 | −2424.2639 | 60 | road |
+| 9 | 4.5085 | 10.0000 | −2744.2556 | 68 | road |
+| 10 | 4.6823 | 11.0000 | −3061.6888 | 76 | past |
 
-**`returnSeconds` is 0.25** — that is `RESET_DELAY`, the teleport. The model contains **no walking
-term at all**, because there is no walking in the loop. The baseline the brief asks me to compare
-against in 5g is itself built on the fact that decision A's premise is false.
+`verify_ladder.luau` independently re-derives every landing from the real config and still reports
+**VERIFY PASSED** — every tier on its solved target band, every band step exactly 8.
 
-Total cycle at tier 1: **5.25 s** (perfect play), **7.65 s** (hit50), **14.85 s** (hit20).
+What *did* change is the rate the curve is traversed at. At a fixed 1.0 s after release a tier-10
+flight is now at Z −269.83 where it used to be at −646.53. Same curve, different clock.
 
----
+## 1d — every duration reader re-checked
 
-# 5. What decision A would actually cost, in numbers
+All six, plus one the brief did not list. **Nothing assumes an upper bound**; every consumer divides
+by the duration rather than comparing against a constant.
 
-Since the pads are not passive, collecting becomes a **detour**. Costing it at the default walk speed
-of 16 studs/s (`cycle_economics.json` records `assumedWalkSpeedStudsPerSecond: 16` and
-`walkSpeedIsConfigured: false`):
-
-| leg | studs | seconds |
-|---|---|---|
-| Z 52 → 67, approach link | 15 | 0.94 |
-| Z 67 → 85, across the belt (it pushes on **X**, not Z, so no help) | 18 | 1.13 |
-| Z 85 → 108, spur | 23 | 1.44 |
-| Z 108 → 117, mat to slot-1 pad | 9 | 0.56 |
-| **one way** | **65** | **4.06** |
-| **round trip** | **130** | **8.13** |
-
-Against the measured cycle:
-
-| player model | cycle now | cycle + collect detour | penalty |
+| # | reader | how it uses duration | scales? |
 |---|---|---|---|
-| perfect | 5.25 s | 13.4 s | **+155%** |
-| hit50 | 7.65 s | 15.8 s | **+106%** |
-| hit20 | 14.85 s | 23.0 s | **+55%** |
+| 1 | `LaunchServer` Heartbeat landing check `:2267` | `u = (now - startTime) / flight.duration` | yes |
+| 2 | `FlightDuration` attribute → `LaunchRemoteLanes:194` | same ratio, plus a `duration <= 0` type guard and a deliberate reject of `u < 0 or u >= 1` | yes |
+| 3 | `flightStartedRemote` → `LaunchClient:978`, `:1318` | `math.clamp(elapsed / flightDuration, 0, 1)` | yes |
+| 4 | flight trail | **does not read duration at all** — `Trail.Lifetime` is a per-tier `SwingTierVisuals` constant; attached at release, destroyed at landing | n/a |
+| 5 | release/chase camera | **does not read duration** — one-shot framing at `LaunchClient:1029-1031` from `releaseCameraPullback(startZ, distance)`, then handed back to the Custom camera. No tween | n/a |
+| 6 | death/disconnect cancellation `clearActiveRider:1151` | event-driven; removes the flight from `activeFlights` so the Heartbeat never fires for it. No timer | yes |
+| 7 | `RIDER_READY_TIMEOUT_SECONDS = 15` (not in the brief's list) | armed at **mount**, not at release, and self-invalidates once `riderReadyFlags[player]` is set | unaffected |
 
-**Collecting every cycle would more than double the loop for a competent player**, and launches/minute
-would fall from 11.4 to 4.5 at perfect play. The realistic player response is not "collect every
-cycle" — it is "collect every N cycles," which is fine for the pot but means **the equilibrium income
-figures in `roll_economics_v2.json` are computed against a loop that no longer exists**, since those
-launches are what generate slimes in the first place. Decision A's stated goal — "realised income
-should stay close to the measured equilibrium" — is not achievable by building the system as
-specified on this map. That is the substance of the STOP, not a technicality about stud counts.
+**Two consequences of the 2.35× longer top flight that are worth naming rather than burying:**
 
-Note the asymmetry that makes this worth getting right: **offline accrual (STEP 2) is unaffected by
-any of this** and is the actual D1 hook. Only the *collection* half depends on pad placement.
+- **The trail ribbon gets shorter at high tiers.** Its length is `Lifetime × speed`, `Lifetime` is
+  fixed per tier, and top-tier speed drops from 656 to 279 studs/s. The tier-10 ribbon is now about
+  43% of its former length. Not a bug — the flight reads as a cruise rather than a streak — but if
+  the top tiers' trails look thin, `SwingTierVisuals.trailLifetime` is the dial, not the duration.
+- **The mid-flight cancellation window is 2.35× wider.** Death and disconnect during flight are
+  handled identically, just exercised more often.
+
+## 1e — the rainbow sweeps, reported not changed
+
+`OUTCOME_RAINBOW_CYCLES_PER_SECOND` stays at 0.6. Its comment reasons about "the flight plus
+`RESET_DELAY` — a few seconds — so 0.6 gives it two or three visible sweeps." On screen time is
+`flight + 0.75`:
+
+| tier | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| sweeps old | 1.53 | 1.97 | 2.24 | 2.45 | 2.63 | 2.78 | 2.92 | 3.04 | 3.16 | 3.26 |
+| **sweeps new** | 1.65 | 2.25 | 2.85 | 3.45 | 4.05 | 4.65 | 5.25 | 5.85 | 6.45 | **7.05** |
+
+**Flagged:** the comment's stated design range ("two or three") now holds only up to tier 3. At tier
+10 the word cycles the full spectrum seven times. Whether that reads as celebratory or as a
+distraction is a taste call that wants eyes on it, not arithmetic. If it needs fixing, 0.25 would
+restore ~2.9 sweeps at the top — but it would drop tier 1 to 0.7, i.e. not even one full sweep, so
+the honest fix is probably to key the rate off the tier the same way the duration now is. Out of
+scope this pass.
+
+## 1f — the full before/after table, perfect play
+
+Phases held fixed from `cycle_economics.json`: bar 1.20, reward 2.00 box / 3.35 chest, return 0.25.
+Tier 10 is the chest landing (`zone == "past"`); every other tier is a box.
+
+| tier | distance | flight old | flight new | Δ | st/s old | st/s new | cycle old | cycle new | l/min old | l/min new | flight share |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 200.0 | 1.8000 | 2.0000 | +11.1% | 111.1 | 100.0 | 5.25 | **5.45** | 11.43 | 11.01 | 34.3% → 36.7% |
+| 2 | 527.7 | 2.5278 | 3.0000 | +18.7% | 208.7 | 175.9 | 5.98 | 6.45 | 10.04 | 9.30 | 42.3% → 46.5% |
+| 3 | 846.6 | 2.9827 | 4.0000 | +34.1% | 283.9 | 211.7 | 6.43 | 7.45 | 9.33 | 8.05 | 46.4% → 53.7% |
+| 4 | 1165.5 | 3.3357 | 5.0000 | +49.9% | 349.4 | 233.1 | 6.79 | 8.45 | 8.84 | 7.10 | 49.2% → 59.2% |
+| 5 | 1484.1 | 3.6301 | 6.0000 | +65.3% | 408.8 | 247.3 | 7.08 | 9.45 | 8.47 | 6.35 | 51.3% → 63.5% |
+| 6 | 1802.6 | 3.8857 | 7.0000 | +80.1% | 463.9 | 257.5 | 7.34 | 10.45 | 8.18 | 5.74 | 53.0% → 67.0% |
+| 7 | 2120.8 | 4.1133 | 8.0000 | +94.5% | 515.6 | 265.1 | 7.56 | 11.45 | 7.93 | 5.24 | 54.4% → 69.9% |
+| 8 | 2438.7 | 4.3194 | 9.0000 | +108.4% | 564.6 | 271.0 | 7.77 | 12.45 | 7.72 | 4.82 | 55.6% → 72.3% |
+| 9 | 2756.4 | 4.5085 | 10.0000 | +121.8% | 611.4 | 275.6 | 7.96 | 13.45 | 7.54 | 4.46 | 56.6% → 74.3% |
+| 10 | 3071.0 | 4.6823 | 11.0000 | +134.9% | 655.9 | 279.2 | 9.48 | **15.80** | 6.33 | **3.80** | 49.4% → 69.6% |
+
+**Both of the brief's expected figures land exactly: 5.25 → 5.45 at tier 1, 9.48 → 15.80 at tier 10,
+launches/min 6.33 → 3.80.**
+
+**One consequence the brief did not ask about but which follows directly, and which I think is the
+real thing to watch:** speed still rises with tier, but it now *flattens out* — 100 st/s at tier 1
+climbing to 279 at tier 10, with the increments collapsing along the way (tier 1→2 gains 76 st/s;
+tier 9→10 gains 3.6). The old form climbed to 656 and was still gaining 44 st/s at the top. Under
+that curve a bigger tier read as more powerful largely *through speed*; that read now comes almost
+entirely from **duration and distance** instead. Consistent with the stated intent — the flight is
+the thing worth watching, and a cruise shows more of it — but it is a different feel, not just a
+longer one.
+
+**And one genuine loss, stated plainly.** Duration no longer varies with the release. A worst
+release (`WORST_MULTIPLIER` 0.75 vs `SWEET_SPOT_MULTIPLIER` 2.0) covers 0.375× the ground in the
+*same* seconds, so its speed ratio drops from 0.529× to 0.375× — the "whiffed release is a slow
+drift" effect roughly doubles. At tier 10 a badly timed launch is now an 11-second drift covering
+1,152 studs. I think that is defensible (a whiff *should* read as underpowered) and it is the direct
+price of even spacing, so I have not deviated. If it needs softening, the fix is a mild distance term
+multiplying the tier-keyed result — not a return to the exponent.
+
+## 1g — what is now stale
+
+**`dev/out/cycle_economics.json` and everything joined to it are stale. Not regenerated, as
+instructed.**
+
+It is stale on **three** counts, not one: it was measured at `e12ca51` against an **eleven-tier**
+ladder, at exponent **0.5** (not even the 0.35 that shipped after it), and now against a
+tier-keyed duration. Its `gitCommit` field still reads `e12ca51`, and `cycle_time.luau` refuses to
+run against a mismatched join, so it cannot be regenerated by accident.
+
+Measured against the **current** ladder, the cycle grows by:
+
+| tier | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| cycle Δ | +3.8% | +7.9% | +15.8% | +24.5% | +33.5% | +42.5% | +51.4% | +60.2% | **+69.0%** | +66.6% |
+
+**Any figure expressed per unit of real time is therefore overstated by up to 69%** — launches per
+minute, income per real minute, the re-max drain rates in `slot_sim`/`slot_sim_v2`, and every
+`deadTimeMinutes` figure. The *distribution* figures (`roll_economics_v2.json`, expected value per
+roll, the slime tables) are untouched: nothing in this pass changed what a roll pays, only how often
+one happens.
 
 ---
 
-# 6. What I need to proceed
+# 2. The return pad, and the brief's two conflicting placements
 
-The brief forbids moving the pads in this pass, so this is your call, not mine. Four options, with
-what each costs:
+## The contradiction, and how I resolved it
 
-| # | option | cost | my read |
+2a says two incompatible things:
+
+> Place it on the approach link **between Z 52 (the return position) and Z 67** […] The player is
+> pivoted to Z 52 facing −Z and walks 22 studs to the swing at Z 30, **so the pad must sit ON that
+> 22-stud walk, not beyond it.**
+
+Z 52→67 is *behind* a player who faces −Z and walks toward Z 30. Those are opposite directions.
+Putting the pad at 52–67 would have made collecting a **backwards detour**, which is precisely what
+option 1 exists to avoid — and it would have failed 2b, 7g and the "zero seconds" requirement, all
+of which state the walk. **The walk wins**; the `[52, 67]` clause is the error.
+
+## But the walk is four studs, not 22
+
+`checkProximityMounts` (`LaunchServer.server.luau:2248`) seats a grounded player the instant their
+**horizontal** distance from the pivot reaches `SWING_MOUNT_RADIUS_STUDS`:
+
+```lua
+local horizontalOffset = Vector2.new(rootPart.Position.X - pivotPosition.X, rootPart.Position.Z - pivotPosition.Z)
+if horizontalOffset.Magnitude <= LaunchConfig.SWING_MOUNT_RADIUS_STUDS then
+```
+
+The return position shares the pivot's X exactly (both `laneCenterX`), so that distance is pure Z.
+Pivot at Z 30, radius 18 → **auto-mount fires at Z 48**. The player is placed at Z 52 and is seated
+four studs later. They never walk to the swing at all.
+
+This is not incidental — `SWING_RETURN_CLEARANCE_STUDS`' own comment says it exists to clear that
+radius ("22 > 18"). The 22 studs in the brief is the *clearance*, not a walk.
+
+**Consequence:** the pad had to be centred on a 4-stud window, and a pad placed anywhere in
+`[52, 67]` would have been touched by a player exactly never.
+
+## 2a/2b — the placement, and the overlap
+
+`BaseGeometry.returnPadPlacement(laneIndex)`. Nothing is a literal; all three axes derive from
+constants that already decide where the player goes:
+
+- **Z**: centred on `(returnZ + mountZ) / 2` = **50**, depth `(returnZ - mountZ) + 2 × margin` = **8**
+  → spans **Z 46–54**.
+- **X**: `laneCenterX` (deliberately *not* `baseLaneCenterX` — this pad is on the swing side; the two
+  agree today but mean different things). Width `APPROACH_LINK_WIDTH - 2 × 0.5` = **8** of the link's 9.
+- **Y**: the approach link's own top face, computed — `groundY + 0.15 + 0.15 + 0.2` = **groundY + 0.5**.
+
+Measured across all six lanes:
+
+```
+player is placed at Z 52.0, auto-mounts at Z 48.0 -> the walk is 4.0 studs
+pad Z 46.0-54.0 vs walk 48.0-52.0; pad is 8.0 wide against a 9.0-wide approach link
+lane 0..5: the pad is centred on the walk line's own X          PASS
+lane 0..5: the pad covers the ENTIRE 4.0-stud walk (overlap 4.0) PASS
+```
+
+**Overlap is 4.0 studs of a 4.0-stud walk — 100%, with 2 studs of margin past each end.** The
+forward margin covers the landing spot itself (a player who never takes a step is still standing on
+it); the rear margin continues past the mount boundary so a fast walker cannot tunnel across it
+between two touch samples.
+
+**Walkable there, and clear of the conveyor**, both asserted at module load rather than checked once
+by hand: the approach link spans Z 34–67 (`PathConfig.APPROACH_LINK_START_Z`/`_END_Z`) so 46–54 sits
+comfortably inside it, and the conveyor's near edge is at Z 67 (`BACK_WALKWAY_Z 76 − SIZE.Z/2 9`),
+13 studs clear. `BaseGeometry` fails the load with a specific message if either ever stops holding.
+
+## 2c/2d/2e — construction, name, keying
+
+**Parented to the base folder** (`Base_<UserId>`), built in `buildBaseFolder`, which runs
+synchronously at join before the DataStore read even starts. So it exists for a player with zero
+slimes placed — the stranded-pot fix from the last pass's §3. It still cannot outlive its owner:
+`onPlayerRemoving` destroys the whole folder exactly as before.
+
+*Rejected:* a static per-lane part in `MapBlockout` beside the slot pads. It would have matched how
+the rest of the map's dressing is built, but this pad has an **owner** in a way a slot pad does not,
+so it would have needed re-keying on every lane reuse and clearing on every leave. The per-player
+folder gives both for free.
+
+**Named `ReturnCollectPad`**, distinct from the ten `CollectPad`s (which are told apart only by
+parent). The collect handler wires both by name; the world label goes above this one only.
+
+**Keyed per-player** by parent (the owner's folder) and **per-lane** by position
+(`returnPadPlacement(profile.baseIndex)` — the same index that places their base and their swing).
+
+**On "one construction path, not two":** I built it in the same module, in the same idiom, from the
+same shared constants (`BASE_COLLECT_PAD_HEIGHT_STUDS`/`_COLOR`/`_MATERIAL`,
+`GROUND_TOP_SURFACE`) — but I did **not** factor out a shared builder with `spawnSlimeVisual`.
+MUST NOT CHANGE lists the ten pads' "position, size, colour, parent, **construction**. Additive
+only." A shared helper would have rewritten their construction to produce a byte-identical result,
+and with playtesting out of scope I could not prove the equivalence I would have been asserting.
+Flagging the tension rather than silently picking: if you want the refactor, it is about fifteen
+lines and I would do it as its own commit.
+
+**Sizing differs from the ten deliberately**: they are 4 wide because they sit *beside* a walk and
+are stepped onto on purpose; this one sits *across* a walk and must not be missed by a player who
+drifts a stud off centre, so it is 8 of the corridor's 9.
+
+---
+
+# 3. The pending pot
+
+**3a** — `OFFLINE_CAP_SECONDS = 28800` and `OFFLINE_RATE_MULTIPLIER = 1.0`, in `BaseConfig` beside
+`BASE_INCOME_TICK_SECONDS`. Both carry the "expected to be retuned after real player data" note and
+the self-scaling argument: offline income is a multiple of *the player's own current rate*, the same
+`totalIncomePerSecond` the online tick uses, so eight hours away pays exactly what eight hours
+present would. It can refund time; it cannot outrun progression. An empty base earns nothing from a
+week away.
+
+**3b** — the tick's destination moved from `profile.money` to `profile.pendingIncome`. The rate
+calculation is untouched.
+
+**3d — not spendable, and this is now enforced by a test rather than asserted.** The two balance
+checks found in the last pass's §0f are the only ones in the project, and `verify_offline.luau`
+reads them out of the source (comments stripped, so commented-out code cannot pass):
+
+```
+[PASS] upgradeSlime gates on banked cash only (`profile.money < cost`)
+[PASS] upgradeSlime never reads pendingIncome
+[PASS] buyNextTier gates on banked cash only (`profile.money < price`)
+[PASS] buyNextTier never reads pendingIncome
+[PASS] no spendableMoney() helper exists to sum the two buckets
+[PASS] exactly one site moves the pot into cash (collectPending)
+```
+
+All eleven money sites re-checked by inspection: the tick (now writes the pot), `sellFromInventory`
+(+cash, no check), `upgradeSlime` (−cash, **checks cash**), `buyNextTier` (−cash, **checks cash**),
+`applyLoadedData`, `buildBaseFolder`, the post-load replication, the three dev-panel writers, and
+`toSaveShape`. Nothing sums the two. `devWipeProfile` now also zeroes the pot — a wipe that left it
+would have the player collect the pre-wipe base's earnings moments later.
+
+**3e** — persisted in `toSaveShape`. Clamped `> 0` on load, so a corrupt or hand-edited negative
+cannot silently eat the next collect (NaN also fails `> 0` and lands on 0).
+
+**3f** — replicated as a `PendingIncome` attribute on the base folder, exactly as `Money` is. No new
+remote. One writer, `setPending`, so the field and the attribute cannot drift.
+
+## 3c — the interval bug, measured
+
+Its own commit (`d1986bb`), separate from `9443827`.
+
+The loop credited `rate × BASE_INCOME_TICK_SECONDS` — the *nominal* interval — while `task.wait(n)`
+resumes on the first Heartbeat **at or after** the deadline. Every tick dropped the overshoot, and
+dropped more of it the busier the server was.
+
+Measured over 30 ticks on a 60fps-equivalent scheduler, both accounting schemes run over the **same
+ticks**:
+
+```
+wall clock       30.2631 s   -> owed $3026.31
+BEFORE (nominal) credited $3000.00   short by $26.31  (0.8695%)
+AFTER  (elapsed) credited $3026.31   short by $0.00  (0.0000%)
+
+mean actual tick 1.007085 s  (overshoot +0.007085 s)
+worst actual tick 1.016865 s (overshoot +0.016865 s)
+over an hour at this drift, BEFORE loses 31.3 seconds of income
+```
+
+**0.87% of all idle income, ~31 seconds per hour online**, and worse under load. Fixed with an
+`os.clock()` delta — monotonic, so it cannot jump backwards or be resynced mid-interval the way a
+wall clock can. **Deliberately unclamped**: a 10-second hitch credits 10 seconds, which is correct;
+the player *was* online and their slimes *were* earning. Clamping would reintroduce the same
+under-payment at a higher threshold.
+
+One accepted imprecision, unchanged from before: a player joining midway through an interval is paid
+for the whole of it. Bounded by one tick, always in the player's favour, not worth a per-profile
+timestamp.
+
+---
+
+# 4. Offline accrual
+
+**4a — `lastSeen`, written unconditionally in `toSaveShape` from `os.time()`.** Every save is a
+moment the player was demonstrably present, so the periodic autosave, the leave-save and the
+shutdown save all stamp it.
+
+**`sessionHeartbeat` is not reused, and `PlayerStore.luau` is untouched.** It is a session *lock*,
+and `PlayerStore.save` nils it whenever `releasingSession` is true — i.e. on the single most common
+exit path, a clean leave. Reusing it would credit **zero to every player who logged off normally and
+pay only the ones who crashed**. Exactly backwards.
+
+**4b — the 120 s bound is already met; no new save loop added.** `AUTO_SAVE_INTERVAL_SECONDS = 120`
+(`PersistenceConfig.luau:27`), driving the existing loop at `PlayerProfile.luau`. A hard crash skips
+both `PlayerRemoving` and `BindToClose`, so the last periodic save is all that survives and
+`lastSeen` is at most 120 seconds stale. **That staleness is always in the player's favour** — an
+older `lastSeen` means a *longer* computed absence, so a crash can only ever over-credit by up to two
+minutes of the player's own rate, never under-credit.
+
+**4c** — credits `elapsed × totalIncomePerSecond(profile) × OFFLINE_RATE_MULTIPLIER`, calling the
+existing `totalIncomePerSecond` directly. Added to any saved pot, never replacing it.
+
+**4d — the ordering, exactly as placed.** In `onPlayerAdded`'s load task:
+
+```lua
+local data, ok = PlayerStore.load(player.UserId)
+if profiles[player] ~= profile then return end          -- player already left
+if not ok then baseFolder:SetAttribute("SaveDisabled", true) return end   -- 4g: never reaches accrual
+applyLoadedData(profile, data)      -- populates slots and levels
+creditOfflineIncome(profile, data)  -- reads them, via totalIncomePerSecond
+profile.canSave = true
+```
+
+`creditOfflineIncome` is **after** `applyLoadedData`. Reversed, `profile.slots` and `profile.levels`
+are still empty tables, the rate is zero, and the player is silently credited nothing — no error, no
+warning. Both lines carry a comment saying so.
+
+**This required moving `totalIncomePerSecond` up the file**, from beside the income tick (line 1296)
+to above `setPending` (line 665). A `local function` is only in scope *below* its own definition, so
+a reference from `onPlayerAdded` at line 1061 would have resolved to a **nil global** rather than to
+it — a runtime error on the first join, not a subtle bug, but worth naming since it is the kind of
+thing that looks like a no-op move.
+
+**4e** — nil `lastSeen` credits **zero**, handled explicitly. `data.lastSeen or 0` would have treated
+the epoch as the last seen time and handed **every existing player the full cap** on their first join
+after this update. Tested.
+
+**4f** — negative elapsed clamps to zero via `math.clamp(now - lastSeen, 0, CAP)`. This is not
+paranoia: `os.time()` is each machine's wall clock, and a save on one server loaded on another
+running seconds behind produces a genuine negative. Unclamped it would *subtract* from a pot the
+player legitimately earned before logging off. Tested at 1 s, 60 s, 1 h and 10× the cap of future
+skew.
+
+**4g** — a failed load credits zero, by structure: the `not ok` branch returns before either line
+above. Belt and braces, such a session also has an empty base, so its rate is zero — tested.
+
+**4h** — `offlineCredit` tracks this session's credit apart from the pot, and is **never persisted**
+(it describes this arrival; a save carrying it would re-announce a credit already shown). Cleared by
+the first collect, together with the pot, in one call.
+
+---
+
+# 5. Collecting
+
+**5a** — all eleven pads, one handler, **`Touched`**. A `ProximityPrompt` is the established pattern
+here (the treasure chest uses one) and is the wrong one: it costs a keypress and a hold, and the
+entire point of option 1 is that collection costs *nothing* on a walk already being made. This is
+the first `.Touched` in `src/`.
+
+The ten per-slot pads are wired **without modifying `spawnSlimeVisual`**: `wireCollectPads` connects
+`DescendantAdded` on the base folder and matches by name, so pads created lazily — one per slime,
+possibly hours after the join — opt in for free. A one-shot pass over the folder would have caught
+only the return pad.
+
+**5b/5c — the guard, and there are two of them, independent.**
+
+1. **The payout is atomic.** It reads the pot, zeroes it, and credits cash with **no yield in
+   between** (nothing between the capture and the write yields — verified line by line). So a second
+   fire finds an empty pot and pays nothing. **Double-payment is impossible by construction, not by
+   timing.**
+2. **A debounce window of `BASE_INCOME_TICK_SECONDS`** — derived, not picked: exactly long enough
+   that at most one tick's income can accumulate between two collects, so a lingering player banks
+   whole ticks rather than slivers. Stored as `lastCollectAt` **on the profile**, so it dies with the
+   profile and needs no cleanup.
+
+*Rejected:* a boolean flag reset by `task.delay` — needs the scheduler and leaks a pending timer if
+the player leaves inside the window.
+
+Simulated over a realistic per-limb burst (see 7b): **7 handler fires, 1 payout, exactly the pot
+banked.** With the debounce removed the atomic zero alone still yields exactly 1 payout, which is the
+independence claim tested directly.
+
+**5d** — collecting zero returns silently. A player crosses this pad on every return trip and an
+empty pot is the *normal* case, not an error worth feedback.
+
+**5e — server-authoritative, and I want to be precise about what the distance check does and does
+not do.** The server reads the amount from `profile.pendingIncome`; there is no remote, so a client
+cannot name a figure, request an amount, or reach another player's pot. Only the owner's own
+character can trigger a pad (`hit:IsDescendantOf(player.Character)`) — without that, any player
+crossing someone else's return pad would bank it for them and fire their "while you were away" line
+while they were elsewhere.
+
+**Tolerance: the touched pad's own half-diagonal + 6 studs, horizontal only.** That is 11.66 studs
+for the 8×8 return pad and 10.47 for a 4×8 slot pad — it adapts rather than assuming one pad shape.
+Horizontal because the root sits above the tile by a hip height that varies with the avatar's rig, so
+a 3D check would be measuring body type. *Rejected:* a tight ~2-stud tolerance, which would reject
+legitimate collects from a player crossing at walking speed for no gain.
+
+**What it is not:** the position it validates is the character's own, which is client-owned, and it
+is the same position that produced the `Touched`. So it does **not** stop a modified client
+teleporting onto a pad — nothing server-side short of rejecting client physics could. It is a guard
+against a stale or desynced touch firing when the player is demonstrably nowhere near. That is
+enough here because **collecting has no exploit value**: it moves the player's own already-earned
+money from one of their own buckets to another, at a rate they already earned it. There is nothing to
+gain by collecting from the wrong place, only by earning more, which this path cannot do.
+
+**5f — confirmed, not assumed.** `grep -rn "CanTouch" src/` returns exactly one assignment in the
+whole tree, `LaunchRewardScene.luau:817`, on the mystery box's cube. Neither pad kind ever writes it,
+so both keep `Instance.new`'s default of **true**. Both are `Anchored` with `CanCollide = false`,
+which does not affect `Touched` — it is an overlap event, not a collision response.
+
+---
+
+# 6. UI
+
+Pure attribute rendering in `BaseClient.client.luau`, matching its existing no-remote pattern: two
+new `GetAttributeChangedSignal` connections and nothing written per frame (**6d**). The server writes
+`PendingIncome`/`OfflineCredit` only when they change — once per income tick, once per collect.
+
+**6a** — a `BillboardGui` on the return pad reading `Collect $X` through `MoneyFormat`, hidden at
+zero (the label is an invitation; there is nothing to invite when the pot is empty — the pad itself
+stays visible). `BillboardGui` is this codebase's convention for labels floating *in the air*
+(slot nametags, upgrade strips, the box's luck readout); `SurfaceGui` is for text painted *on*
+geometry (the sign board, band numbers, slot pad numbers).
+
+Carries all three settings the nametags learned the hard way: **`MaxDistance = 40`** (same as the
+nametags), **`AlwaysOnTop = false`**, **no stroke**. A `BillboardGui`'s `Size` is in screen pixels
+and so holds constant size at every distance — that is exactly what put "a grey band on the horizon"
+when the base sign was one of these, and `MaxDistance` is the clamp that stops six lanes' worth of
+labels doing it again. `StudsOffset` is 6 studs so a player standing *on* the pad does not have the
+label inside their own character.
+
+**The ten per-slot pads are left bare, as instructed** — `BaseConfig.luau`'s argument against
+labelling them still holds (they already carry a slime nametag and an upgrade button strip
+overhead). The return pad is alone on an empty stretch of approach link, so one label there reverses
+nothing.
+
+**6b** — a second line above it, `$X while you were away`, `Visible` only while `OfflineCredit > 0`.
+It disappears on its own with nothing client-side to time or remember, because `collectPending`
+clears the pot and the credit together in one call.
+
+**6c** — a fourth 30 px line at −170, continuing the stack (money at 0, tier at −110, save warning at
+−140). Dimmer green than the money readout: close enough to read as money, far enough not to be
+mistaken for the balance. Always visible including at $0 — hiding it would make the stack jump on
+every collect.
+
+**Both traps handled explicitly on every new label**: `BorderSizePixel = 0` (a transparent
+*background* does not clear the *border* — separate render pass) and `TextStrokeTransparency` set
+rather than left at its visible default. The three pre-existing labels in that file carry deliberate
+non-zero strokes for contrast against the 3D world and are untouched.
+
+If the pad ever fails to appear the client warns and degrades to no label; collection still works,
+since it is entirely server-side.
+
+---
+
+# 7. Verification
+
+`lune run dev/analysis/verify_offline.luau` — **VERIFY PASSED**, exits non-zero on any failure.
+
+**The refactor that made this real, and why it is in the step-7 commit.** The accrual arithmetic
+started inside `PlayerProfile.creditOfflineIncome`, which cannot be loaded outside the game —
+`PlayerProfile` requires `Players`, `HttpService`, a DataStore-backed `PlayerStore` and a built
+`Workspace.MapBlockout` at module scope. Anything left there could only ever be checked against a
+*mirror*, which is exactly the failure mode `common.luau`'s own header warns about ("If LaunchServer's
+flight math changes, this file goes stale and nothing will warn you"). So the three decisions that
+actually matter — what a missing timestamp credits, what a backwards clock credits, what happens at
+the cap — moved to `src/ReplicatedStorage/Config/OfflineIncome.luau`, beside the two constants they
+read. That is the same arrangement `SlimeUpgrade.luau` has with `SlimeUpgradeConfig.luau`. **The
+tests now exercise the real module.**
+
+**7a — the pot is not spendable.** Method: source-level extraction of both balance-check bodies with
+comments stripped, asserting each gates on banked cash and never mentions the pot, plus assertions
+that no `spendableMoney` helper exists and that exactly one site moves the pot into cash. Output
+quoted in §3 above. This is a regression guard, not a one-time claim: the single change that would
+break the property now fails a test.
+
+I could not attempt a literal in-game purchase (playtesting is out of scope), so this is inspection —
+but it is *mechanised* inspection over the real file, which is stronger than a reading.
+
+**7b — no double-collect.** Method: **modelled, and flagged as the one mirrored thing in the file**,
+because `Touched` is an engine event. The model transcribes `collectPending`'s guard sequence.
+
+```
+one step across the pad: handler fired 7 times, 1 payout(s), banked $100.0000
+  [PASS] the handler really did fire 7 times (a burst, as Touched does)
+  [PASS] exactly ONE payout resulted
+  [PASS] exactly the pot was banked, not a multiple of it
+  [PASS] with the debounce removed, the atomic zero alone still yields one payout
+loitering 5 s at 4 touches/s: fired 21 times, 6 payout(s)
+  [PASS] a loitering player banks at most about one payout per income tick
+```
+
+**7 fires, 1 payout.** A loitering player gets ~1 payout per income tick, not per touch.
+
+**7c — offline credit.** Method: the real `OfflineIncome.creditFor` against a representative
+10-slime mixed-level profile (3720.36 $/s).
+
+| absence | paid for | expected | actual |
 |---|---|---|---|
-| **1** | **Add one collect pad on the return path** — near Z 52–67, at `baseX`, on the approach link the player already crosses. Leave the ten existing pads exactly where they are as base dressing (wired to the same single pot, which is decision B unchanged). | New geometry in `BaseGeometry`/`MapBuilder`, ~30 lines. Does **not** move any existing pad, so the MUST NOT CHANGE list holds literally. | **Recommended.** It is the smallest change that makes decision A true as written, it needs no repricing, and decision B ("the pads are plural because they are on the path") becomes *actually* true instead of aspirational. It also fixes §3's stranded-pot corner for free, since it does not depend on a placed slime. |
-| **2** | **Keep decision A, accept the detour.** Build exactly as specified. | Free to build; costs the loop, per §5. | Viable only if you intend the base to become a place players deliberately visit. That is a real design, but it is a *different* one, and it makes the cycle figures stale. |
-| **3** | **Auto-collect on proximity to the plot**, no pad touch required. | Cheap. | Removes the collect *action*, which is the satisfying part of the genre beat. I would not. |
-| **4** | **STEP 2 only** — ship offline accrual into the pot, defer collection. | Smallest. | Tempting, but a pot with no way to bank it is worse than no pot. Only sensible bundled with option 1 as a follow-up. |
+| 1 hour | 3600 s | $13,393,309.50 | $13,393,309.50 |
+| exactly the cap (28800 s) | 28800 s | $107,146,476.00 | $107,146,476.00 |
+| 3× the cap (86400 s) | 28800 s | $107,146,476.00 | $107,146,476.00 |
+| 1 s under the cap | 28799 s | $107,142,755.64 | $107,142,755.64 |
+| 1 s over the cap | 28800 s | $107,146,476.00 | $107,146,476.00 |
 
-If you pick **option 1**, tell me and I will build steps 1–5 in full against it, including the new
-pad, in per-step commits. Everything in §2 above is the survey that pass needs, so it starts
-immediately rather than re-reading.
+Both cap boundaries tested, not just the cap.
 
-If you pick **option 2**, say so and I will build it exactly as the brief specifies — the objection
-is registered here and does not need re-litigating; I will note the realised-vs-theoretical gap in
-5g with the §5 numbers and leave the decision to you.
+**7d — new profile and failed load credit zero.** nil `lastSeen` → 0; explicitly *not* the full cap,
+which is what the epoch reading would have paid; a string `lastSeen` → 0; a NaN `lastSeen` → 0
+(NaN survives `math.clamp` unchanged, so it is caught by name); a failed load's empty profile → 0
+even at the full cap.
+
+**7e — rejoining immediately.** 0 s → $0.00 exactly; 1 s → one second's income; 2 s → two seconds'.
+No duplicate of the previous session.
+
+**7f — offline rate equals the online rate.** The strong form is structural: there is exactly **one**
+`totalIncomePerSecond` and both the tick and the accrual call it — neither re-derives the sum, so
+they cannot diverge. What is measurable is that nothing between that rate and the pot rescales it:
+
+```
+online tick of 1.00 s credits $3720.363750
+offline span of 1.00 s credits $3720.363750
+  [PASS] offline and online pay the identical amount for the identical span
+  [PASS] OFFLINE_RATE_MULTIPLIER is 1.0, so nothing discounts offline time
+```
+
+Plus self-scaling: a rate of 0 credits 0 at the full cap, and credit scales linearly with the
+player's own rate.
+
+**7g — the return pad is on the walk line.** Method: the real `BaseGeometry.returnPadPlacement`
+across all six lanes, against the walk line derived from the real `LaneConfig`/`LaunchConfig`.
+**Overlap 4.0 studs of a 4.0-stud walk on every lane**, pad centred on the walk's own X, 8 wide in a
+9-wide corridor, clear of the conveyor. **Detour: 0 studs, 0 seconds** — the player walks the same
+line whether or not they collect.
+
+**7h — cycle time changed only by the step 1 flight term.** Method: for each tier, assert
+`newCycle − oldCycle == newFlight − oldFlight` exactly. **All ten tiers pass to within 1e-9.**
+
+| tier | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| cycle new | 5.45 | 6.45 | 7.45 | 8.45 | 9.45 | 10.45 | 11.45 | 12.45 | 13.45 | 15.80 |
+| Δ = flight Δ | 0.2000 | 0.4722 | 1.0173 | 1.6643 | 2.3699 | 3.1143 | 3.8867 | 4.6806 | 5.4915 | 6.3177 |
+
+**Steps 2–6 added no term to the loop.** The return pad costs zero seconds, which is the entire point
+of option 1.
+
+## 7i — the one thing I could not verify
+
+**Does `Touched` fire for a player who is teleported onto the pad and then stands perfectly still?**
+
+The player is `PivotTo`'d to Z 52, which is *inside* the pad's 46–54 footprint, and then unanchored.
+Roblox fires `Touched` when parts begin overlapping, and any movement at all — the walk to Z 48, or
+just the idle animation's limb motion — generates touch events, so in practice this is how every
+step-on-a-pad mechanic in Roblox behaves and I expect it to work. But a teleport *into* an existing
+overlap on an anchored, non-colliding part is the one case I would want to see with my own eyes, and
+playtesting was out of scope.
+
+**Why the risk is small even if it does not fire on the teleport:** the pad extends two studs past
+the mount boundary, so the player crosses a *moving* contact on the way to Z 48 regardless. The only
+way to miss it entirely is to be returned and then never move at all before mounting — and not
+moving means not mounting, so they stay on the pad with the pot visible above them.
+
+**If it turns out to need help**, the in-scope fix is a `Region3`/`GetPartBoundsInBox` sweep in the
+existing income tick as a backstop; I did not add one because step 5a specified `Touched` and an
+unrequested second mechanism is worse than a flagged unknown.
 
 ---
 
-# 7. Everything I did not touch
+# 8. Decisions where I chose, one line each
 
-No files were modified. `git status` is clean at `735e246`. In particular, and per MUST NOT CHANGE:
-`SlimeRoll.luau` was not opened; no income, chest, ladder, upgrade-curve, layout, band-curve or
-flight constant was read for anything but the citations above; `LaunchRewardScene.luau` was not
-opened (the two `grep` hits quoted in §0h come from a repo-wide pattern search, not a read); nothing
-in `dev/out/` was regenerated — the two JSON files in §4 and §5 were read only.
+| decision | chose | rejected |
+|---|---|---|
+| pad Z | centred on the real 4-stud walk window, Z 46–54 | the brief's Z 52–67, which sits behind a player walking −Z and would never be touched |
+| pad parent | the per-player base folder | a static `MapBlockout` lane part, which would outlive its owner and need re-keying |
+| pad width | 8 of the corridor's 9, sized to be unmissable | matching the slot pads' 4, which a player drifting off centre could walk past |
+| debounce | `lastCollectAt` timestamp on the profile, window = `BASE_INCOME_TICK_SECONDS` | a boolean reset by `task.delay`, which leaks a timer if the player leaves inside the window |
+| distance tolerance | touched pad's half-diagonal + 6 studs, horizontal | a tight ~2 studs, which would reject legitimate walking collects for no gain |
+| retired constants | deleted from `LaunchConfig`, five `dev/analysis` readers updated | leaving them in place unread, which the brief forbade |
+| shared pad builder | none — additive only | refactoring `spawnSlimeVisual`, whose construction is in MUST NOT CHANGE |
+| accrual arithmetic | own Config module, testable | leaving it in `PlayerProfile`, where it could only be mirror-tested |
+| hitch handling | credit the full elapsed time | clamping, which reintroduces the under-payment 3c fixes |
+
+---
+
+# 9. What I did not touch
+
+Per MUST NOT CHANGE, verified: the ten collect pads (position, size, colour, parent and construction
+all untouched — the diff for `spawnSlimeVisual` is empty); `PlayerStore.luau` entirely, including
+`sessionJobId`, `sessionHeartbeat` and the lock; `SlimeRoll.luau` — not opened; the chest table and
+landing path; the whole ladder and every price — `verify_ladder.luau` re-run and **PASSED**, with its
+one pre-existing warning (tier 9's 0.613× box multiple) unchanged; the upgrade curve, `MAX_LEVEL`,
+`SLOT_COUNT`, `BASE_SLOT_*` and the plot geometry; `DISTANCE_PER_MULTIPLIER`, every `SWEET_SPOT_*`,
+`SWING_PERIOD_SECONDS`, `ARC_HEIGHT_SQRT_COEFFICIENT` (value untouched; one stale comment corrected),
+`MAX_FLIGHT_PITCH`, the trajectory and arch formulas, the ping compensation, `moveToLaneReturn`,
+`SWING_RETURN_CLEARANCE_STUDS`, the box mechanics; `LaunchRewardScene.luau` — not opened (the two
+`grep` hits cited above come from repo-wide pattern searches, not a read); **every file in
+`dev/out/`** — nothing regenerated, nothing edited.
+
+No gamepass, no doubling reward, no group-join button, no monetisation. The levelling-discovery
+problem is untouched. `start_playtest`/`stop_playtest` were never called.
