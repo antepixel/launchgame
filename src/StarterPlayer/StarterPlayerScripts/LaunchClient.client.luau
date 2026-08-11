@@ -92,6 +92,11 @@ local LaunchHud = require(ReplicatedStorage.LaunchClient.LaunchHud)
 local LaunchRewardScene = require(ReplicatedStorage.LaunchClient.LaunchRewardScene)
 local LaunchRemoteLanes = require(ReplicatedStorage.LaunchClient.LaunchRemoteLanes)
 local ConveyorScroll = require(ReplicatedStorage.LaunchClient.ConveyorScroll)
+local SoundConfig = require(ReplicatedStorage.Config.SoundConfig)
+-- The only module in the project that creates a Sound. Every call below is a
+-- bare notification added beside a decision that had already been made -- no
+-- flight timing, no state transition and no formula changes for any of them.
+local SoundPlayer = require(ReplicatedStorage.SoundPlayer)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -437,7 +442,97 @@ local flightLuck = 0
 -- server.luau's clearActiveRider) -- resetting already-false/already-zero
 -- values on a normal landing is a harmless no-op, which is what makes this
 -- safe to call from both.
+-- ===== THE FLIGHT RUSH (see REPORT.md §3a/§3b). One looping 2D sound, alive
+-- for exactly the length of a flight -- 2 seconds at tier 1, 11 at tier 10.
+--
+-- WHY A HANDLE AND NOT A FLAG: SoundPlayer.stopLoop is idempotent and
+-- nil-tolerant, so every exit path below can call it unconditionally without
+-- knowing whether a flight was running, whether the asset id was filled in, or
+-- whether another path already stopped it. That is what lets this be torn down
+-- from three places without any of them coordinating -- which is the whole
+-- defence against a looping sound outliving a cancelled flight and becoming a
+-- permanent drone.
+local flightWindLoop: SoundPlayer.LoopHandle? = nil
+
+-- Edge-detection state for the sweet-spot tick at the bottom of the render
+-- loop. Starts true so that a rider who mounts with the bar ALREADY inside the
+-- window does not get a tick for a crossing that never happened -- the first
+-- tick they hear is a real entry.
+local wasInSweetSpot = true
+
+-- The instantaneous 3D speed range a flight can occupy, across every tier,
+-- measured rather than guessed (dev/analysis/verify_sound.luau recomputes both
+-- ends from the real config and fails if they drift): 100.0 studs/s at the
+-- slowest -- tier 1 at its apex, where the vertical component is zero -- and
+-- 296.1 at the fastest, tier 10 leaving the seat. Rounded outward to 100/300 so
+-- the mapping never clamps in normal play.
+local FLIGHT_SPEED_MIN_STUDS = 100
+local FLIGHT_SPEED_MAX_STUDS = 300
+-- Where those two ends land in pitch and volume. Chosen to keep the loop
+-- recognisably the same sound at both ends rather than two different ones: a
+-- 0.85-1.30 pitch span is well inside what broadband noise survives without
+-- artefacting, and the volume floor is deliberately non-zero so a tier-1 flight
+-- is quiet, not absent. Rejected: mapping to a wider 0.5-2.0 pitch span, which
+-- would have made the top tier a shriek and the bottom a rumble -- two sounds,
+-- not one sound moving.
+local FLIGHT_PITCH_MIN = 0.85
+local FLIGHT_PITCH_MAX = 1.30
+local FLIGHT_VOLUME_MIN = 0.40
+local FLIGHT_VOLUME_MAX = 1.00
+
+-- Live speed along the flight path at parameter u, from the SAME closed form
+-- the render loop below positions the character with (see LaunchFormulas'
+-- trajectory functions and LaunchServer's trajectoryPosition):
+--
+--   z(u) = startZ - distance * u                  -> dz/du = -distance
+--   y(u) = startY + (topY - startY) * u
+--          + arch * 4 * u * (1 - u)               -> dy/du = (topY - startY)
+--                                                            + arch * 4 * (1 - 2u)
+--
+-- so speed = |(dy/du, dz/du)| / duration. Read-only: this derives a number FROM
+-- the flight formulas and changes nothing about them.
+--
+-- TRACKS SPEED, NOT TIME, which is the point -- the vertical term is what makes
+-- the rush dip at the apex and swell again on the descent, so the sound follows
+-- the arc rather than merely counting down.
+local function flightSpeedAt(u: number): number
+	if flightDuration <= 0 then
+		return FLIGHT_SPEED_MIN_STUDS
+	end
+	local verticalRate = (RunwayGeometry.RUNWAY_TOP_Y - flightStartPosition.Y) + flightArcHeight * 4 * (1 - 2 * u)
+	return math.sqrt(flightDistance * flightDistance + verticalRate * verticalRate) / flightDuration
+end
+
+local function updateFlightWind(u: number)
+	if not flightWindLoop then
+		return
+	end
+	local speed = flightSpeedAt(u)
+	local t = math.clamp(
+		(speed - FLIGHT_SPEED_MIN_STUDS) / (FLIGHT_SPEED_MAX_STUDS - FLIGHT_SPEED_MIN_STUDS),
+		0,
+		1
+	)
+	SoundPlayer.setLoopPitch(flightWindLoop, FLIGHT_PITCH_MIN + (FLIGHT_PITCH_MAX - FLIGHT_PITCH_MIN) * t)
+	SoundPlayer.setLoopVolume(flightWindLoop, FLIGHT_VOLUME_MIN + (FLIGHT_VOLUME_MAX - FLIGHT_VOLUME_MIN) * t)
+end
+
+-- TEARDOWN PATH 1 OF 3. Safe to call at any time, including when no flight has
+-- ever started. See REPORT.md §6c for the walk through all four exit routes
+-- (normal landing, death, disconnect, dismount) and which of the three calls
+-- catches each.
+local function stopFlightWind()
+	SoundPlayer.stopLoop(flightWindLoop)
+	flightWindLoop = nil
+end
+
 local function resetFlightState()
+	-- Every cancellation route -- death, disconnect, mid-flight dismount --
+	-- reaches the client as resetReadyRemote (see LaunchServer's
+	-- clearActiveRider, which reuses that remote as its cancellation signal),
+	-- and that handler's first act is to call this. So this one line covers
+	-- every path that is NOT an ordinary landing.
+	stopFlightWind()
 	flightActive = false
 	flightStartTime = 0
 	flightDuration = 0
@@ -651,6 +746,14 @@ end
 -- runs unconditionally and is a no-op when there is nothing to tear down.
 local function setGrounded(value: boolean)
 	grounded = value
+	-- TEARDOWN PATH 2 OF 3, and the belt-and-braces one. Every route back to
+	-- neutral funnels through here -- a respawned CharacterAdded, Dismounted,
+	-- ResetReady -- so even a path that somehow skipped resetFlightState cannot
+	-- leave the rush running. Idempotent, so the overlap with the other two
+	-- costs nothing.
+	if value then
+		stopFlightWind()
+	end
 	-- hideFlightBoxRevealUI FIRST, then the refresh: it clears
 	-- rewardSequenceActive, so by the time this runs both of the gate's inputs
 	-- are settled. Refreshing again here rather than relying on that inner
@@ -980,6 +1083,22 @@ flightStartedRemote.OnClientEvent:Connect(function(distance: number, archHeight:
 	flightStartTime = startTime
 	flightLuck = luck
 	flightActive = true
+
+	-- The launcher's own airborne whoosh, 2D. Distinct from the 3D
+	-- WORLD_LAUNCH_RELEASE the server broadcasts from the swing: that one is the
+	-- apparatus as bystanders hear it, this one is leaving the seat as the flyer
+	-- hears it.
+	SoundPlayer.play2D("FLIGHT_RELEASE")
+
+	-- Started here rather than at the first render frame so it begins on the
+	-- same message that starts the flight, and primed at u = 0 immediately so
+	-- its very first audible moment is already at the right speed rather than
+	-- at the entry's unscaled defaults. stopFlightWind first so a previous
+	-- flight's loop can never be orphaned by a second FlightStarted arriving
+	-- without an intervening reset.
+	stopFlightWind()
+	flightWindLoop = SoundPlayer.startLoop("FLIGHT_WIND_LOOP")
+	updateFlightWind(0)
 
 	-- ===== THE OUTCOME READOUT, FROM THE SERVER'S OWN NUMBER. Moved here from
 	-- doRelease (see its comment, and REPORT.md): `multiplier` is the value
@@ -1372,9 +1491,21 @@ RunService:BindToRenderStep(RENDER_STEP_NAME, Enum.RenderPriority.Camera.Value -
 				-- "road" and is still driven entirely by BoxStarted.
 				setRewardSequenceActive(true)
 			end
+			-- TEARDOWN PATH 3 OF 3, and the only one that fires on an ORDINARY
+			-- landing. It has to be here rather than at ResetReady: that message
+			-- arrives RESET_DELAY (0.75 s) later, so waiting for it would leave
+			-- the rush droning for three quarters of a second after the player
+			-- had visibly hit the ground, on every single flight.
+			stopFlightWind()
 			flightActive = false
 			return
 		end
+
+		-- Tracks the live speed along the arc -- see updateFlightWind. In the
+		-- same per-frame block that already positions the character, from the
+		-- same u, so the sound and the motion can never disagree about where in
+		-- the flight this frame is.
+		updateFlightWind(u)
 
 		-- Count the distance UP live -- horizontal progress is exactly linear in
 		-- u for this trajectory, so this number always matches exactly how far
@@ -1390,6 +1521,24 @@ RunService:BindToRenderStep(RENDER_STEP_NAME, Enum.RenderPriority.Camera.Value -
 		return
 	end
 	Hud.renderBarForPhase(phase, ownSwingTier)
+
+	-- ===== THE SWEET-SPOT TICK (see REPORT.md §3c). An EDGE, not a level: it
+	-- fires on the frame the bar crosses INTO the window and not again until it
+	-- has left, so a rider hears one tick per 2.4-second sweep rather than a
+	-- tone for as long as they are inside it.
+	--
+	-- It is worth having because the window is genuinely hard to hit by eye at
+	-- the top of the ladder: 0.288 s wide overall, but only 0.072 s of that
+	-- reaches tier 10's snap threshold. A cue the player can act on by REFLEX
+	-- rather than by watching is exactly what a 72-millisecond target needs.
+	--
+	-- LaunchFormulas.inSweetSpot is the same predicate the grading uses, so the
+	-- tick can never mark a window the multiplier does not agree with.
+	local nowInSweetSpot = LaunchFormulas.inSweetSpot(phase)
+	if nowInSweetSpot and not wasInSweetSpot then
+		SoundPlayer.play2D("FLIGHT_SWEET_SPOT_ENTER")
+	end
+	wasInSweetSpot = nowInSweetSpot
 end)
 
 -- ===== Six-lane rendering (frozen remote players -- see the written report)
