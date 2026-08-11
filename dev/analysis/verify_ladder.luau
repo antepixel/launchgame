@@ -27,7 +27,6 @@ local SlimeConfig = C.SlimeConfig
 local TARGET_BAND = { 4, 12, 20, 28, 36, 44, 52, 60, 68 }
 local BAND = LaunchConfig.RUNWAY_BAND_LENGTH_STUDS
 local SIN_THETA = math.sin(math.rad(LaunchConfig.SWING_ARC_HALF_ANGLE_DEGREES))
-local BASE_DISTANCE = LaunchConfig.DISTANCE_PER_MULTIPLIER * LaunchConfig.SWEET_SPOT_MULTIPLIER
 
 local tierCount = #LaunchConfig.SWING_TIER_DISTANCE_SCALE
 -- Two severities, because the brief has two. A FAILURE is one of its stop
@@ -100,9 +99,11 @@ for tier = 1, tierCount do
 			zone, luck = "road", LuckCurve.VALUES[band + 1]
 		end
 	end
-	-- LaunchServer:1888 arch, :1896-1897 duration, LaunchFormulas trajectoryPitch at u = 0
+	-- LaunchServer arch, LaunchFormulas trajectoryPitch at u = 0. Duration is
+	-- keyed off the TIER now, not off distance -- see C.flightDurationForTier,
+	-- which mirrors the live formula.
 	local archHeight = LaunchConfig.ARC_HEIGHT_SQRT_COEFFICIENT * math.sqrt(distance)
-	local duration = LaunchConfig.FLIGHT_DURATION_SECONDS * (distance / BASE_DISTANCE) ^ LaunchConfig.FLIGHT_DURATION_EXPONENT
+	local duration = C.flightDurationForTier(tier)
 	local pivotY = SwingGeometry.pivotYForScale(visual)
 	local startY = pivotY - rope * math.cos(math.rad(LaunchConfig.SWING_ARC_HALF_ANGLE_DEGREES)) + LaunchConfig.RIDER_SEAT_HEIGHT_OFFSET
 	local descentRate = C.RunwayGeometry.RUNWAY_TOP_Y - startY

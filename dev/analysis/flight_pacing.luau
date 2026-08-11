@@ -15,10 +15,25 @@
 -- fixed: only the flight term moves. They rest on that pass's stated
 -- assumptions (perfect play hits the sweet spot on the first pass; the walk
 -- speed is Roblox's default 16, which this repo never configures).
+--
+-- ===== HISTORICAL RECORD AS OF THE TIER-KEYED DURATION PASS. Both constants
+-- this script was written about -- FLIGHT_DURATION_SECONDS and
+-- FLIGHT_DURATION_EXPONENT -- have since been REMOVED from LaunchConfig:
+-- duration is now BASE + tier * PER_TIER, a linear function of the tier index
+-- with no distance term at all (see C.flightDurationForTier and REPORT.md).
+-- They are carried below as local constants so this script still runs and still
+-- reproduces dev/out/flight_pacing.log exactly, but NEITHER IS LIVE ANY MORE
+-- and neither column below describes the current game. For the current pacing
+-- see dev/analysis/flight_tier_pacing.luau.
 local C = require("./common")
 
 local LaunchConfig = C.LaunchConfig
 local OLD_EXPONENT = 0.5
+-- Retired constants, kept locally -- see the header. These were LaunchConfig.
+-- FLIGHT_DURATION_SECONDS and LaunchConfig.FLIGHT_DURATION_EXPONENT at the
+-- commit this script was written for.
+local RETIRED_FLIGHT_DURATION_SECONDS = 1.8
+local RETIRED_FLIGHT_DURATION_EXPONENT = 0.35
 local BASE_DISTANCE = LaunchConfig.DISTANCE_PER_MULTIPLIER * LaunchConfig.SWEET_SPOT_MULTIPLIER
 
 -- Perfect-play phases from cycle_economics.json, unchanged by this pass.
@@ -28,12 +43,12 @@ local REWARD_CHEST = 3.35
 local RETURN_WALK = 0.25
 
 local function durationFor(distance: number, exponent: number): number
-	return LaunchConfig.FLIGHT_DURATION_SECONDS * (distance / BASE_DISTANCE) ^ exponent
+	return RETIRED_FLIGHT_DURATION_SECONDS * (distance / BASE_DISTANCE) ^ exponent
 end
 
 local tierCount = #LaunchConfig.SWING_TIER_DISTANCE_SCALE
-print(string.format("FLIGHT_DURATION_SECONDS %.2f, baseDistance %.0f, exponent %.2f (was %.2f)",
-	LaunchConfig.FLIGHT_DURATION_SECONDS, BASE_DISTANCE, LaunchConfig.FLIGHT_DURATION_EXPONENT, OLD_EXPONENT))
+print(string.format("RETIRED FLIGHT_DURATION_SECONDS %.2f, baseDistance %.0f, exponent %.2f (was %.2f)",
+	RETIRED_FLIGHT_DURATION_SECONDS, BASE_DISTANCE, RETIRED_FLIGHT_DURATION_EXPONENT, OLD_EXPONENT))
 
 print("\n4a. flight duration and speed")
 print("tier  distance  flight old  flight new  change    studs/s old  studs/s new")
@@ -41,7 +56,7 @@ local rows = {}
 for tier = 1, tierCount do
 	local distance = BASE_DISTANCE * LaunchConfig.SWING_TIER_DISTANCE_SCALE[tier]
 	local oldDuration = durationFor(distance, OLD_EXPONENT)
-	local newDuration = durationFor(distance, LaunchConfig.FLIGHT_DURATION_EXPONENT)
+	local newDuration = durationFor(distance, RETIRED_FLIGHT_DURATION_EXPONENT)
 	rows[tier] = { distance = distance, old = oldDuration, new = newDuration }
 	print(string.format("%4d  %8.2f  %10.4f  %10.4f  %+7.2f%%  %11.1f  %11.1f",
 		tier, distance, oldDuration, newDuration, (newDuration / oldDuration - 1) * 100,

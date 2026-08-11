@@ -98,6 +98,28 @@ function M.perfectLaunchForTier(tier: number): { [string]: any }
 	}
 end
 
+-- ===== Flight duration for a tier =====
+-- Mirrors LaunchServer.server.luau's onRelease, which is now:
+--   duration = FLIGHT_DURATION_BASE_SECONDS + tier * FLIGHT_DURATION_PER_TIER_SECONDS
+-- i.e. tier N flies for N + 1 seconds at the current constants.
+--
+-- IT NO LONGER TAKES A DISTANCE. The previous form was
+--   FLIGHT_DURATION_SECONDS * (distance / baseDistance) ^ FLIGHT_DURATION_EXPONENT
+-- and both of those constants have been REMOVED from LaunchConfig, so every
+-- caller in this directory that used to inline that expression now calls this
+-- instead -- one mirror of the live formula, not five copies. Callers that
+-- want the OLD number for a before/after comparison (see flight_pacing.luau)
+-- carry the retired constants as their own locals, clearly marked as historical.
+--
+-- Consequence worth knowing when reading any cycle table below: duration is now
+-- independent of the release quality, so a mistimed launch at tier N takes
+-- exactly as long as a perfect one. The perfect-play cycle figures are
+-- therefore also the cycle figures for every other release at that tier.
+function M.flightDurationForTier(tier: number): number
+	return M.LaunchConfig.FLIGHT_DURATION_BASE_SECONDS
+		+ tier * M.LaunchConfig.FLIGHT_DURATION_PER_TIER_SECONDS
+end
+
 -- ===== The mystery box, as a luck multiplier =====
 -- LaunchServer.server.luau:2356 -- each press doubles with BOX_DOUBLE_CHANCE
 -- and otherwise opens, so the number of doublings D is geometric:

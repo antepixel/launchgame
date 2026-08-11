@@ -356,13 +356,12 @@ end
 -- click latency and walk-back time. What IS derivable is a FLOOR on the cycle,
 -- from the delays the server itself imposes. Using the floor makes every drain
 -- figure below an UPPER bound.
-local baseDistance = C.LaunchConfig.DISTANCE_PER_MULTIPLIER * C.LaunchConfig.SWEET_SPOT_MULTIPLIER
 local expectedPresses = 1 / (1 - C.BOX_P) -- E[D] + 1 presses to resolve a box
 for tier = 1, C.SWING_TIER_COUNT do
 	local r = tierResults[tier]
-	local facts = C.perfectLaunchForTier(tier)
-	local flight = C.LaunchConfig.FLIGHT_DURATION_SECONDS
-		* (facts.distance / baseDistance) ^ C.LaunchConfig.FLIGHT_DURATION_EXPONENT
+	-- Duration is keyed off the TIER now, not off distance -- see
+	-- C.flightDurationForTier, which mirrors the live formula.
+	local flight = C.flightDurationForTier(tier)
 	local boxSeconds = if r.rewardSource == "chest" then 0 else expectedPresses * C.LaunchConfig.BOX_PRESS_COOLDOWN_SECONDS
 	local revealSeconds = if r.rewardSource == "chest" then 0 else C.SlimeConfig.REVEAL_BOX_TO_SLIME_DELAY_SECONDS
 	local cycleFloor = flight + boxSeconds + revealSeconds + C.LaunchConfig.RESET_DELAY

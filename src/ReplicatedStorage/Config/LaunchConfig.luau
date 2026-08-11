@@ -18,8 +18,8 @@ export type LaunchConfig = {
 	OUTCOME_RAINBOW_SATURATION: number,
 	OUTCOME_RAINBOW_VALUE: number,
 	DISTANCE_PER_MULTIPLIER: number,
-	FLIGHT_DURATION_SECONDS: number,
-	FLIGHT_DURATION_EXPONENT: number,
+	FLIGHT_DURATION_BASE_SECONDS: number,
+	FLIGHT_DURATION_PER_TIER_SECONDS: number,
 	ARC_HEIGHT_SQRT_COEFFICIENT: number,
 	GRAVITY: number,
 	RESET_DELAY: number,
@@ -141,77 +141,75 @@ local LaunchConfig: LaunchConfig = {
 	-- bands. The swing-to-runway gap also had to scale by the same factor --
 	-- see the Baseplate's Size/Position in default.project.json.
 	DISTANCE_PER_MULTIPLIER = 100,
-	-- Seconds a flight takes AT THE BASE reference distance (DISTANCE_PER_
-	-- MULTIPLIER * SWEET_SPOT_MULTIPLIER, i.e. a tier-1 perfect launch) -- see
-	-- FLIGHT_DURATION_EXPONENT below for how every OTHER distance (other
-	-- tiers, other release timings) scales off this one anchor point. 1.8s is
-	-- enough time for the chase camera and flight pose to read clearly at
-	-- 60fps (~108 frames) while staying short enough that back-to-back reps
-	-- don't feel padded -- unchanged reasoning from before tiers existed,
-	-- just now describing one specific point on a curve instead of a flat
-	-- constant.
-	FLIGHT_DURATION_SECONDS = 1.8,
-	-- Exponent duration scales BY relative to distance: duration =
-	-- FLIGHT_DURATION_SECONDS * (distance / baseDistance) ^ this, where
-	-- baseDistance is the tier-1 perfect-launch distance above. Because
-	-- baseDistance and every flight's distance scale by the SAME factor (see
-	-- DISTANCE_PER_MULTIPLIER/RUNWAY_BAND_LENGTH_STUDS), this ratio -- and
-	-- therefore duration -- is UNAFFECTED by that scaling; only the
-	-- illustrative stud numbers below changed. 1.0 would hold SPEED constant
-	-- across every tier -- a top-tier perfect launch (14.8x farther) would
-	-- take 14.8x as long, ~27s, which drags badly. 0.0 would hold DURATION
-	-- constant regardless of distance -- the same top-tier flight would cross
-	-- ~2960 studs in the same 1.8s as tier 1's 200 studs, over 1600
-	-- studs/sec, reading as a teleport, not a flight. 0.5 (square root) is
-	-- the middle ground: speed still climbs noticeably with distance (a
-	-- bigger tier reads as more powerful), but duration grows far slower
-	-- than distance does -- that same 14.8x-farther top-tier flight takes
-	-- only ~3.8x as long (~6.9s): long enough to register as a big flight
-	-- without dragging.
+	-- ===== FLIGHT DURATION IS KEYED OFF THE TIER INDEX, NOT OFF DISTANCE.
 	--
-	-- SPEED DOUBLED AS OF THE BAND-DEPTH-DOUBLING PASS (see the written
-	-- report): duration only depends on the distance/baseDistance RATIO,
-	-- which is unchanged, so every flight now covers twice the studs (~111
-	-- studs/sec at tier 1, ~427 studs/sec at the top tier, up from ~55/~214) in
-	-- the SAME duration as before. Left unadjusted deliberately this pass --
-	-- see the written report for why and the proposed fix (scale
-	-- FLIGHT_DURATION_SECONDS by the same factor to restore the original
-	-- per-tier speeds exactly).
+	--   duration = FLIGHT_DURATION_BASE_SECONDS + tier * FLIGHT_DURATION_PER_TIER_SECONDS
 	--
-	-- ===== LOWERED 0.5 -> 0.35, AND THE PARAGRAPHS ABOVE ARE THE REASONING FOR
-	-- THE OLD VALUE, kept because the trade-off they describe is still the
-	-- right frame -- only the point chosen on it moved. What changed is a
-	-- measurement the earlier passes did not have: the flight is not a cost
-	-- paid once, it is paid on EVERY roll, and at 0.5 it was 60% of the top
-	-- tier's whole launch cycle (7.05s of 11.85s). Buying a tier made every
-	-- roll slower, so the ladder charged for a downgrade in pace.
+	-- At 1.0 and 1.0 that is exactly "tier N flies for N + 1 seconds":
 	--
-	-- 0.35 keeps the shape and shortens the tail: the top tier's flight goes
-	-- 7.05s -> 4.68s (its cycle 11.85s -> 9.48s, 5.06 -> 6.33 launches/min),
-	-- while tier 1 is UNCHANGED BY CONSTRUCTION -- its distance IS
-	-- baseDistance, so the ratio is 1 and 1^anything is 1. No exponent can
-	-- move tier 1; that is what makes this constant safe to retune without
-	-- touching FLIGHT_DURATION_SECONDS. Speed still climbs with distance
-	-- (111 studs/sec at tier 1 to 656 at the top, against 427 before), so a
-	-- bigger tier still reads as more powerful, just less patiently.
+	--   tier   1   2   3   4   5   6   7   8   9  10
+	--   secs   2   3   4   5   6   7   8   9  10  11
 	--
-	-- WHY NOT LOWER STILL. The floor is the 0.0 case the paragraph above
-	-- describes -- a top-tier flight crossing 3,000 studs in tier 1's 1.8s
-	-- reads as a teleport. 0.35 puts the top tier at 4.68s, comfortably inside
-	-- "a big flight" and roughly the length of the reward scene that follows
-	-- it; below about 0.25 the top tiers start to feel like a cut rather than
-	-- a journey. That is a taste judgement and it has not been playtested.
+	-- ONE SECOND PER TIER, evenly spaced, which is the whole point: the flight
+	-- is the part of the loop worth watching, so buying a tier should visibly
+	-- buy MORE of it, by a predictable amount, at every step of the ladder.
 	--
-	-- NOTHING DOWNSTREAM DEPENDS ON THE VALUE, verified rather than assumed
-	-- (see REPORT.md): the landing position, the band it resolves to and the
-	-- short/road/past zone are all computed at RELEASE from
-	-- trajectoryPosition(u = 1), a closed form of distance and start position
-	-- with no time term at all, so a faster flight lands in exactly the same
-	-- place as a slower one. Every consumer of the duration -- the server's
-	-- own landing check, the FlightDuration attribute the other lanes render
-	-- from, the client's own render loop -- divides elapsed time BY it, so all
-	-- three scale automatically.
-	FLIGHT_DURATION_EXPONENT = 0.35,
+	-- ===== THIS REVERSES THE PREVIOUS PASS, DELIBERATELY. That pass lowered a
+	-- FLIGHT_DURATION_EXPONENT from 0.5 to 0.35 to make high tiers FASTER, on
+	-- the reasoning that the flight was 60% of the top tier's cycle and so
+	-- buying a tier "charged for a downgrade in pace." That optimised rolls per
+	-- minute. Rolls per minute was the wrong objective -- it treats the flight
+	-- as a cost to be minimised, when the flight is the thing the player is
+	-- here for. The old intent is NOT preserved: the top tier's flight goes
+	-- 4.68s -> 11s and its cycle 9.48s -> 15.80s, and that is the intended
+	-- direction now. See REPORT.md.
+	--
+	-- ===== WHY A LINEAR FUNCTION OF TIER AND NOT A POWER OF DISTANCE. The old
+	-- form was FLIGHT_DURATION_SECONDS * (distance / baseDistance) ^ exponent.
+	-- No exponent can produce evenly spaced durations here, and this was
+	-- measured rather than assumed. Fitting the exponent to hit both ends of
+	-- the wanted table (2s at tier 1, 11s at tier 10) gives 0.6241, and the
+	-- middle then bulges badly:
+	--
+	--   tier      1      2      3      4      5      6      7      8      9     10
+	--   want   2.00   3.00   4.00   5.00   6.00   7.00   8.00   9.00  10.00  11.00
+	--   got    2.00   3.66   4.92   6.01   6.99   7.89   8.73   9.53  10.28  11.00
+	--   err    0.00  +0.66  +0.92  +1.01  +0.99  +0.89  +0.73  +0.53  +0.28   0.00
+	--
+	-- Worst case +1.01s at tier 4 -- a fifth of that tier's whole intended
+	-- flight, in the middle of the ladder where the player is doing most of
+	-- their buying. The cause is structural, not a bad fit: SWING_TIER_DISTANCE_
+	-- SCALE is spaced to land each tier on an EVENLY spaced BAND, so distance is
+	-- very nearly linear in tier -- and any power of a near-linear sequence is a
+	-- curve, while the target table is a straight line. The only function of
+	-- distance that gives a straight line in tier is a linear one, and once it
+	-- is linear in tier there is no reason to route it through distance at all.
+	--
+	-- ===== THE ONE THING THIS GIVES UP, stated because it is a real behaviour
+	-- change and not a rounding error: duration no longer varies with the
+	-- RELEASE. Every launch at a given tier now takes the same time whatever
+	-- the multiplier was, so a badly-timed release (WORST_MULTIPLIER 0.75 vs.
+	-- SWEET_SPOT_MULTIPLIER 2.0, i.e. 0.375x the distance) covers 0.375x the
+	-- ground in the SAME seconds and therefore reads as a slow drift rather
+	-- than a short hop. Under the old form it was 0.529x the speed instead of
+	-- 0.375x, so the effect existed and has roughly doubled. It is accepted
+	-- here: a whiffed release SHOULD read as underpowered, and this is the
+	-- direct consequence of keying on the tier, which is what the even spacing
+	-- requires. If it ever needs softening, the fix is a mild distance term
+	-- multiplying THIS result, not a return to the exponent form. =====
+	FLIGHT_DURATION_BASE_SECONDS = 1.0,
+	-- Seconds added per tier. With BASE at 1.0 this is what makes tier N take
+	-- N + 1 seconds, so the two are tuned as a pair: BASE is the intercept
+	-- (what a hypothetical tier 0 would take) and this is the slope. Raising
+	-- only this steepens the ladder's pacing without moving tier 1 much;
+	-- raising only BASE lifts every tier equally.
+	--
+	-- BOTH ARE EXPECTED TO BE RETUNED once there is real player data on how
+	-- long an 11-second flight actually feels on the tenth repetition rather
+	-- than the first. The number that will decide it is not the flight in
+	-- isolation but the flight as a share of the cycle -- 37% at tier 1 rising
+	-- to 70% at tier 10 (see REPORT.md's table).
+	FLIGHT_DURATION_PER_TIER_SECONDS = 1.0,
 	-- ===== PEAK ARC HEIGHT: k * sqrt(distance), NOT a fraction of distance.
 	--
 	-- WHAT WAS WRONG WITH THE FRACTION (see REPORT.md). It was 0.35 of the
@@ -226,10 +224,19 @@ local LaunchConfig: LaunchConfig = {
 	-- WHY A SQUARE ROOT. It is the shape that grows without keeping pace: the
 	-- arc still gets bigger every tier, so a longer flight is still visibly a
 	-- bigger event, but the ratio between the ends collapses from 15x to 3.9x.
-	-- It also matches FLIGHT_DURATION_EXPONENT (0.5) -- duration already scales
-	-- as the square root of distance, so height and time now grow together and
-	-- the arc keeps the same shape in the air rather than getting steeper with
-	-- every tier.
+	-- It used to also MATCH the duration curve: when duration was a power of
+	-- distance at exponent 0.5, height and time grew as the same square root,
+	-- so the arc kept the same shape in the air at every tier. THAT PAIRING IS
+	-- GONE -- duration is now linear in the TIER INDEX (see
+	-- FLIGHT_DURATION_BASE_SECONDS above), while this is still a square root of
+	-- DISTANCE. The consequence, stated rather than left to be discovered: time
+	-- now grows FASTER than height does up the ladder (11x from tier 1 to 10,
+	-- against the arch's 3.9x), so high-tier flights trace a flatter, longer
+	-- arc than they used to rather than a taller one. That reads as a cruise,
+	-- which is the intent of the longer flight; it is not the arc getting
+	-- steeper. The coefficient is deliberately NOT retuned to chase it -- the
+	-- arch heights themselves are unchanged, and this pass changes duration
+	-- only.
 	--
 	-- WHERE k COMES FROM. It started as a mid-ladder target: tier 6 is the middle
 	-- of the eleven, its perfect launch is 1,840 studs, and 165 studs of arch

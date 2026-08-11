@@ -1999,15 +1999,28 @@ local function onRelease(player: Player)
 	-- was to look at. Still exactly zero at u = 1, so no value here can move a
 	-- landing -- see trajectoryPosition.
 	local archHeight = LaunchConfig.ARC_HEIGHT_SQRT_COEFFICIENT * math.sqrt(distance)
-	-- Flight duration now scales WITH distance instead of staying fixed --
-	-- see FLIGHT_DURATION_EXPONENT's comment in LaunchConfig for why a square
-	-- root (not linear, not flat). baseDistance is deliberately NOT tier-
-	-- scaled -- it's the fixed tier-1-perfect-launch anchor point that
-	-- FLIGHT_DURATION_SECONDS was tuned against, the same reference for every
-	-- tier's duration, not a per-tier moving target.
-	local baseDistance = LaunchConfig.DISTANCE_PER_MULTIPLIER * LaunchConfig.SWEET_SPOT_MULTIPLIER
-	local duration = LaunchConfig.FLIGHT_DURATION_SECONDS
-		* (distance / baseDistance) ^ LaunchConfig.FLIGHT_DURATION_EXPONENT
+	-- Flight duration is a LINEAR FUNCTION OF THE TIER INDEX -- tier N flies for
+	-- N + 1 seconds at the current constants. It no longer reads `distance` at
+	-- all: the previous form was FLIGHT_DURATION_SECONDS * (distance /
+	-- baseDistance) ^ FLIGHT_DURATION_EXPONENT, and both of those constants are
+	-- GONE from LaunchConfig, not merely unread -- see FLIGHT_DURATION_BASE_
+	-- SECONDS' own comment for the measurement that killed the exponent form
+	-- (no exponent gives evenly spaced durations here; the best fit bulges
+	-- +1.01s at tier 4).
+	--
+	-- riderTier, NOT riderTierForMultiplier: they are the same variable today
+	-- (see the assignment above) but they mean different things -- one is
+	-- "which swing is this player riding," which is what sets the pace, and the
+	-- other is "which grading curve applies to their click." This wants the
+	-- former.
+	--
+	-- THE LANDING CANNOT MOVE BECAUSE OF THIS. `distance` and `archHeight` are
+	-- already fixed above, and landingPosition below is trajectoryPosition(...,
+	-- u = 1) -- a closed form with no time term at all (see its definition).
+	-- Duration decides only WHEN the Heartbeat loop places the character, never
+	-- WHERE. Verified per-tier at both the old and new durations; see REPORT.md.
+	local duration = LaunchConfig.FLIGHT_DURATION_BASE_SECONDS
+		+ riderTier * LaunchConfig.FLIGHT_DURATION_PER_TIER_SECONDS
 
 	-- Launch from wherever the seat actually is right now (the swing never
 	-- stops, so this is a moving origin). LaunchConfig.RIDER_SEAT_HEIGHT_

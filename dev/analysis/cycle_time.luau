@@ -117,12 +117,13 @@ end
 -- distance/arch: LaunchServer.server.luau:1882/:1888. duration: :1896-1897 --
 -- NOT in LaunchFormulas, see REPORT.md. Launch angle is the client's own
 -- trajectoryPitch at u = 0 (LaunchFormulas, required for real).
-local BASE_DISTANCE = LaunchConfig.DISTANCE_PER_MULTIPLIER * LaunchConfig.SWEET_SPOT_MULTIPLIER
 local function flightForTier(tier: number)
 	local facts = C.perfectLaunchForTier(tier)
 	local distance = facts.distance
 	local archHeight = LaunchConfig.ARC_HEIGHT_SQRT_COEFFICIENT * math.sqrt(distance)
-	local duration = LaunchConfig.FLIGHT_DURATION_SECONDS * (distance / BASE_DISTANCE) ^ LaunchConfig.FLIGHT_DURATION_EXPONENT
+	-- Duration is keyed off the TIER now, not off distance -- see
+	-- C.flightDurationForTier, which mirrors the live formula.
+	local duration = C.flightDurationForTier(tier)
 	-- Launch height: the seat plus the rider offset, exactly as onRelease builds
 	-- startPosition (LaunchServer:1906) -- pivot Y from SwingGeometry, minus the
 	-- rope's vertical component at the sweet-spot theta.
@@ -450,8 +451,8 @@ local out = {
 		sweetSpotEdgeMultiplier = LaunchConfig.SWEET_SPOT_EDGE_MULTIPLIER,
 		snapThresholdDefault = LaunchConfig.SWEET_SPOT_SNAP_THRESHOLD,
 		snapThresholdPerTier = LaunchConfig.SWING_TIER_SNAP_THRESHOLD,
-		flightDurationSeconds = LaunchConfig.FLIGHT_DURATION_SECONDS,
-		flightDurationExponent = LaunchConfig.FLIGHT_DURATION_EXPONENT,
+		flightDurationBaseSeconds = LaunchConfig.FLIGHT_DURATION_BASE_SECONDS,
+		flightDurationPerTierSeconds = LaunchConfig.FLIGHT_DURATION_PER_TIER_SECONDS,
 		archHeightSqrtCoefficient = LaunchConfig.ARC_HEIGHT_SQRT_COEFFICIENT,
 		distancePerMultiplier = LaunchConfig.DISTANCE_PER_MULTIPLIER,
 		boxCameraTransitionSeconds = LaunchConfig.BOX_CAMERA_TRANSITION_SECONDS,
