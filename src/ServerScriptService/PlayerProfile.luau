@@ -23,6 +23,7 @@ local GroundConfig = require(ReplicatedStorage.Config.GroundConfig)
 local InventoryConfig = require(ReplicatedStorage.Config.InventoryConfig)
 local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
+local OfflineIncome = require(ReplicatedStorage.Config.OfflineIncome)
 local PersistenceConfig = require(ReplicatedStorage.Config.PersistenceConfig)
 local ShopConfig = require(ReplicatedStorage.Config.ShopConfig)
 local SignBuilder = require(ReplicatedStorage.SignBuilder)
@@ -874,41 +875,24 @@ end
 --
 -- Returns the amount credited, for the caller to log or ignore.
 local function creditOfflineIncome(profile: Profile, data: { [string]: any }?): number
-	-- A BRAND-NEW PROFILE CREDITS ZERO. `data` is nil for a player with no save
-	-- at all, and `lastSeen` is absent from every save written before this
-	-- feature existed. Both must mean "no offline time to pay for" -- NOT "last
-	-- seen at the epoch," which is what `data.lastSeen or 0` would have meant
-	-- and which would have handed every existing player the full cap on their
-	-- next join. The nil case is handled explicitly for exactly that reason.
-	local lastSeen = data and data.lastSeen
-	if typeof(lastSeen) ~= "number" then
-		return 0
-	end
-
-	-- CLAMPED AT BOTH ENDS, and both ends are real cases.
+	-- The arithmetic -- the missing-timestamp case, the clock-skew clamp and the
+	-- cap -- lives in OfflineIncome.creditFor, beside the two constants it
+	-- reads, so it can be tested on the command line against the real module
+	-- (see dev/analysis/verify_offline.luau). `data` may be nil (a brand-new
+	-- player) and `data.lastSeen` may be absent or malformed; creditFor takes
+	-- the raw value and is responsible for every one of those cases.
 	--
-	-- The upper bound is OFFLINE_CAP_SECONDS, the design limit.
+	-- os.time() here and nowhere else: this is the one place a clock is read for
+	-- accrual, and it is read server-side.
 	--
-	-- The LOWER bound is clock skew, not paranoia: os.time() is each machine's
-	-- own wall clock, and a player can be saved by one server and loaded by
-	-- another whose clock is a few seconds behind. That makes `now - lastSeen`
-	-- negative through no fault of anyone's, and an unclamped negative would
-	-- SUBTRACT from a pot the player had legitimately earned before logging off.
-	-- math.clamp's low bound of 0 turns that into "credit nothing," which is the
-	-- correct reading of "you were away for negative time."
-	local elapsed = math.clamp(os.time() - lastSeen, 0, BaseConfig.OFFLINE_CAP_SECONDS)
-	if elapsed <= 0 then
+	-- totalIncomePerSecond is THE SAME function the online tick calls, not a
+	-- re-derivation -- see its own comment. That is what guarantees the offline
+	-- and online rates cannot diverge.
+	local credited = OfflineIncome.creditFor(data and data.lastSeen, os.time(), totalIncomePerSecond(profile))
+	if credited <= 0 then
 		return 0
 	end
 
-	-- The SAME function the online tick calls, not a re-derivation -- see its
-	-- own comment. This is what guarantees the two rates cannot diverge.
-	local incomePerSecond = totalIncomePerSecond(profile)
-	if incomePerSecond <= 0 then
-		return 0
-	end
-
-	local credited = elapsed * incomePerSecond * BaseConfig.OFFLINE_RATE_MULTIPLIER
 	-- Added to whatever pot was already saved, never replacing it: a player who
 	-- logged off holding an uncollected pot gets that pot PLUS their offline
 	-- earnings. `offlineCredit` records only THIS session's share, for the
