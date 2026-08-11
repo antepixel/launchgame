@@ -37,6 +37,9 @@ export type BaseConfig = {
 	BASE_COLLECT_PAD_COLOR: Color3,
 	BASE_COLLECT_PAD_MATERIAL: Enum.Material,
 
+	BASE_RETURN_PAD_EDGE_MARGIN_STUDS: number,
+	BASE_RETURN_PAD_Z_MARGIN_STUDS: number,
+
 	BASE_PLOT_CENTER_Z: number,
 	BASE_MAT_SIZE: Vector3,
 	BASE_MAT_Y_OFFSET: number,
@@ -289,6 +292,57 @@ local BaseConfig: BaseConfig = {
 	-- rather than sitting on a colour.)
 	BASE_COLLECT_PAD_COLOR = Color3.fromRGB(61, 211, 93),
 	BASE_COLLECT_PAD_MATERIAL = Enum.Material.Neon,
+
+	-- ===== THE RETURN PAD: an ELEVENTH collect pad, on the approach link the
+	-- player already walks after a flight. Same single pending pot as the ten
+	-- above -- every pad banks the whole pot; the pads are plural because they
+	-- are on the walk, not because they hold separate money.
+	--
+	-- WHY IT EXISTS. The ten per-slot pads are 61+ studs off the launch loop,
+	-- behind the conveyor, inside the plot (see REPORT.md's STEP 0 §4): a player
+	-- returning from a flight never goes near one. This pad is the one that
+	-- makes collection cost ZERO seconds, which is the whole point of the option
+	-- taken. It also fixes the stranded-pot corner the ten cannot: they are
+	-- built inside a slime Model and die with it, so a player holding a pot with
+	-- every slot emptied to inventory had nothing left to collect from. This one
+	-- is parented to the base FOLDER and exists from the moment the player joins,
+	-- slimes or no slimes.
+	--
+	-- ITS SIZE AND POSITION ARE DERIVED, not written here -- see
+	-- BaseGeometry.returnPadPlacement, which reads the approach link's own width
+	-- and the two constants that bound the walk (LaneConfig.SWING_PIVOT_Z +
+	-- LaunchConfig.SWING_RETURN_CLEARANCE_STUDS for where the player lands,
+	-- SWING_PIVOT_Z + SWING_MOUNT_RADIUS_STUDS for where auto-mount takes them).
+	-- Only these two margins live here. It shares BASE_COLLECT_PAD_HEIGHT_STUDS,
+	-- _COLOR and _MATERIAL with the ten above deliberately: a player must read it
+	-- as the same kind of object, and one look means one set of constants.
+	--
+	-- HOW FAR ITS SIDE EDGES STAY BACK from the approach link's own edges. The
+	-- link is PathConfig.APPROACH_LINK_WIDTH (9) wide, so at 0.5 the pad comes
+	-- out 8 wide -- nearly the full corridor, deliberately. The ten in the plot
+	-- are 4 wide because they sit BESIDE a walk and are stepped onto on purpose;
+	-- this one sits ACROSS a walk and must not be missed by a player who drifts
+	-- a stud or two off centre, so it is sized to be unavoidable rather than to
+	-- be tidy. Leaving any margin at all is what keeps the link readable as a
+	-- path with a pad on it rather than as a pad.
+	BASE_RETURN_PAD_EDGE_MARGIN_STUDS = 0.5,
+	-- How far past EACH END of the walk window the pad extends, along Z.
+	--
+	-- THE WINDOW IS ONLY FOUR STUDS, and this is the number that surprised this
+	-- pass (see REPORT.md). A player is returned to SWING_PIVOT_Z +
+	-- SWING_RETURN_CLEARANCE_STUDS = 52 and auto-mounts the instant they come
+	-- within SWING_MOUNT_RADIUS_STUDS = 18 of the pivot at Z 30 -- i.e. at Z 48,
+	-- on this lane's own X, where the horizontal offset the mount check measures
+	-- is pure Z. They do NOT walk the 22 studs to the swing; they walk 4 and are
+	-- seated. So the pad has 4 studs of walk to catch them in.
+	--
+	-- 2 studs of margin at each end takes the pad to 8 deep, spanning Z 46-54:
+	-- it covers the landing spot itself (so a player who never takes a step is
+	-- still standing on it) and continues past the mount boundary (so a player
+	-- who sprints through the window at any frame rate cannot tunnel across it
+	-- between two Touched samples). Both ends matter; this is not symmetry for
+	-- its own sake.
+	BASE_RETURN_PAD_Z_MARGIN_STUDS = 2,
 
 	-- ===== Plot dressing: the mat, its central path, and the raised edges
 	-- framing it -- everything centred on this single Z per lane (X still

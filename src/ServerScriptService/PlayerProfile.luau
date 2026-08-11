@@ -165,6 +165,13 @@ end
 -- so the sign's board has to point back down that approach, toward -Z.
 local SIGN_FACE_DIRECTION = Vector3.new(0, 0, -1)
 
+-- ===== THE RETURN PAD -- the ELEVENTH collect pad, and the only one on the
+-- launch loop. Named distinctly from the ten per-slot pads (all of which are
+-- called "CollectPad" and are told apart only by their parent) so the two are
+-- separable by name alone: the collect handler wires both, the world label in
+-- BaseClient goes above THIS one only, and neither has to guess from context.
+local RETURN_PAD_NAME = "ReturnCollectPad"
+
 local function buildBaseFolder(player: Player, baseIndex: number): Folder
 	local folder = Instance.new("Folder")
 	folder.Name = string.format("Base_%d", player.UserId)
@@ -223,6 +230,54 @@ local function buildBaseFolder(player: Player, baseIndex: number): Folder
 	local minCorner = SignBuilder.worldAABB(sign)
 	sign:PivotTo(sign:GetPivot() + Vector3.new(0, signPosition.Y - minCorner.Y, 0))
 	sign.Parent = folder
+
+	-- ===== THE RETURN PAD, built HERE and not in spawnSlimeVisual, and that
+	-- difference is the entire point of it (see BaseConfig's own return-pad
+	-- block and REPORT.md).
+	--
+	-- PARENTED TO THE BASE FOLDER, not to a slime Model. The ten per-slot pads
+	-- are descendants of the slime they sit in front of, which is what gives
+	-- them their teardown for free -- and also what makes them disappear when
+	-- that slime is removed to inventory. A player who emptied every slot while
+	-- holding an uncollected pot had no pad left to bank it at. This one hangs
+	-- off the folder itself, so it exists from the instant the player joins,
+	-- before the profile load has even resolved, with zero slimes placed and
+	-- forever after. It still cannot outlive its owner: onPlayerRemoving
+	-- destroys this whole folder, exactly as it always did.
+	--
+	-- The rejected alternative was a static per-lane part in MapBlockout beside
+	-- the slot pads, built once for every lane at server start. That would have
+	-- matched how the rest of the map's dressing is built, but the pad has an
+	-- OWNER in a way a slot pad does not -- it banks one specific player's pot --
+	-- so it would have needed re-keying to the new player on every lane reuse,
+	-- and clearing on every leave. Parenting it to the per-player folder gets
+	-- both for nothing.
+	--
+	-- BUILT IN THE SAME STYLE as the ten, from the SAME shared constants
+	-- (BASE_COLLECT_PAD_HEIGHT_STUDS / _COLOR / _MATERIAL, the same
+	-- GROUND_TOP_SURFACE finish) so it reads as the same kind of object. It is
+	-- deliberately NOT refactored into a shared builder with spawnSlimeVisual's
+	-- pad: that pad's construction is explicitly out of scope this pass, and a
+	-- shared helper would have rewritten it to produce a byte-identical result
+	-- for no benefit this pass can verify. See REPORT.md.
+	--
+	-- Anchored and CanCollide false, same as the ten: it is a floor tile the
+	-- player walks over, not a lip to catch on -- and this one is on the path
+	-- they walk automatically, so a collidable version would be a hazard rather
+	-- than merely untidy. CanTouch stays at its default true, which is what the
+	-- collect handler needs.
+	local returnPosition, returnSize = BaseGeometry.returnPadPlacement(baseIndex)
+	local returnPad = Instance.new("Part")
+	returnPad.Name = RETURN_PAD_NAME
+	returnPad.Anchored = true
+	returnPad.CanCollide = false
+	returnPad.Size = returnSize
+	returnPad.Position = returnPosition
+	returnPad.Material = BaseConfig.BASE_COLLECT_PAD_MATERIAL
+	returnPad.Color = BaseConfig.BASE_COLLECT_PAD_COLOR
+	returnPad.TopSurface = GroundConfig.GROUND_TOP_SURFACE
+	returnPad.BottomSurface = Enum.SurfaceType.Smooth
+	returnPad.Parent = folder
 
 	folder:SetAttribute("Money", 0)
 	folder:SetAttribute("SwingTier", 1)

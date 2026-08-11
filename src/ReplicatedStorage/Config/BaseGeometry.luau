@@ -25,6 +25,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local BaseConfig = require(ReplicatedStorage.Config.BaseConfig)
 local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
+-- For the return pad's own Z window only (SWING_RETURN_CLEARANCE_STUDS and
+-- SWING_MOUNT_RADIUS_STUDS -- see returnPadPlacement). No cycle: LaunchConfig
+-- is a leaf that requires nothing, and LaneConfig already requires it.
+local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
 local PathConfig = require(ReplicatedStorage.Config.PathConfig)
 
 local baseplate = Workspace:WaitForChild("Baseplate") :: BasePart
@@ -185,6 +189,87 @@ function BaseGeometry.collectPadPlacement(baseIndex: number, slotNumber: number)
 		slotPos.Z
 	)
 	return position, size
+end
+
+-- ===== THE RETURN PAD for one lane: the eleventh collect pad, the only one
+-- that is actually ON the launch loop. Returns (position, size), position being
+-- the part's CENTRE with its Y offset already baked in -- the same shape every
+-- other function here returns.
+--
+-- NOTHING HERE IS A LITERAL. All three axes are derived from the constants that
+-- already decide where the player goes and where they may walk:
+--
+--   X -- this lane's own centre (LaneConfig.laneCenterX). NOT baseLaneCenterX:
+--        this pad sits on the SWING side of the map, on the approach link, and
+--        the link is built at the lane's swing X. The two functions return the
+--        same number today (baseLaneCenterX delegates), but they mean different
+--        things, and if plots are ever given their own pitch again this pad must
+--        follow the SWING, not the plot. Width is the approach link's own width
+--        less a margin at each edge, so the pad spans nearly the whole corridor
+--        and cannot be walked around.
+--
+--   Z -- centred on THE WALK WINDOW, and the window is the interesting part.
+--        A player is placed at SWING_PIVOT_Z + SWING_RETURN_CLEARANCE_STUDS
+--        (30 + 22 = 52) after a flight, faces -Z, and walks toward the swing.
+--        checkProximityMounts seats them the moment their HORIZONTAL distance
+--        from the pivot drops to SWING_MOUNT_RADIUS_STUDS (18) -- and since the
+--        return position shares the pivot's X exactly, that distance is pure Z,
+--        so auto-mount fires at Z = 30 + 18 = 48. THE WALK IS FOUR STUDS, from
+--        52 to 48, not the 22 studs to the swing itself. The pad is centred on
+--        that window and extended past both ends by
+--        BASE_RETURN_PAD_Z_MARGIN_STUDS.
+--
+--   Y -- flush on the approach link's own top face, computed rather than
+--        assumed (link centre = groundY + APPROACH_LINK_Y_OFFSET, so its top is
+--        that plus half APPROACH_LINK_THICKNESS), plus half this pad's height.
+--        Same rule the plot's collect pads use against the mat.
+--
+-- ASSERTED, NOT ASSUMED, at load (below): the derived footprint must land
+-- entirely within the approach link's own Z span and must not reach the
+-- conveyor. Those are the two ways this could silently end up somewhere a
+-- player cannot touch it, so they fail the load rather than shipping a pad
+-- floating off the end of a path.
+function BaseGeometry.returnPadPlacement(laneIndex: number): (Vector3, Vector3)
+	local laneX = LaneConfig.laneCenterX(laneIndex)
+
+	local returnZ = LaneConfig.SWING_PIVOT_Z + LaunchConfig.SWING_RETURN_CLEARANCE_STUDS
+	local mountZ = LaneConfig.SWING_PIVOT_Z + LaunchConfig.SWING_MOUNT_RADIUS_STUDS
+	local margin = BaseConfig.BASE_RETURN_PAD_Z_MARGIN_STUDS
+
+	local size = Vector3.new(
+		PathConfig.APPROACH_LINK_WIDTH - 2 * BaseConfig.BASE_RETURN_PAD_EDGE_MARGIN_STUDS,
+		BaseConfig.BASE_COLLECT_PAD_HEIGHT_STUDS,
+		(returnZ - mountZ) + 2 * margin
+	)
+	local linkTopY = groundY + PathConfig.APPROACH_LINK_Y_OFFSET + PathConfig.APPROACH_LINK_THICKNESS / 2
+	local position = Vector3.new(laneX, linkTopY + size.Y / 2, (returnZ + mountZ) / 2)
+	return position, size
+end
+
+-- The two ways the return pad could end up unreachable, checked at load against
+-- the same PathConfig numbers MapBuilder builds the link from. Lane 0 is a
+-- sufficient witness: returnPadPlacement varies with laneIndex only in X, and
+-- both of these are Z constraints shared by every lane.
+do
+	local position, size = BaseGeometry.returnPadPlacement(0)
+	local nearZ, farZ = position.Z - size.Z / 2, position.Z + size.Z / 2
+	local linkNearZ = PathConfig.APPROACH_LINK_START_Z
+	local linkFarZ = PathConfig.APPROACH_LINK_END_Z
+	assert(
+		nearZ >= linkNearZ and farZ <= linkFarZ,
+		string.format(
+			"The return pad spans Z %.1f-%.1f but the approach link only covers %.1f-%.1f -- part of the pad would float off the path. Retune BASE_RETURN_PAD_Z_MARGIN_STUDS or the link's own span.",
+			nearZ, farZ, linkNearZ, linkFarZ
+		)
+	)
+	local beltNearZ = PathConfig.BACK_WALKWAY_Z - PathConfig.BACK_WALKWAY_SIZE.Z / 2
+	assert(
+		farZ <= beltNearZ,
+		string.format(
+			"The return pad reaches Z %.1f, but the conveyor starts at %.1f -- a pad under a moving surface cannot be stood on reliably.",
+			farZ, beltNearZ
+		)
+	)
 end
 
 -- ===== Plot dressing: the mat, its central path, and the raised edges
