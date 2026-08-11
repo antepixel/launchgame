@@ -32,6 +32,10 @@ local SlimeData = require(ReplicatedStorage.Config.SlimeData)
 local SlimeUpgrade = require(ReplicatedStorage.Config.SlimeUpgrade)
 local SlimeUpgradeConfig = require(ReplicatedStorage.Config.SlimeUpgradeConfig)
 local PlayerStore = require(ServerScriptService.PlayerStore)
+-- Sound is BROADCAST, never played here (see SoundBroadcast.luau). The single
+-- call below is a bare notification added beside a decision already made; no
+-- collect behaviour changes.
+local SoundBroadcast = require(ServerScriptService.SoundBroadcast)
 
 local PlayerProfile = {}
 
@@ -1013,6 +1017,18 @@ local function collectPending(player: Player, profile: Profile, pad: BasePart, h
 	-- Clears the pot AND the "while you were away" credit together -- the first
 	-- collect is exactly when that line has served its purpose.
 	setPending(profile, 0, 0)
+
+	-- PRIVATE, 2D, and to this player alone. A collect is a confirmation of a
+	-- thing only its owner did, and it fires on every cycle -- broadcasting it
+	-- would put five other players' collect chimes in everyone's ears
+	-- continuously. Sent from here rather than inferred client-side from the
+	-- PendingIncome attribute dropping to zero, because devWipeProfile zeroes it
+	-- too and an inferred sound would fire for that as well.
+	--
+	-- AFTER the payout, not before: this line cannot affect whether or how much
+	-- was banked, and nothing above it yields, so a failure here could not leave
+	-- the pot half-moved.
+	SoundBroadcast.playFor(player, "UI_COLLECT")
 	return amount
 end
 

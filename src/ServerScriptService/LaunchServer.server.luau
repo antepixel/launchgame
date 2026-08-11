@@ -42,6 +42,12 @@ local ChestBuilder = require(ReplicatedStorage.ChestBuilder)
 -- This require and that block leave together.
 local DevConfig = require(ReplicatedStorage.Config.DevConfig)
 local SlimeRoll = require(ServerScriptService.SlimeRoll)
+-- Sound is BROADCAST from here, never played here: this module tells clients
+-- what happened and where, and every Sound instance is built client-side by
+-- SoundPlayer (see SoundBroadcast.luau's header). Nothing below changes any
+-- gameplay timing -- every call is a bare notification added beside a decision
+-- that had already been made.
+local SoundBroadcast = require(ServerScriptService.SoundBroadcast)
 local SwingBuilder = require(ServerScriptService.SwingBuilder)
 -- Per-player base + income + collection + persistence + swing tier (see
 -- PlayerProfile.luau). Reads here are scoped to exactly what a launch needs
@@ -1834,6 +1840,11 @@ local function mountPlayer(player: Player, character: Model, humanoid: Humanoid,
 	ridingAssignedRemote:FireClient(player)
 	devPingProbeMarkSent(player)
 
+	-- Public: everyone within WORLD_SWING_MOUNT's 120-stud rolloff hears it,
+	-- which at a 60-stud lane pitch is this lane and the two either side. At the
+	-- seat, not the pivot, so it comes from where the weight actually lands.
+	SoundBroadcast.broadcast("WORLD_SWING_MOUNT", seatPosition)
+
 	-- BUG FIX (see the written report): the anchor above assumes THIS
 	-- player's LaunchClient is alive and already listening for
 	-- RidingAssigned. If it never acknowledges -- a hung or failed
@@ -2127,6 +2138,14 @@ local function onRelease(player: Player)
 	-- readout has already been fixed for once. One number on a remote that
 	-- already carries six removes that dependency entirely.
 	flightStartedRemote:FireClient(player, distance, archHeight, duration, startPosition, startTime, luck, multiplier)
+
+	-- The WORLD-facing half of a launch -- rope and timber at the swing, heard
+	-- by nearby players. The launcher's own airborne whoosh (FLIGHT_RELEASE) is
+	-- a separate 2D sound played by their own client off the message above, so
+	-- the person flying and the people watching hear different things, which is
+	-- correct: one is inside the flight and the others are standing next to the
+	-- apparatus.
+	SoundBroadcast.broadcast("WORLD_LAUNCH_RELEASE", startPosition)
 end
 
 releaseRemote.OnServerEvent:Connect(onRelease)
@@ -2337,6 +2356,21 @@ RunService.Heartbeat:Connect(function()
 		local landingPosition = trajectoryPosition(flight.startPosition, flight.distance, flight.archHeight, 1)
 			+ Vector3.new(0, standingHeight, 0)
 		character:PivotTo(CFrame.lookAt(landingPosition, landingPosition + Vector3.new(0, 0, -1)))
+
+		-- THE THREE ZONES DO NOT SOUND ALIKE (see REPORT.md §3d). `flight.zone`
+		-- is the enum the server itself branched on when it decided whether this
+		-- landing earns a box, nothing, or a chest -- read here rather than
+		-- re-derived, so the sound can never disagree with the outcome. Public
+		-- and positioned at the landing spot; at a 250-stud rolloff against
+		-- tiers that land 320 studs apart, the only other players who hear it are
+		-- ones on the same tier.
+		SoundBroadcast.broadcast(
+			if flight.zone == "past"
+				then "WORLD_LANDING_PAST"
+				elseif flight.zone == "short" then "WORLD_LANDING_SHORT"
+				else "WORLD_LANDING_ROAD",
+			landingPosition
+		)
 
 		-- THE ACTUAL FIX for the pose sticking (see the written report). The
 		-- C0 restore above is not what was leaving arms out and legs trailing
@@ -2642,6 +2676,14 @@ task.spawn(function()
 		PlayerProfile.recordChestOpened(player)
 
 		setLidOpen(true)
+		-- Public and positioned on the lid itself. The chest is shared and up to
+		-- six players can be standing on the platform, so this is one of the few
+		-- genuinely communal moments in the game -- someone else's chest opening
+		-- beside you should be audible. The opener additionally gets a private
+		-- 2D REWARD_CHEST_REVEAL off chestRevealRemote; the two are pitched at
+		-- different registers on purpose (mechanism vs. payoff -- see
+		-- SoundConfig).
+		SoundBroadcast.broadcast("WORLD_CHEST_OPEN", lidModel:GetPivot().Position)
 		task.delay(TreasureConfig.CHEST_LID_RECLOSE_SECONDS, function()
 			-- Closes for the next visitor. CHEST_LID_RECLOSE_SECONDS, not the
 			-- abandon timeout it used to borrow -- two unrelated concerns
