@@ -1315,17 +1315,47 @@ end
 -- The pot is the same destination offline time credits to (creditOfflineIncome),
 -- from the same totalIncomePerSecond, which is what makes "an hour away is worth
 -- an hour present" true by construction rather than by two formulas agreeing.
+-- ===== PAYS FOR TIME THAT ACTUALLY PASSED, NOT FOR THE INTERVAL WE ASKED FOR.
+-- BUG FIX (see REPORT.md). This loop used to credit `rate *
+-- BASE_INCOME_TICK_SECONDS` -- the NOMINAL interval -- while task.wait(n)
+-- returns after AT LEAST n seconds: it resumes on the first Heartbeat at or
+-- after the deadline, so the real gap is n plus up to a full frame, and more
+-- than that whenever the server hitches. Every tick therefore dropped the
+-- overshoot on the floor, unboundedly and silently.
+--
+-- Measured at ~0.87% of all idle income on a 60fps-equivalent scheduler (mean
+-- overshoot ~7ms on a 1s tick), which is about 31 seconds of income lost per
+-- hour online, and it gets WORSE exactly when the server is busiest. It was
+-- invisible while income went straight to cash and arrived alongside launch
+-- rewards; it would not have stayed invisible in a pot the player watches
+-- accumulate.
+--
+-- os.clock(), not Workspace:GetServerTimeNow(): this needs a monotonic
+-- process-local duration, and os.clock cannot jump backwards or be resynced
+-- against a time server mid-interval the way a wall clock can.
+--
+-- DELIBERATELY UNCLAMPED. A 10-second hitch credits 10 seconds, which is
+-- correct -- the player WAS online for those 10 seconds and their slimes were
+-- earning. There is no runaway to guard against: os.clock is monotonic, so
+-- `elapsed` can never be negative, and the only way it gets large is real time
+-- really passing. Clamping it would reintroduce the same under-payment this fix
+-- removes, just at a higher threshold.
+--
+-- ONE ACCEPTED IMPRECISION, unchanged from before: a player who joins midway
+-- through an interval is paid for the whole of it. It is bounded by one tick
+-- (1 second at the current config) and always in the player's favour, so it is
+-- not worth a per-profile timestamp to chase.
 task.spawn(function()
+	local lastTick = os.clock()
 	while true do
 		task.wait(BaseConfig.BASE_INCOME_TICK_SECONDS)
+		local now = os.clock()
+		local elapsed = now - lastTick
+		lastTick = now
 		for _, profile in profiles do
 			local income = totalIncomePerSecond(profile)
 			if income > 0 then
-				setPending(
-					profile,
-					profile.pendingIncome + income * BaseConfig.BASE_INCOME_TICK_SECONDS,
-					profile.offlineCredit
-				)
+				setPending(profile, profile.pendingIncome + income * elapsed, profile.offlineCredit)
 			end
 		end
 	end
