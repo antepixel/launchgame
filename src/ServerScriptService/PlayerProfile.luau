@@ -643,6 +643,33 @@ local function syncClientState(profile: Profile)
 	profile.baseFolder:SetAttribute("ChestsOpened", profile.chestsOpened)
 end
 
+-- ===== THIS PLAYER'S TOTAL INCOME PER SECOND, from placed slimes only.
+-- MOVED UP from beside the income tick (its only caller until this pass) so
+-- that creditOfflineIncome below and onPlayerAdded's load path can both see it:
+-- a `local function` is only in scope BELOW its own definition, and a reference
+-- from above would silently resolve to a nil global rather than to this. The
+-- tick itself is unchanged and still lives further down.
+--
+-- THE SINGLE SOURCE OF THE RATE, and deliberately so. Online income (the tick)
+-- and offline income (creditOfflineIncome) both call THIS -- neither re-derives
+-- the sum -- which is what makes "an hour away is worth an hour present" true by
+-- construction instead of by two formulas happening to agree. Already accounts
+-- for per-slot levels via SlimeUpgrade.incomeForLevel; inventory contributes
+-- nothing, only placed slimes earn.
+local function totalIncomePerSecond(profile: Profile): number
+	local total = 0
+	for i = 1, BaseConfig.SLOT_COUNT do
+		local globalIndex = profile.slots[i]
+		if globalIndex then
+			local slime = SlimeData.SLIMES[globalIndex]
+			if slime then
+				total += SlimeUpgrade.incomeForLevel(slime.incomePerSecond, profile.levels[i] or 1)
+			end
+		end
+	end
+	return total
+end
+
 -- ===== The pending pot's one writer. Every path that changes the pot (the
 -- income tick, offline accrual on load, a collect) goes through here, so the
 -- replicated attribute can never drift from the field it mirrors -- the same
@@ -712,6 +739,25 @@ local function toSaveShape(profile: Profile): { [string]: any }
 		inventory = inventoryOut,
 		chestsOpened = profile.chestsOpened,
 		chestPending = profile.chestPending,
+		-- ===== WHEN THIS PLAYER WAS LAST SEEN, for offline accrual on the next
+		-- load. Written UNCONDITIONALLY, on every save -- the periodic autosave,
+		-- the leave-save and the shutdown save alike -- because every one of
+		-- them is a moment this player was demonstrably still here.
+		--
+		-- os.time(), server-side, never anything the client supplied: this
+		-- number decides how much money the player is handed on their next
+		-- join, so a client-writable version would be a free-money button.
+		--
+		-- DELIBERATELY NOT PlayerStore's `sessionHeartbeat`, which is also an
+		-- os.time() written by the server and looks like exactly this field.
+		-- It is a session LOCK, and PlayerStore.save nils it out whenever
+		-- `releasingSession` is true -- i.e. on the single most common exit
+		-- path, a clean leave. Reusing it would credit zero to every player who
+		-- logged off normally and pay only the ones who crashed, which is
+		-- precisely backwards. PlayerStore's session logic is untouched by this
+		-- pass; this is a separate field with a separate job that happens to
+		-- share a clock.
+		lastSeen = os.time(),
 	}
 end
 
@@ -805,6 +851,67 @@ local function applyLoadedData(profile: Profile, data: { [string]: any }?)
 	end
 end
 
+-- ===== OFFLINE ACCRUAL: pay this player for the time they were away, into the
+-- same pending pot online income accrues to.
+--
+-- MUST BE CALLED AFTER applyLoadedData, NEVER BEFORE, and this is the whole
+-- trap: the rate comes from totalIncomePerSecond, which reads profile.slots and
+-- profile.levels. Before applyLoadedData those are empty tables, so the rate is
+-- zero and the player is silently credited nothing -- no error, no warning, just
+-- an offline reward that never appears. See onPlayerAdded for the enforced
+-- ordering.
+--
+-- Takes the raw loaded `data` rather than a field on the profile because
+-- `lastSeen` is not part of the in-memory Profile at all: it is written fresh
+-- from os.time() at every save (see toSaveShape) and read exactly once, here.
+-- Keeping it out of the Profile means there is no stale copy to accidentally
+-- trust later in the session.
+--
+-- Returns the amount credited, for the caller to log or ignore.
+local function creditOfflineIncome(profile: Profile, data: { [string]: any }?): number
+	-- A BRAND-NEW PROFILE CREDITS ZERO. `data` is nil for a player with no save
+	-- at all, and `lastSeen` is absent from every save written before this
+	-- feature existed. Both must mean "no offline time to pay for" -- NOT "last
+	-- seen at the epoch," which is what `data.lastSeen or 0` would have meant
+	-- and which would have handed every existing player the full cap on their
+	-- next join. The nil case is handled explicitly for exactly that reason.
+	local lastSeen = data and data.lastSeen
+	if typeof(lastSeen) ~= "number" then
+		return 0
+	end
+
+	-- CLAMPED AT BOTH ENDS, and both ends are real cases.
+	--
+	-- The upper bound is OFFLINE_CAP_SECONDS, the design limit.
+	--
+	-- The LOWER bound is clock skew, not paranoia: os.time() is each machine's
+	-- own wall clock, and a player can be saved by one server and loaded by
+	-- another whose clock is a few seconds behind. That makes `now - lastSeen`
+	-- negative through no fault of anyone's, and an unclamped negative would
+	-- SUBTRACT from a pot the player had legitimately earned before logging off.
+	-- math.clamp's low bound of 0 turns that into "credit nothing," which is the
+	-- correct reading of "you were away for negative time."
+	local elapsed = math.clamp(os.time() - lastSeen, 0, BaseConfig.OFFLINE_CAP_SECONDS)
+	if elapsed <= 0 then
+		return 0
+	end
+
+	-- The SAME function the online tick calls, not a re-derivation -- see its
+	-- own comment. This is what guarantees the two rates cannot diverge.
+	local incomePerSecond = totalIncomePerSecond(profile)
+	if incomePerSecond <= 0 then
+		return 0
+	end
+
+	local credited = elapsed * incomePerSecond * BaseConfig.OFFLINE_RATE_MULTIPLIER
+	-- Added to whatever pot was already saved, never replacing it: a player who
+	-- logged off holding an uncollected pot gets that pot PLUS their offline
+	-- earnings. `offlineCredit` records only THIS session's share, for the
+	-- one-time "while you were away" line.
+	setPending(profile, profile.pendingIncome + credited, credited)
+	return credited
+end
+
 -- ===== Join: allocate a base, build its visuals immediately (so it's there
 -- even before the load finishes), then load in the background and populate
 -- money/slots/seen (and the slot visuals for anything already filled) once
@@ -875,7 +982,22 @@ local function onPlayerAdded(player: Player)
 			return
 		end
 
+		-- ===== ORDER IS LOAD-BEARING HERE. applyLoadedData populates slots and
+		-- levels; creditOfflineIncome reads them (through totalIncomePerSecond)
+		-- to work out the rate. Running the accrual first would compute a rate
+		-- of zero against still-empty tables and credit the player nothing,
+		-- silently. The two lines below must stay in this order.
+		--
+		-- AND BOTH SIT BELOW THE `not ok` BAIL ABOVE, which is what makes a
+		-- FAILED LOAD credit zero: a load failure means this session plays on a
+		-- blank profile with canSave false, so its slots are empty and its
+		-- `data` is nil. Paying offline income against that would invent money
+		-- from a profile we explicitly could not read -- and, worse, would do it
+		-- for a session that is forbidden from saving, so the credit would
+		-- vanish again on the next join. The early return above is the guard;
+		-- there is no second check here because there is no path to here.
 		applyLoadedData(profile, data)
+		creditOfflineIncome(profile, data)
 		profile.canSave = true
 		-- THE CROWN, applied HERE and not at build time. buildBaseFolder
 		-- already ran (it is what created baseFolder for this profile), and it
@@ -1283,30 +1405,14 @@ function PlayerProfile.buyNextTier(player: Player): (boolean, string?)
 	return true, nil
 end
 
--- ===== Income: paid out on a fixed TICK, not continuously -- a discrete
--- lump added once every BaseConfig.BASE_INCOME_TICK_SECONDS, not a smooth
--- per-Heartbeat crawl. The lump is totalIncomePerSecond(profile) * the
--- ACTUAL tick length (not always exactly totalIncomePerSecond as-is), so
--- the effective payout rate stays correct however that config value is
--- tuned -- at the default of 1, this is exactly "sum every placed slime's
--- income per second, add that total in one lump, once a second," and at
--- any other interval it still pays the same rate, just chunked coarser or
--- finer. Every connected player's base earns independently of whether they
--- currently hold the swing's shared rider slot.
-local function totalIncomePerSecond(profile: Profile): number
-	local total = 0
-	for i = 1, BaseConfig.SLOT_COUNT do
-		local globalIndex = profile.slots[i]
-		if globalIndex then
-			local slime = SlimeData.SLIMES[globalIndex]
-			if slime then
-				total += SlimeUpgrade.incomeForLevel(slime.incomePerSecond, profile.levels[i] or 1)
-			end
-		end
-	end
-	return total
-end
-
+-- ===== Income: paid out on a fixed TICK, not continuously -- a discrete lump
+-- added once every BaseConfig.BASE_INCOME_TICK_SECONDS, not a smooth
+-- per-Heartbeat crawl. The lump is totalIncomePerSecond(profile) (defined above,
+-- beside the pot's other writer) times the ACTUAL elapsed time, so the effective
+-- payout rate stays correct however that config value is tuned. Every connected
+-- player's base earns independently of whether they currently hold the swing's
+-- shared rider slot.
+--
 -- ===== INCOME NOW ACCRUES INTO THE PENDING POT, NOT INTO CASH. This is the
 -- one line of the loop that changed (`money` -> `pendingIncome`); the RATE
 -- calculation above is untouched, and so is the interval. The player banks it by
