@@ -61,6 +61,11 @@ type Profile = {
 	-- this session's arrival, and a save that carried it would re-announce a
 	-- credit the player has already been shown.
 	offlineCredit: number,
+	-- os.clock() of this profile's last successful collect, for the Touched
+	-- debounce (see collectPending). Lives on the PROFILE rather than in a
+	-- module-level table keyed by Player so it is destroyed with the profile
+	-- and needs no cleanup in onPlayerRemoving.
+	lastCollectAt: number,
 	slots: { [number]: number }, -- slot number -> globalIndex, missing = empty
 	visualParts: { [number]: Model }, -- slot number -> that slot's slime Model (see SlimeBuilder.luau), missing = empty
 	-- UNPLACED copies held, stacked by globalIndex -> count (missing/0 =
@@ -912,6 +917,159 @@ local function creditOfflineIncome(profile: Profile, data: { [string]: any }?): 
 	return credited
 end
 
+-- ================= COLLECTING: pot -> banked cash =================
+--
+-- ONE HANDLER FOR ALL ELEVEN PADS -- the return pad on the approach link and
+-- the ten per-slot pads in the plot. Every pad banks the WHOLE pot; there is no
+-- per-pad or per-slot money and nothing here reads which pad was touched except
+-- to validate the distance to it.
+--
+-- TOUCHED, not a ProximityPrompt, and that is the point of the whole feature.
+-- A prompt is the established interaction pattern in this codebase (the
+-- treasure chest uses one) and it is the WRONG one here: a prompt costs a
+-- keypress and a hold, and collection has to cost nothing at all on a walk the
+-- player is already making. This is the first `.Touched` in src/.
+
+-- How far the player's ROOT may be from the pad's centre and still collect,
+-- measured horizontally, as a margin ON TOP of the pad's own half-diagonal (so
+-- it adapts to whichever pad was touched rather than assuming the 8x8 one).
+--
+-- 6 studs of margin: a character's root sits a couple of studs above the pad
+-- and up to ~2 studs horizontally from whichever limb actually made contact,
+-- and a walking player replicates a little behind where they are. Generous
+-- deliberately -- see collectPending on what this check is and is not for.
+-- Rejected: a tight ~2-stud tolerance, which would have rejected legitimate
+-- collects from a player crossing the pad at walking speed for no gain, since
+-- this check is a desync guard rather than an anti-exploit measure.
+local COLLECT_DISTANCE_MARGIN_STUDS = 6
+
+-- Banks the entire pot, atomically. Returns the amount banked, or 0 if nothing
+-- happened -- and "nothing happened" is silent by design (5d): a player walks
+-- over this pad on every single return trip, and an empty pot is the normal
+-- case, not an error worth a sound or a message.
+--
+-- SERVER-AUTHORITATIVE IN THE ONLY WAY THAT MATTERS: the amount is read from
+-- profile.pendingIncome here on the server. There is no remote, so the client
+-- has no way to name a figure, request a specific amount, or collect anything
+-- but its own pot.
+--
+-- ON THE DISTANCE CHECK, honestly: the position it validates is the character's
+-- own, which is client-owned (Roblox gives the player network ownership of their
+-- character), and it is the same position that produced the Touched event. So
+-- this does NOT stop a modified client teleporting onto a pad -- nothing
+-- server-side short of rejecting client physics could. It is a guard against a
+-- stale or desynced Touched firing when the player is demonstrably nowhere near,
+-- which is a real thing that happens. The reason that is ENOUGH: collecting has
+-- no exploit value. It moves the player's OWN already-earned money from one of
+-- their own buckets to another, at a rate they already earned it; there is
+-- nothing to gain by collecting from the wrong place, only by earning more,
+-- which this path cannot do.
+local function collectPending(player: Player, profile: Profile, pad: BasePart, hit: BasePart): number
+	-- ONLY THE OWNER. Without this, any player walking across someone else's
+	-- return pad would bank that player's pot for them -- not theft (the money
+	-- still goes to its owner) but a stranger reaching into their state, and it
+	-- would fire the owner's "while you were away" line while they were
+	-- somewhere else entirely.
+	local character = player.Character
+	if not character or not hit:IsDescendantOf(character) then
+		return 0
+	end
+
+	-- DEBOUNCE. Touched fires per-limb and repeatedly -- a single step across a
+	-- pad produces a burst of events from the left leg, right leg, torso and
+	-- whatever else clips it -- so a naive handler runs several times per step.
+	--
+	-- Two independent things make that safe, and both are wanted:
+	--   1. The payout below is ATOMIC -- it reads the pot, zeroes it, and adds
+	--      to cash with no yield in between -- so even without a debounce the
+	--      second fire would find an empty pot and pay nothing. Double-PAYMENT
+	--      is impossible by construction, not by timing.
+	--   2. This window stops the burst re-firing at all, so the pot is not
+	--      re-banked a few cents at a time as the tick tops it up under a
+	--      player standing on the pad.
+	--
+	-- The window is BASE_INCOME_TICK_SECONDS, derived rather than picked: it is
+	-- exactly long enough that at most one tick's income can accumulate between
+	-- two collects, so a lingering player banks whole ticks instead of slivers.
+	-- Rejected: a boolean flag reset by task.delay, which needs a scheduler, and
+	-- leaks a pending timer if the player leaves inside the window.
+	local now = os.clock()
+	if now - profile.lastCollectAt < BaseConfig.BASE_INCOME_TICK_SECONDS then
+		return 0
+	end
+
+	local amount = profile.pendingIncome
+	if amount <= 0 then
+		return 0
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local rootPart = humanoid and humanoid.RootPart
+	if not rootPart then
+		return 0
+	end
+	-- Horizontal only: the pad is a floor tile and the root sits above it by a
+	-- hip height that varies with the avatar's rig, so a 3D distance would be
+	-- measuring body type as much as position.
+	local padSize = pad.Size
+	local maxDistance = math.sqrt(padSize.X * padSize.X + padSize.Z * padSize.Z) / 2
+		+ COLLECT_DISTANCE_MARGIN_STUDS
+	local offset = rootPart.Position - pad.Position
+	if Vector2.new(offset.X, offset.Z).Magnitude > maxDistance then
+		return 0
+	end
+
+	-- ===== THE ATOMIC PAYOUT. No yield between reading the pot and zeroing it,
+	-- so there is no window in which a second handler could observe the same
+	-- money twice. `amount` was captured above, before any of the guards could
+	-- have yielded (none of them do).
+	profile.lastCollectAt = now
+	profile.money += amount
+	profile.baseFolder:SetAttribute("Money", profile.money)
+	-- Clears the pot AND the "while you were away" credit together -- the first
+	-- collect is exactly when that line has served its purpose.
+	setPending(profile, 0, 0)
+	return amount
+end
+
+-- Attaches the collect handler to one pad. Called for the return pad (built in
+-- buildBaseFolder) and for each per-slot pad as its slime is spawned -- see
+-- wireCollectPads, which finds both kinds without spawnSlimeVisual needing to
+-- know this exists.
+local function wireCollectPad(player: Player, profile: Profile, pad: BasePart)
+	pad.Touched:Connect(function(hit: BasePart)
+		-- The profile may already be gone (a leave mid-touch); the connection
+		-- dies with the pad, but a queued event can still arrive.
+		if profiles[player] ~= profile then
+			return
+		end
+		collectPending(player, profile, pad, hit)
+	end)
+end
+
+-- Wires every collect pad in this player's base, now and forever, WITHOUT
+-- touching spawnSlimeVisual. The ten per-slot pads are created lazily -- one per
+-- slime, whenever a slime is placed, which can happen long after the join -- so
+-- a one-shot pass over the folder would catch only the return pad.
+-- DescendantAdded picks up each per-slot pad at the moment it is parented in,
+-- and the initial loop catches the return pad (and any pad already present if
+-- this is ever called later than it is today).
+--
+-- Matching BY NAME is what keeps this additive: spawnSlimeVisual already names
+-- its pad "CollectPad" and buildBaseFolder names the new one RETURN_PAD_NAME,
+-- so neither had to be modified to opt in.
+local function wireCollectPads(player: Player, profile: Profile)
+	local function considerDescendant(descendant: Instance)
+		if descendant:IsA("BasePart") and (descendant.Name == "CollectPad" or descendant.Name == RETURN_PAD_NAME) then
+			wireCollectPad(player, profile, descendant)
+		end
+	end
+	profile.baseFolder.DescendantAdded:Connect(considerDescendant)
+	for _, descendant in profile.baseFolder:GetDescendants() do
+		considerDescendant(descendant)
+	end
+end
+
 -- ===== Join: allocate a base, build its visuals immediately (so it's there
 -- even before the load finishes), then load in the background and populate
 -- money/slots/seen (and the slot visuals for anything already filled) once
@@ -945,6 +1103,8 @@ local function onPlayerAdded(player: Player)
 		money = 0,
 		pendingIncome = 0,
 		offlineCredit = 0,
+		-- Far enough in the past that the very first touch is never debounced.
+		lastCollectAt = 0,
 		slots = {},
 		visualParts = {},
 		inventory = {},
@@ -956,6 +1116,13 @@ local function onPlayerAdded(player: Player)
 		canSave = false,
 	}
 	profiles[player] = profile
+
+	-- Wired BEFORE the load starts, not after it: the return pad already exists
+	-- (buildBaseFolder built it synchronously above) and a player can reach it
+	-- while the DataStore read is still in flight. Collecting an empty pot in
+	-- that window is a silent no-op, so there is nothing to lose by arming it
+	-- early and a live pad to gain.
+	wireCollectPads(player, profile)
 
 	task.spawn(function()
 		local data, ok = PlayerStore.load(player.UserId)
