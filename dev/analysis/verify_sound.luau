@@ -254,10 +254,25 @@ end
 -- files this pass touched must differ from their pre-pass versions ONLY by
 -- added lines, never by removed or rewritten ones. A sound call is additive; a
 -- changed condition or a moved call is not.
-print("\nadditive-only check against the pass's base commit")
+print("\nadditive-only check against the sound pass's own base and tip")
+--
+-- ===== PINNED AT BOTH ENDS, AND THAT IS THE FIX (see REPORT.md). This used to
+-- compare BASE_COMMIT against **HEAD**, which quietly turned a claim about ONE
+-- pass into a claim about every commit ever made after it. The per-slot
+-- collection pass legitimately deleted lines in five files, so from that commit
+-- onward this check failed permanently, and for a reason it was never written to
+-- detect. A test that is always red gets ignored, and then a real failure hides
+-- inside it.
+--
+-- Both ends are the sound pass's OWN commits now -- its base and its tip -- so
+-- the diff describes exactly the change this file was written to police, and
+-- stays true no matter what lands afterwards. If later work ever edits the sound
+-- system in a way this ought to catch, the right move is to re-point END_COMMIT
+-- at that work's own tip, not to unpin it again.
 local BASE_COMMIT = "2d28d1d"
+local END_COMMIT = "59e38c2"
 local diffOk, diffResult = pcall(function()
-	return process.exec("git", { "diff", "--numstat", BASE_COMMIT, "HEAD", "--", "src" }).stdout
+	return process.exec("git", { "diff", "--numstat", BASE_COMMIT, END_COMMIT, "--", "src" }).stdout
 end)
 if diffOk then
 	local clean = true
