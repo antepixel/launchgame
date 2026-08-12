@@ -45,8 +45,13 @@ local OfflineIncome = {}
 --     a negative credit that would SUBTRACT from a pot the player legitimately
 --     earned before logging off.
 --
---   now - lastSeen > cap -> cap. The design limit; everything past it is simply
---     not paid.
+--   now - lastSeen > cap -> cap. The DESIGN limit -- 12 hours, see
+--     BaseConfig.OFFLINE_CAP_SECONDS for why that number and why capping at all
+--     protects the returning player rather than punishing the absent one.
+--     Everything past it is simply not paid, so a day, a week and three months
+--     all return the identical figure. Note this is the only one of the three
+--     cases that is a DESIGN decision; the two above are corrupt-input handling
+--     and neither goes anywhere near the cap.
 function OfflineIncome.elapsedSeconds(lastSeen: any, now: number): number
 	if typeof(lastSeen) ~= "number" then
 		return 0
@@ -60,18 +65,24 @@ function OfflineIncome.elapsedSeconds(lastSeen: any, now: number): number
 	return math.clamp(now - lastSeen, 0, BaseConfig.OFFLINE_CAP_SECONDS)
 end
 
--- What to add to the pending pot for a player who was away, given their CURRENT
--- income rate. Never negative.
+-- What to add to a pending pot for a player who was away, given the rate that
+-- pot earns at. Never negative.
 --
--- `incomePerSecond` must be the same number the online tick uses -- callers pass
--- PlayerProfile's own totalIncomePerSecond, not a re-derivation. That is what
--- makes "an hour away is worth an hour present" true by construction: the only
--- thing separating the two is OFFLINE_RATE_MULTIPLIER, which is 1.0, and which
--- is deliberately the single knob between them.
+-- CALLED ONCE PER SLOT NOW, not once per player (see PlayerProfile.
+-- creditOfflineIncome): `incomePerSecond` is that ONE SLOT's own rate, from the
+-- same slotIncomePerSecond the online tick credits with -- not a re-derivation,
+-- and not a share of a total worked out by a second formula. Since `elapsed`
+-- depends only on the timestamps, the per-slot credits sum to exactly what one
+-- call at the summed rate would have returned, which is what makes the
+-- distribution proportional by construction.
 --
--- A rate of zero (an empty base) credits zero however long the absence was --
--- offline income is SELF-SCALING, a multiple of what the player has actually
--- built, never a flat grant.
+-- The only thing separating offline from online is OFFLINE_RATE_MULTIPLIER, and
+-- it is applied HERE and nowhere else -- deliberately the single knob between
+-- them.
+--
+-- A rate of zero (an empty slot, or an empty base) credits zero however long the
+-- absence was -- offline income is SELF-SCALING, a multiple of what the player
+-- has actually built, never a flat grant.
 function OfflineIncome.creditFor(lastSeen: any, now: number, incomePerSecond: number): number
 	if incomePerSecond <= 0 then
 		return 0

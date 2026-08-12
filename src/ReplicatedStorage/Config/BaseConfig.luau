@@ -184,47 +184,69 @@ local BaseConfig: BaseConfig = {
 	-- paid out changes.
 	BASE_INCOME_TICK_SECONDS = 1,
 
-	-- ===== OFFLINE EARNINGS. Income accrues into a PENDING POT rather than
-	-- straight to cash (see PlayerProfile's income loop), and the time a player
-	-- spends logged off accrues into that same pot -- one pot, banked in full by
-	-- walking over any collect pad.
+	-- ===== OFFLINE EARNINGS. Income accrues into PENDING POTS rather than
+	-- straight to cash -- one pot PER SLOT (see PlayerProfile's income loop),
+	-- banked by walking over that slime's own collect pad -- and the time a
+	-- player spends logged off accrues into those same ten pots, distributed by
+	-- each slot's own rate.
 	--
-	-- How many seconds of absence are paid for. Everything past this is simply
-	-- not credited, so a player who leaves for a week is paid for eight hours.
+	-- ===== THE CAP: HOW MANY SECONDS OF ABSENCE ARE PAID FOR. Everything past
+	-- it is simply not credited, so the same figure comes back whether the player
+	-- was away for twelve hours, a day or three months.
 	--
-	-- WHY A GENEROUS CAP IS LESS DANGEROUS HERE THAN IT LOOKS, and this is the
-	-- thing to hold on to when retuning it: offline income is SELF-SCALING. It
-	-- is not a flat grant, it is a multiple of THE PLAYER'S OWN CURRENT RATE --
-	-- the exact same totalIncomePerSecond the online tick uses, from the exact
-	-- same slots and levels. Eight hours offline pays precisely what eight hours
-	-- online would have paid, so it can never outrun the progression the player
-	-- has actually built; it can only refund time. A player with an empty base
-	-- earns nothing from a week away. What the cap really tunes is how much of a
-	-- reason there is to come back TODAY rather than in three days, which is a
-	-- retention question, not a balance one.
+	-- 43200 = 12 HOURS, AND IT IS A DESIGN LIMIT, NOT A SANITY BOUND. Nothing
+	-- here is guarding against a corrupt timestamp or an absurd clock -- those
+	-- are handled separately and explicitly in OfflineIncome.elapsedSeconds (a
+	-- non-number, a NaN and a negative elapsed each credit zero, and none of
+	-- them go anywhere near this number). This is a decision about how much of
+	-- an absence the game pays for.
 	--
-	-- 28800 = 8 hours. Chosen as "a night's sleep plus a working day," the
-	-- interval the genre converges on, and EXPECTED TO BE RETUNED once there is
-	-- real player data -- the number that should decide it is the observed gap
-	-- between sessions, which nothing here can predict. Note it interacts with
-	-- nothing else: raising it cannot break a formula, only change how much a
-	-- returning player banks.
-	OFFLINE_CAP_SECONDS = 28800,
-	-- What fraction of the online rate offline time earns. 1.0 means an hour
-	-- away is worth exactly an hour present.
+	-- TWELVE HOURS COVERS BOTH DOMINANT ABSENCE PATTERNS -- a night's sleep and
+	-- a school or work day -- with room to spare, which is the point: an
+	-- ORDINARY player never discovers that a cap exists at all. It only ever
+	-- binds on the player who has been gone for days.
 	--
-	-- 1.0 DELIBERATELY, for this pass, because the alternative cannot be
-	-- evaluated yet: a discount below 1.0 exists to stop offline play dominating
-	-- online play, and nothing here knows how long a real session is or how much
-	-- of a player's income arrives from launches rather than from slots. Shipping
-	-- 1.0 makes the pot trivially legible ("you earn what you would have earned")
-	-- and leaves exactly one number to turn if it proves too strong.
+	-- WHY CAP AT ALL, and it is NOT to punish absence -- it is to protect the
+	-- returning player from being handed their next week of content as a
+	-- welcome-back gift. Uncapped at 22%, a three-month absence returns about
+	-- 158 HOURS of income: several swing tiers already affordable, the next few
+	-- goals bought before the player has taken a step, and nothing left to
+	-- chase. The cap is what keeps coming back a beginning rather than an
+	-- ending.
+	--
+	-- COMBINED CEILING: 12 h x 0.22 = 2.64 HOURS OF INCOME, however long the
+	-- absence. That is the single number to hold when retuning either half.
+	--
+	-- ===== THE AFK ASYMMETRY, RECORDED HERE ON PURPOSE so nobody later
+	-- "fixes" it into consistency: ONLINE IS UNCAPPED AND PAID AT FULL RATE,
+	-- OFFLINE IS CAPPED AND DISCOUNTED. A player who leaves the game running
+	-- keeps earning 100% forever and their pots grow without limit; a player
+	-- who logs out earns 22% for at most twelve hours. That gap is the design
+	-- position -- AFK is ALLOWED to work, and is meant to be strictly better
+	-- than logging off, because the player who left the game open is the one
+	-- who might come back to it this hour. Making the two consistent in either
+	-- direction (capping the online pot, or paying offline at full rate
+	-- forever) would delete the reason to stay.
+	--
+	-- Note the cap interacts with nothing else: raising it cannot break a
+	-- formula, only change how much a returning player banks.
+	OFFLINE_CAP_SECONDS = 43200,
+	-- What fraction of the online rate offline time earns. 0.22 means an hour
+	-- away is worth about thirteen minutes present.
+	--
+	-- THE INTENT: offline should be MEANINGFULLY WORSE than playing. Not
+	-- worthless -- coming back to nothing is the fastest way to not come back at
+	-- all -- but far enough below the online rate that idling is never a
+	-- strategy and returning is always the rewarded choice. At 0.22 a full night
+	-- away is worth roughly a two-hour session's slot income, which reads as a
+	-- welcome-back rather than as a shift someone else worked for you.
 	--
 	-- EXPECTED TO BE RETUNED after real player data, together with the cap above
-	-- -- they are one knob in two parts, and the cap should move first, since
-	-- shortening the window is a smaller promise to break than devaluing the
-	-- rate.
-	OFFLINE_RATE_MULTIPLIER = 1.0,
+	-- -- they are one knob in two parts. What should decide the rate is the
+	-- observed split between slot income and launch income in a real session,
+	-- which nothing here can predict; what should decide the cap is the observed
+	-- gap between sessions.
+	OFFLINE_RATE_MULTIPLIER = 0.22,
 
 	-- ===== One player's own grid (see BaseGeometry.luau's slotPosition) --
 	-- a real 2x5 grid, not a 5x2 one: 2 columns (X = baseX +-15) x 5 rows
