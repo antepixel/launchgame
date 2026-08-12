@@ -43,34 +43,56 @@ type Profile = {
 	baseIndex: number,
 	baseFolder: Folder,
 	money: number,
-	-- ===== THE PENDING POT: income earned but not yet banked. Every second of
+	-- ===== THE PENDING POTS: income earned but not yet banked, ONE POT PER
+	-- SLOT -- slot number -> dollars, missing = nothing pending. Every second of
 	-- income -- online (the tick below) and offline (creditOfflineIncome, on
-	-- load) -- lands HERE, never straight in `money`. Walking over any collect
-	-- pad moves the whole pot to `money` at once and zeroes this.
+	-- load) -- lands in the pot of THE SLOT THAT EARNED IT, never straight in
+	-- `money`. Walking over slot N's own collect pad moves slot N's pot to
+	-- `money` and zeroes it; the other nine are untouched.
+	--
+	-- ONE POT PER SLOT, REPLACING THE SINGLE PER-PLAYER POT A PREVIOUS PASS
+	-- BUILT (see REPORT.md). The single pot came with a single return pad on the
+	-- approach link, which made collection free -- and meant the player never
+	-- walked into their own base at all: ten slimes, their colours, their
+	-- levels, the plot they paid for, all collapsed into one number in the HUD.
+	-- The pads in front of the slimes are where the collection fantasy lives, so
+	-- the money lives there too, and going to get it is a decision (keep
+	-- launching, or go bank) rather than something that happens to the player on
+	-- a walk they were already making.
+	--
+	-- NO CAP WHILE ONLINE. A pot grows unbounded for as long as the player does
+	-- not come and take it; an AFK player is ONLINE and earns at full rate. The
+	-- cap in OfflineIncome applies to ABSENCE only, and that asymmetry is
+	-- deliberate -- see BaseConfig.OFFLINE_CAP_SECONDS.
 	--
 	-- NOT SPENDABLE, and that is structural rather than enforced: the only two
 	-- balance checks in this file (upgradeSlime, buyNextTier) compare against
 	-- `money` and nothing sums the two. There is deliberately no
 	-- spendableMoney() helper -- adding one is the single change that would
 	-- break the property, so the absence is the guarantee.
+	pendingBySlot: { [number]: number },
+	-- How much was credited by THIS session's offline accrual, TOTALLED across
+	-- every slot. Purely for the UI's one-time "while you were away" line, which
+	-- is why it is tracked apart from the pots rather than inferred from them --
+	-- once the tick has added a second of online income the two are no longer
+	-- separable.
 	--
-	-- ONE POT PER PLAYER, not one per pad or per slot. The eleven pads are
-	-- plural because they are places to stand, not because they hold separate
-	-- money -- see BaseConfig's return-pad block.
-	pendingIncome: number,
-	-- How much of `pendingIncome` was credited by THIS session's offline
-	-- accrual. Purely for the UI's one-time "while you were away" line, which is
-	-- why it is tracked apart from the pot rather than inferred from it -- once
-	-- the tick has added a second of online income the two are no longer
-	-- separable. Zeroed by the first collect, and NEVER persisted: it describes
-	-- this session's arrival, and a save that carried it would re-announce a
-	-- credit the player has already been shown.
+	-- ONE FIGURE, NOT TEN (see REPORT.md §2f): the line it feeds is one summary
+	-- sentence on the HUD, shown once on return. A per-slot breakdown would have
+	-- to be rendered somewhere, and the only surface that could carry it is the
+	-- pads themselves -- which already show that slot's pot, of which the
+	-- offline share is an invisible fraction the player has no decision to make
+	-- about. Zeroed by the first collect at ANY pad, and NEVER persisted: it
+	-- describes this session's arrival, and a save that carried it would
+	-- re-announce a credit the player has already been shown.
 	offlineCredit: number,
-	-- os.clock() of this profile's last successful collect, for the Touched
-	-- debounce (see collectPending). Lives on the PROFILE rather than in a
-	-- module-level table keyed by Player so it is destroyed with the profile
-	-- and needs no cleanup in onPlayerRemoving.
-	lastCollectAt: number,
+	-- os.clock() of this profile's last successful collect PER SLOT, for the
+	-- Touched debounce (see collectPending). Keyed by slot, not one number for
+	-- the whole player: walking the row crosses up to ten pads inside one
+	-- debounce window and every one of them must pay. Lives on the PROFILE
+	-- rather than in a module-level table keyed by Player so it is destroyed
+	-- with the profile and needs no cleanup in onPlayerRemoving.
+	lastCollectAtBySlot: { [number]: number },
 	slots: { [number]: number }, -- slot number -> globalIndex, missing = empty
 	visualParts: { [number]: Model }, -- slot number -> that slot's slime Model (see SlimeBuilder.luau), missing = empty
 	-- UNPLACED copies held, stacked by globalIndex -> count (missing/0 =
@@ -198,13 +220,14 @@ end
 -- so the sign's board has to point back down that approach, toward -Z.
 local SIGN_FACE_DIRECTION = Vector3.new(0, 0, -1)
 
--- ===== THE RETURN PAD -- the ELEVENTH collect pad, and the only one on the
--- launch loop. Named distinctly from the ten per-slot pads (all of which are
--- called "CollectPad" and are told apart only by their parent) so the two are
--- separable by name alone: the collect handler wires both, the world label in
--- BaseClient goes above THIS one only, and neither has to guess from context.
-local RETURN_PAD_NAME = "ReturnCollectPad"
-
+-- ===== THE RETURN PAD IS GONE (see REPORT.md STEP 4). An eleventh collect pad
+-- used to be built here, on the approach link, banking the whole single pot on
+-- the walk back to the swing. With one pot per slot it would let a player bank
+-- ten slimes' earnings without ever entering their base, which is exactly the
+-- thing this pass exists to stop -- so the pad, its geometry
+-- (BaseGeometry.returnPadPlacement), its two margin constants in BaseConfig and
+-- its world label in BaseClient all went with it. The ten per-slot pads in the
+-- plot are now the only way pending income becomes cash.
 local function buildBaseFolder(player: Player, baseIndex: number): Folder
 	local folder = Instance.new("Folder")
 	folder.Name = string.format("Base_%d", player.UserId)
@@ -264,60 +287,19 @@ local function buildBaseFolder(player: Player, baseIndex: number): Folder
 	sign:PivotTo(sign:GetPivot() + Vector3.new(0, signPosition.Y - minCorner.Y, 0))
 	sign.Parent = folder
 
-	-- ===== THE RETURN PAD, built HERE and not in spawnSlimeVisual, and that
-	-- difference is the entire point of it (see BaseConfig's own return-pad
-	-- block and REPORT.md).
-	--
-	-- PARENTED TO THE BASE FOLDER, not to a slime Model. The ten per-slot pads
-	-- are descendants of the slime they sit in front of, which is what gives
-	-- them their teardown for free -- and also what makes them disappear when
-	-- that slime is removed to inventory. A player who emptied every slot while
-	-- holding an uncollected pot had no pad left to bank it at. This one hangs
-	-- off the folder itself, so it exists from the instant the player joins,
-	-- before the profile load has even resolved, with zero slimes placed and
-	-- forever after. It still cannot outlive its owner: onPlayerRemoving
-	-- destroys this whole folder, exactly as it always did.
-	--
-	-- The rejected alternative was a static per-lane part in MapBlockout beside
-	-- the slot pads, built once for every lane at server start. That would have
-	-- matched how the rest of the map's dressing is built, but the pad has an
-	-- OWNER in a way a slot pad does not -- it banks one specific player's pot --
-	-- so it would have needed re-keying to the new player on every lane reuse,
-	-- and clearing on every leave. Parenting it to the per-player folder gets
-	-- both for nothing.
-	--
-	-- BUILT IN THE SAME STYLE as the ten, from the SAME shared constants
-	-- (BASE_COLLECT_PAD_HEIGHT_STUDS / _COLOR / _MATERIAL, the same
-	-- GROUND_TOP_SURFACE finish) so it reads as the same kind of object. It is
-	-- deliberately NOT refactored into a shared builder with spawnSlimeVisual's
-	-- pad: that pad's construction is explicitly out of scope this pass, and a
-	-- shared helper would have rewritten it to produce a byte-identical result
-	-- for no benefit this pass can verify. See REPORT.md.
-	--
-	-- Anchored and CanCollide false, same as the ten: it is a floor tile the
-	-- player walks over, not a lip to catch on -- and this one is on the path
-	-- they walk automatically, so a collidable version would be a hazard rather
-	-- than merely untidy. CanTouch stays at its default true, which is what the
-	-- collect handler needs.
-	local returnPosition, returnSize = BaseGeometry.returnPadPlacement(baseIndex)
-	local returnPad = Instance.new("Part")
-	returnPad.Name = RETURN_PAD_NAME
-	returnPad.Anchored = true
-	returnPad.CanCollide = false
-	returnPad.Size = returnSize
-	returnPad.Position = returnPosition
-	returnPad.Material = BaseConfig.BASE_COLLECT_PAD_MATERIAL
-	returnPad.Color = BaseConfig.BASE_COLLECT_PAD_COLOR
-	returnPad.TopSurface = GroundConfig.GROUND_TOP_SURFACE
-	returnPad.BottomSurface = Enum.SurfaceType.Smooth
-	returnPad.Parent = folder
-
-	folder:SetAttribute("Money", 0)
-	-- Replicated exactly the way Money is -- a plain attribute on this player's
+	-- Replicated exactly the way Money is -- plain attributes on this player's
 	-- own base folder, which Roblox replicates for free. No remote: the pad
-	-- labels and the HUD readout are pure renderings of these two numbers (see
+	-- labels and the HUD readout are pure renderings of these three values (see
 	-- BaseClient.client.luau), and the client is never asked what they are.
+	--
+	-- PendingIncome is the TOTAL across every slot (what the HUD shows, so a
+	-- player standing at the swing can decide whether the trip is worth making);
+	-- PendingBySlot is the per-slot breakdown the ten pad labels render from,
+	-- JSON-encoded exactly the way Slots/Inventory already are -- see
+	-- publishPending.
+	folder:SetAttribute("Money", 0)
 	folder:SetAttribute("PendingIncome", 0)
+	folder:SetAttribute("PendingBySlot", "[]")
 	folder:SetAttribute("OfflineCredit", 0)
 	folder:SetAttribute("SwingTier", 1)
 	folder:SetAttribute("SaveDisabled", false)
@@ -662,38 +644,112 @@ end
 --
 -- THE SINGLE SOURCE OF THE RATE, and deliberately so. Online income (the tick)
 -- and offline income (creditOfflineIncome) both call THIS -- neither re-derives
--- the sum -- which is what makes "an hour away is worth an hour present" true by
--- construction instead of by two formulas happening to agree. Already accounts
--- for per-slot levels via SlimeUpgrade.incomeForLevel; inventory contributes
--- nothing, only placed slimes earn.
+-- it -- which is what makes offline and online rates impossible to diverge (the
+-- one knob between them is OFFLINE_RATE_MULTIPLIER, and it is applied in
+-- OfflineIncome, not here). Already accounts for that slot's own level via
+-- SlimeUpgrade.incomeForLevel; inventory contributes nothing, only placed
+-- slimes earn.
+--
+-- NOW PER SLOT, and totalIncomePerSecond below is a sum OF THIS rather than a
+-- second loop (see REPORT.md STEP 1): every pot is credited its OWN slime's
+-- rate, not a share of the total, so a Divine in slot 3 fills slot 3's pot and
+-- nobody else's.
+local function slotIncomePerSecond(profile: Profile, slotNumber: number): number
+	local globalIndex = profile.slots[slotNumber]
+	if not globalIndex then
+		return 0
+	end
+	local slime = SlimeData.SLIMES[globalIndex]
+	if not slime then
+		return 0
+	end
+	return SlimeUpgrade.incomeForLevel(slime.incomePerSecond, profile.levels[slotNumber] or 1)
+end
+
+-- ===== THIS PLAYER'S TOTAL INCOME PER SECOND, from placed slimes only -- the
+-- sum of every slot's own rate above. Kept as its own function because it is
+-- what a HUD/report/analysis wants to ask for, but it is no longer what either
+-- accrual path uses: both now walk the slots and credit each one separately.
 local function totalIncomePerSecond(profile: Profile): number
 	local total = 0
 	for i = 1, BaseConfig.SLOT_COUNT do
-		local globalIndex = profile.slots[i]
-		if globalIndex then
-			local slime = SlimeData.SLIMES[globalIndex]
-			if slime then
-				total += SlimeUpgrade.incomeForLevel(slime.incomePerSecond, profile.levels[i] or 1)
-			end
-		end
+		total += slotIncomePerSecond(profile, i)
 	end
 	return total
 end
 
--- ===== The pending pot's one writer. Every path that changes the pot (the
--- income tick, offline accrual on load, a collect) goes through here, so the
--- replicated attribute can never drift from the field it mirrors -- the same
--- "one place sets it" rule Money already follows, just made explicit because
--- this one has three writers rather than Money's several scattered ones.
+-- The sum of every slot's pot -- what the HUD shows, and the number that tells
+-- a player at the swing whether the walk is worth making.
+local function pendingTotal(profile: Profile): number
+	local total = 0
+	for _, amount in profile.pendingBySlot do
+		total += amount
+	end
+	return total
+end
+
+-- ===== The pots' one PUBLISHER. Every path that changes a pot (the income
+-- tick, offline accrual on load, a collect, a removal) mutates
+-- profile.pendingBySlot / profile.offlineCredit and then calls this, so the
+-- replicated attributes can never drift from the table they mirror -- the same
+-- "one place sets it" rule Money already follows.
 --
--- OfflineCredit rides along because the UI treats the two as one state: the
--- "while you were away" line is shown only while offlineCredit > 0, and the
--- first collect zeroes both together (see collectPending).
-local function setPending(profile: Profile, pendingIncome: number, offlineCredit: number)
-	profile.pendingIncome = pendingIncome
-	profile.offlineCredit = offlineCredit
-	profile.baseFolder:SetAttribute("PendingIncome", pendingIncome)
-	profile.baseFolder:SetAttribute("OfflineCredit", offlineCredit)
+-- THREE ATTRIBUTES, TWO AUDIENCES. PendingIncome is the total, for the HUD
+-- readout. PendingBySlot is a JSON array of {slot, pending} for the occupied,
+-- non-empty slots only -- the exact shape and encoding syncClientState already
+-- uses for Slots/Inventory, deliberately, because that is how per-slot data
+-- already reaches the client in this project and a new remote for the same job
+-- would be a second convention. Rejected alternative: an attribute on each
+-- CollectPad part. It would have been marginally cheaper (no encode, no parse)
+-- and the pad already knows its own slot -- but it would mean writing ten
+-- attributes per player per tick instead of one, and it would put the value on
+-- an instance that only exists while a slime does, so nothing could ever render
+-- a pot the pad had not been built for yet.
+--
+-- OfflineCredit rides along because the UI treats it as part of the same state:
+-- the "while you were away" line shows only while it is > 0, and the first
+-- collect at any pad zeroes it (see collectPending).
+local function publishPending(profile: Profile)
+	local entries = {}
+	for i = 1, BaseConfig.SLOT_COUNT do
+		local amount = profile.pendingBySlot[i]
+		if amount and amount > 0 then
+			table.insert(entries, { slot = i, pending = amount })
+		end
+	end
+	profile.baseFolder:SetAttribute("PendingIncome", pendingTotal(profile))
+	profile.baseFolder:SetAttribute("PendingBySlot", HttpService:JSONEncode(entries))
+	profile.baseFolder:SetAttribute("OfflineCredit", profile.offlineCredit)
+end
+
+-- ===== THE ONLY DOOR FROM A POT INTO CASH. Every caller -- a collect pad, a
+-- slot being emptied, a load-time reconciliation -- goes through this one
+-- function, which is what keeps "the pot is not spendable" checkable by reading
+-- a single site rather than auditing every `profile.money +=` in the file (see
+-- dev/analysis/verify_offline.luau, which counts them).
+--
+-- ATOMIC, and that is load-bearing rather than tidy: it reads the pot, zeroes
+-- it, and adds to cash with NO YIELD in between, so a second caller arriving on
+-- the same frame -- the per-limb burst a single step across a pad produces --
+-- finds an empty pot and pays nothing. Double-payment is impossible by
+-- construction, not by timing. The debounce in collectPending is an independent
+-- second guard with a different job (see its own comment).
+--
+-- Returns the amount banked, 0 if the pot was empty. Banking zero is a silent
+-- no-op by design: most pads are empty most of the time.
+local function bankSlot(profile: Profile, slotNumber: number): number
+	local amount = profile.pendingBySlot[slotNumber]
+	if not amount or amount <= 0 then
+		return 0
+	end
+	profile.pendingBySlot[slotNumber] = nil
+	profile.money += amount
+	profile.baseFolder:SetAttribute("Money", profile.money)
+	-- The first collect is exactly when the "while you were away" line has
+	-- served its purpose, whichever pad it happened at.
+	profile.offlineCredit = 0
+	publishPending(profile)
+	return amount
 end
 
 -- ===== Save-shape adapters: the ONLY place that translates between the
@@ -733,15 +789,21 @@ local function toSaveShape(profile: Profile): { [string]: any }
 			table.insert(inventoryOut, { globalIndex = globalIndex, count = count })
 		end
 	end
+	-- A DENSE array with a 0 sentinel for "nothing pending", the same shape
+	-- `slots` and `levels` above use and for the same reason (DataStore arrays
+	-- cannot hold holes reliably). Persisted, so a player who logs off holding
+	-- money on eight slimes still has all eight on their next join: it is real
+	-- earned income that simply has not been walked over yet, and dropping it on
+	-- disconnect would punish exactly the player this whole system exists to
+	-- bring back. `offlineCredit` is deliberately NOT here; see its own comment
+	-- on the Profile type.
+	local pendingOut = table.create(BaseConfig.SLOT_COUNT, 0)
+	for i = 1, BaseConfig.SLOT_COUNT do
+		pendingOut[i] = profile.pendingBySlot[i] or 0
+	end
 	return {
 		money = profile.money,
-		-- Persisted, so a player who logs off holding an uncollected pot still
-		-- has it on their next join. It is real earned income that simply has
-		-- not been walked over yet -- dropping it on disconnect would punish
-		-- exactly the player this whole system exists to bring back.
-		-- `offlineCredit` is deliberately NOT here; see its own comment on the
-		-- Profile type.
-		pendingIncome = profile.pendingIncome,
+		pendingBySlot = pendingOut,
 		slots = slotsOut,
 		levels = levelsOut,
 		seen = seenOut,
@@ -777,15 +839,6 @@ local function applyLoadedData(profile: Profile, data: { [string]: any }?)
 	end
 	if typeof(data.money) == "number" then
 		profile.money = data.money
-	end
-	-- Absent on every save written before this feature existed, which reads as
-	-- 0 -- no migration needed, same as `levels` and `chestsOpened` before it.
-	-- Clamped to >= 0 for the same reason those are: a hand-edited or corrupted
-	-- value must not be able to produce a negative pot, which would silently eat
-	-- the next collect. NaN also fails `> 0` here, so it lands on 0 rather than
-	-- poisoning every later addition.
-	if typeof(data.pendingIncome) == "number" and data.pendingIncome > 0 then
-		profile.pendingIncome = data.pendingIncome
 	end
 	local slots = data.slots
 	local levels = data.levels
@@ -859,17 +912,81 @@ local function applyLoadedData(profile: Profile, data: { [string]: any }?)
 			end
 		end
 	end
+
+	-- ===== THE POTS, LOADED LAST, AFTER SLOTS AND LEVELS -- deliberately, and
+	-- for two separate reasons: the legacy migration below needs this profile's
+	-- per-slot RATES (which are a function of slots+levels), and the orphan
+	-- reconciliation needs to know which slots actually ended up occupied.
+	--
+	-- Every value is clamped to > 0 before it is accepted, the same way
+	-- `chestsOpened` and `swingTier` are: a hand-edited or corrupted save must
+	-- not be able to produce a negative pot, which would silently eat the next
+	-- collect. NaN fails `> 0` too, so it lands on nothing rather than poisoning
+	-- every later addition.
+	local pendingBySlot = data.pendingBySlot
+	if typeof(pendingBySlot) == "table" then
+		for i = 1, BaseConfig.SLOT_COUNT do
+			local amount = pendingBySlot[i]
+			if typeof(amount) == "number" and amount > 0 then
+				profile.pendingBySlot[i] = amount
+			end
+		end
+	elseif typeof(data.pendingIncome) == "number" and data.pendingIncome > 0 then
+		-- ===== MIGRATION FROM THE SINGLE POT (see REPORT.md STEP 1d). Saves
+		-- written by the previous pass carry one `pendingIncome` number with no
+		-- slot attached to it. It is spread across the slots IN PROPORTION TO
+		-- EACH SLOT'S OWN RATE -- the same rule offline accrual uses -- so the
+		-- player finds it where they would have earned it. It is NOT dropped and
+		-- NOT handed straight to cash: it is money they earned and have not
+		-- collected, and the whole point of this pass is that collecting is the
+		-- walk.
+		--
+		-- The one case proportional distribution cannot answer is a base with no
+		-- placed slimes at all (rate 0, nothing to be proportional TO). Such a
+		-- pot is parked on slot 1 and picked up by the orphan pass immediately
+		-- below, which banks it -- there is no pad in an empty base to ever
+		-- collect it at, so the alternative is stranding it forever. Routing it
+		-- that way rather than adding to `money` here is what keeps bankSlot the
+		-- only place in this file that moves a pot into cash.
+		local rate = totalIncomePerSecond(profile)
+		if rate > 0 then
+			for i = 1, BaseConfig.SLOT_COUNT do
+				local slotRate = slotIncomePerSecond(profile, i)
+				if slotRate > 0 then
+					profile.pendingBySlot[i] = data.pendingIncome * (slotRate / rate)
+				end
+			end
+		else
+			profile.pendingBySlot[1] = data.pendingIncome
+		end
+	end
+
+	-- ORPHANED POTS: a pot on a slot that did not end up occupied. It cannot
+	-- happen from a save this code wrote (every path that empties a slot banks
+	-- its pot first -- see removeToInventory), but it CAN arrive from a
+	-- hand-edited save, or from one whose slot held a globalIndex that no longer
+	-- exists in SlimeData and was therefore skipped above. There is no pad for
+	-- such a pot to ever be collected at, so it is banked rather than stranded
+	-- or silently deleted -- through bankSlot, the same single door every other
+	-- pot uses, so this adds no second route into cash.
+	for i = 1, BaseConfig.SLOT_COUNT do
+		if profile.pendingBySlot[i] and not profile.slots[i] then
+			bankSlot(profile, i)
+		end
+	end
 end
 
 -- ===== OFFLINE ACCRUAL: pay this player for the time they were away, into the
--- same pending pot online income accrues to.
+-- same per-slot pots online income accrues to. Ten slimes means ten pots waiting
+-- on return, each holding what that slime earned while the player was gone.
 --
 -- MUST BE CALLED AFTER applyLoadedData, NEVER BEFORE, and this is the whole
--- trap: the rate comes from totalIncomePerSecond, which reads profile.slots and
--- profile.levels. Before applyLoadedData those are empty tables, so the rate is
--- zero and the player is silently credited nothing -- no error, no warning, just
--- an offline reward that never appears. See onPlayerAdded for the enforced
--- ordering.
+-- trap: the rates come from slotIncomePerSecond, which reads profile.slots and
+-- profile.levels. Before applyLoadedData those are empty tables, so every rate
+-- is zero and the player is silently credited nothing -- no error, no warning,
+-- just an offline reward that never appears. See onPlayerAdded for the enforced
+-- ordering, and dev/analysis/verify_offline.luau, which asserts it by reading
+-- this file's own source.
 --
 -- Takes the raw loaded `data` rather than a field on the profile because
 -- `lastSeen` is not part of the in-memory Profile at all: it is written fresh
@@ -887,30 +1004,51 @@ local function creditOfflineIncome(profile: Profile, data: { [string]: any }?): 
 	-- the raw value and is responsible for every one of those cases.
 	--
 	-- os.time() here and nowhere else: this is the one place a clock is read for
-	-- accrual, and it is read server-side.
+	-- accrual, and it is read server-side. Read ONCE, before the loop, so every
+	-- slot is credited for exactly the same absence -- calling it per slot would
+	-- let the clock tick over mid-loop and pay later slots a second more.
 	--
-	-- totalIncomePerSecond is THE SAME function the online tick calls, not a
-	-- re-derivation -- see its own comment. That is what guarantees the offline
-	-- and online rates cannot diverge.
-	local credited = OfflineIncome.creditFor(data and data.lastSeen, os.time(), totalIncomePerSecond(profile))
+	-- ===== PER SLOT, NOT ONE LUMP SPLIT AFTERWARDS (see REPORT.md STEP 2d).
+	-- Each slot is credited creditFor(lastSeen, now, ITS OWN rate) -- the same
+	-- slotIncomePerSecond the online tick uses, through the same arithmetic --
+	-- so the ten credits sum to exactly what one call at the total rate would
+	-- have returned (elapsed is identical for every slot, and elapsed * M *
+	-- SUM(rate_i) is the sum of elapsed * M * rate_i). That makes the
+	-- distribution proportional by construction rather than by a division that
+	-- has to be kept in step with the rate, and it needs no special case for a
+	-- total rate of zero.
+	local now = os.time()
+	local credited = 0
+	for i = 1, BaseConfig.SLOT_COUNT do
+		local slotCredit = OfflineIncome.creditFor(data and data.lastSeen, now, slotIncomePerSecond(profile, i))
+		if slotCredit > 0 then
+			-- Added to whatever pot was already saved, never replacing it: a
+			-- player who logged off holding uncollected pots gets those pots PLUS
+			-- their offline earnings.
+			profile.pendingBySlot[i] = (profile.pendingBySlot[i] or 0) + slotCredit
+			credited += slotCredit
+		end
+	end
 	if credited <= 0 then
 		return 0
 	end
 
-	-- Added to whatever pot was already saved, never replacing it: a player who
-	-- logged off holding an uncollected pot gets that pot PLUS their offline
-	-- earnings. `offlineCredit` records only THIS session's share, for the
-	-- one-time "while you were away" line.
-	setPending(profile, profile.pendingIncome + credited, credited)
+	-- `offlineCredit` records only THIS session's share, TOTALLED, for the
+	-- one-time "while you were away" line -- see its own comment on the Profile
+	-- type for why one figure rather than ten.
+	profile.offlineCredit = credited
+	publishPending(profile)
 	return credited
 end
 
 -- ================= COLLECTING: pot -> banked cash =================
 --
--- ONE HANDLER FOR ALL ELEVEN PADS -- the return pad on the approach link and
--- the ten per-slot pads in the plot. Every pad banks the WHOLE pot; there is no
--- per-pad or per-slot money and nothing here reads which pad was touched except
--- to validate the distance to it.
+-- ONE HANDLER FOR THE TEN PER-SLOT PADS, AND EACH ONE BANKS ITS OWN SLOT ONLY
+-- (see REPORT.md STEP 3). Which slot a pad belongs to is read from the slime
+-- Model it is parented inside -- spawnSlimeVisual already stamps that Model with
+-- a SlotNumber attribute for the upgrade tags, so the pad needs no second
+-- registry and its construction needed no change to opt in. Walking the row
+-- banks each slot in turn; walking past one pad banks one slime.
 --
 -- TOUCHED, not a ProximityPrompt, and that is the point of the whole feature.
 -- A prompt is the established interaction pattern in this codebase (the
@@ -931,15 +1069,17 @@ end
 -- this check is a desync guard rather than an anti-exploit measure.
 local COLLECT_DISTANCE_MARGIN_STUDS = 6
 
--- Banks the entire pot, atomically. Returns the amount banked, or 0 if nothing
--- happened -- and "nothing happened" is silent by design (5d): a player walks
--- over this pad on every single return trip, and an empty pot is the normal
--- case, not an error worth a sound or a message.
+-- Banks ONE SLOT's pot, atomically (through bankSlot, the single door into
+-- cash). Returns the amount banked, or 0 if nothing happened -- and "nothing
+-- happened" is silent by design: with ten pots and one walk past all of them,
+-- most pads are empty most of the time, and an empty one is the normal case,
+-- not an error worth a sound or a message.
 --
--- SERVER-AUTHORITATIVE IN THE ONLY WAY THAT MATTERS: the amount is read from
--- profile.pendingIncome here on the server. There is no remote, so the client
--- has no way to name a figure, request a specific amount, or collect anything
--- but its own pot.
+-- SERVER-AUTHORITATIVE IN THE ONLY WAY THAT MATTERS: both the slot and the
+-- amount are read on the server -- the slot from the Model the touched pad is
+-- parented inside, the amount from profile.pendingBySlot. There is no remote, so
+-- the client has no way to name a figure, name a slot, or collect anything but
+-- its own pots.
 --
 -- ON THE DISTANCE CHECK, honestly: the position it validates is the character's
 -- own, which is client-owned (Roblox gives the player network ownership of their
@@ -952,42 +1092,54 @@ local COLLECT_DISTANCE_MARGIN_STUDS = 6
 -- their own buckets to another, at a rate they already earned it; there is
 -- nothing to gain by collecting from the wrong place, only by earning more,
 -- which this path cannot do.
-local function collectPending(player: Player, profile: Profile, pad: BasePart, hit: BasePart): number
+local function collectPending(player: Player, profile: Profile, slotNumber: number, pad: BasePart, hit: BasePart): number
 	-- ONLY THE OWNER. Without this, any player walking across someone else's
-	-- return pad would bank that player's pot for them -- not theft (the money
+	-- collect pad would bank that player's pot for them -- not theft (the money
 	-- still goes to its owner) but a stranger reaching into their state, and it
 	-- would fire the owner's "while you were away" line while they were
-	-- somewhere else entirely.
+	-- somewhere else entirely. Six bases stand in a row and nothing stops a
+	-- player wandering into a neighbour's plot, so this is a live case, not a
+	-- theoretical one.
 	local character = player.Character
 	if not character or not hit:IsDescendantOf(character) then
 		return 0
 	end
 
-	-- DEBOUNCE. Touched fires per-limb and repeatedly -- a single step across a
-	-- pad produces a burst of events from the left leg, right leg, torso and
-	-- whatever else clips it -- so a naive handler runs several times per step.
+	-- DEBOUNCE, PER SLOT (see REPORT.md STEP 3b). Touched fires per-limb and
+	-- repeatedly -- a single step across a pad produces a burst of events from
+	-- the left leg, right leg, torso and whatever else clips it -- so a naive
+	-- handler runs several times per step.
 	--
 	-- Two independent things make that safe, and both are wanted:
-	--   1. The payout below is ATOMIC -- it reads the pot, zeroes it, and adds
-	--      to cash with no yield in between -- so even without a debounce the
-	--      second fire would find an empty pot and pay nothing. Double-PAYMENT
-	--      is impossible by construction, not by timing.
-	--   2. This window stops the burst re-firing at all, so the pot is not
-	--      re-banked a few cents at a time as the tick tops it up under a
-	--      player standing on the pad.
+	--   1. The payout below is ATOMIC -- bankSlot reads the pot, zeroes it, and
+	--      adds to cash with no yield in between -- so even without a debounce
+	--      the second fire would find an empty pot and pay nothing.
+	--      Double-PAYMENT is impossible by construction, not by timing.
+	--   2. This window stops the burst re-firing at all, so a pot is not
+	--      re-banked a few cents at a time as the tick tops it up under a player
+	--      standing on the pad.
+	--
+	-- KEYED BY SLOT, NOT ONE WINDOW FOR THE WHOLE PLAYER, and that is the change
+	-- this pass required: the ten pads are 14 studs apart down two columns, so
+	-- walking the row crosses several of them well inside one
+	-- BASE_INCOME_TICK_SECONDS window. A single shared timestamp would have
+	-- banked the first pad and silently skipped the rest of the walk -- the
+	-- exact failure the per-slot design exists to avoid. Each slot debounces
+	-- only against its OWN last collect.
 	--
 	-- The window is BASE_INCOME_TICK_SECONDS, derived rather than picked: it is
 	-- exactly long enough that at most one tick's income can accumulate between
-	-- two collects, so a lingering player banks whole ticks instead of slivers.
-	-- Rejected: a boolean flag reset by task.delay, which needs a scheduler, and
-	-- leaks a pending timer if the player leaves inside the window.
+	-- two collects at the same pad, so a lingering player banks whole ticks
+	-- instead of slivers. Rejected: a boolean flag reset by task.delay, which
+	-- needs a scheduler, and leaks a pending timer if the player leaves inside
+	-- the window.
 	local now = os.clock()
-	if now - profile.lastCollectAt < BaseConfig.BASE_INCOME_TICK_SECONDS then
+	if now - (profile.lastCollectAtBySlot[slotNumber] or -math.huge) < BaseConfig.BASE_INCOME_TICK_SECONDS then
 		return 0
 	end
 
-	local amount = profile.pendingIncome
-	if amount <= 0 then
+	local amount = profile.pendingBySlot[slotNumber]
+	if not amount or amount <= 0 then
 		return 0
 	end
 
@@ -1007,60 +1159,88 @@ local function collectPending(player: Player, profile: Profile, pad: BasePart, h
 		return 0
 	end
 
-	-- ===== THE ATOMIC PAYOUT. No yield between reading the pot and zeroing it,
-	-- so there is no window in which a second handler could observe the same
-	-- money twice. `amount` was captured above, before any of the guards could
-	-- have yielded (none of them do).
-	profile.lastCollectAt = now
-	profile.money += amount
-	profile.baseFolder:SetAttribute("Money", profile.money)
-	-- Clears the pot AND the "while you were away" credit together -- the first
-	-- collect is exactly when that line has served its purpose.
-	setPending(profile, 0, 0)
+	-- ===== THE ATOMIC PAYOUT, in bankSlot -- no yield between reading the pot
+	-- and zeroing it, so there is no window in which a second handler could
+	-- observe the same money twice. `amount` was captured above only to decide
+	-- whether there was anything to do; bankSlot re-reads and is the authority on
+	-- what actually moved.
+	profile.lastCollectAtBySlot[slotNumber] = now
+	local banked = bankSlot(profile, slotNumber)
+	if banked <= 0 then
+		return 0
+	end
 
 	-- PRIVATE, 2D, and to this player alone. A collect is a confirmation of a
-	-- thing only its owner did, and it fires on every cycle -- broadcasting it
-	-- would put five other players' collect chimes in everyone's ears
-	-- continuously. Sent from here rather than inferred client-side from the
-	-- PendingIncome attribute dropping to zero, because devWipeProfile zeroes it
-	-- too and an inferred sound would fire for that as well.
+	-- thing only its owner did -- broadcasting it would put five other players'
+	-- collect chimes in everyone's ears continuously. Sent from here rather than
+	-- inferred client-side from the PendingIncome attribute dropping, because
+	-- devWipeProfile zeroes it too and an inferred sound would fire for that as
+	-- well.
+	--
+	-- NOW UP TO TEN TIMES PER WALK rather than once per launch cycle -- see
+	-- SoundConfig's UI_COLLECT entry, whose brief was rewritten for this pass.
+	-- Nothing is done here to space or vary them: they are separate one-shots of
+	-- a short, dull sound, and a run of them as the player walks the row is the
+	-- read this wants.
 	--
 	-- AFTER the payout, not before: this line cannot affect whether or how much
 	-- was banked, and nothing above it yields, so a failure here could not leave
-	-- the pot half-moved.
+	-- a pot half-moved.
 	SoundBroadcast.playFor(player, "UI_COLLECT")
-	return amount
+	return banked
 end
 
--- Attaches the collect handler to one pad. Called for the return pad (built in
--- buildBaseFolder) and for each per-slot pad as its slime is spawned -- see
--- wireCollectPads, which finds both kinds without spawnSlimeVisual needing to
--- know this exists.
+-- Attaches the collect handler to one pad, bound to the SLOT that pad belongs
+-- to. The slot is read from the slime Model the pad is parented inside --
+-- spawnSlimeVisual stamps every such Model with a SlotNumber attribute BEFORE
+-- parenting it (see its own comment), and parents the pad into the Model after
+-- that, so the attribute is always already there by the time this runs.
+--
+-- Bound ONCE, at wiring time, not re-read per touch: a pad's slot cannot change
+-- (the pad dies with its slime, and a new slime in that slot builds a new pad),
+-- so reading it per Touched would be re-deriving a constant several times a
+-- step. A pad whose parent carries no SlotNumber is ignored with a warning
+-- rather than silently wired to nothing -- that would mean a pad built outside
+-- spawnSlimeVisual, which is a bug in whatever built it.
 local function wireCollectPad(player: Player, profile: Profile, pad: BasePart)
+	local model = pad.Parent
+	local slotNumber = model and model:GetAttribute("SlotNumber")
+	if typeof(slotNumber) ~= "number" then
+		warn(string.format(
+			"[PlayerProfile] CollectPad under %s has no SlotNumber on its parent -- not wired. Collect pads must be built inside a slot's slime Model (see spawnSlimeVisual).",
+			if model then model:GetFullName() else "(no parent)"
+		))
+		return
+	end
 	pad.Touched:Connect(function(hit: BasePart)
 		-- The profile may already be gone (a leave mid-touch); the connection
 		-- dies with the pad, but a queued event can still arrive.
 		if profiles[player] ~= profile then
 			return
 		end
-		collectPending(player, profile, pad, hit)
+		collectPending(player, profile, slotNumber, pad, hit)
 	end)
 end
 
 -- Wires every collect pad in this player's base, now and forever, WITHOUT
--- touching spawnSlimeVisual. The ten per-slot pads are created lazily -- one per
--- slime, whenever a slime is placed, which can happen long after the join -- so
--- a one-shot pass over the folder would catch only the return pad.
--- DescendantAdded picks up each per-slot pad at the moment it is parented in,
--- and the initial loop catches the return pad (and any pad already present if
--- this is ever called later than it is today).
+-- touching spawnSlimeVisual. The ten pads are created lazily -- one per slime,
+-- whenever a slime is placed, which can happen hours after the join -- so a
+-- one-shot pass over the folder would catch nothing at all. DescendantAdded
+-- picks up each pad at the moment it is parented in, which is what makes a
+-- slime placed late fully live; the initial loop covers any pad already present
+-- if this is ever called later than it is today.
+--
+-- STILL CORRECT WITH THE RETURN PAD GONE (checked, not assumed): that pad was
+-- the only reason this matched two names, and it was also the only pad the
+-- initial loop ever actually found, since it was the only one built
+-- synchronously in buildBaseFolder. Everything the ten pads depend on is the
+-- DescendantAdded half, which is untouched.
 --
 -- Matching BY NAME is what keeps this additive: spawnSlimeVisual already names
--- its pad "CollectPad" and buildBaseFolder names the new one RETURN_PAD_NAME,
--- so neither had to be modified to opt in.
+-- its pad "CollectPad", so it needed no change to opt in.
 local function wireCollectPads(player: Player, profile: Profile)
 	local function considerDescendant(descendant: Instance)
-		if descendant:IsA("BasePart") and (descendant.Name == "CollectPad" or descendant.Name == RETURN_PAD_NAME) then
+		if descendant:IsA("BasePart") and descendant.Name == "CollectPad" then
 			wireCollectPad(player, profile, descendant)
 		end
 	end
@@ -1101,10 +1281,11 @@ local function onPlayerAdded(player: Player)
 		baseIndex = baseIndex,
 		baseFolder = baseFolder,
 		money = 0,
-		pendingIncome = 0,
+		pendingBySlot = {},
 		offlineCredit = 0,
-		-- Far enough in the past that the very first touch is never debounced.
-		lastCollectAt = 0,
+		-- Empty, so a slot with no entry is never debounced on its first touch
+		-- (see collectPending, which reads a missing entry as -math.huge).
+		lastCollectAtBySlot = {},
 		slots = {},
 		visualParts = {},
 		inventory = {},
@@ -1117,11 +1298,11 @@ local function onPlayerAdded(player: Player)
 	}
 	profiles[player] = profile
 
-	-- Wired BEFORE the load starts, not after it: the return pad already exists
-	-- (buildBaseFolder built it synchronously above) and a player can reach it
-	-- while the DataStore read is still in flight. Collecting an empty pot in
-	-- that window is a silent no-op, so there is nothing to lose by arming it
-	-- early and a live pad to gain.
+	-- Wired BEFORE the load starts, not after it. No pad exists yet -- every one
+	-- of the ten is born with its slime, and the first of those is spawned at the
+	-- bottom of the load below -- so what this actually arms early is the
+	-- DescendantAdded watch, which has to be listening before the first
+	-- spawnSlimeVisual runs or that slime's pad is never wired at all.
 	wireCollectPads(player, profile)
 
 	task.spawn(function()
@@ -1175,9 +1356,9 @@ local function onPlayerAdded(player: Player)
 		refreshSignCrown(profile)
 		baseFolder:SetAttribute("Money", profile.money)
 		baseFolder:SetAttribute("SwingTier", profile.swingTier)
-		-- Publishes the loaded pot (and, once step 4's accrual runs just above
-		-- this, whatever it credited) in the same post-load burst as Money.
-		setPending(profile, profile.pendingIncome, profile.offlineCredit)
+		-- Publishes the loaded pots and whatever the accrual just credited, in
+		-- the same post-load burst as Money.
+		publishPending(profile)
 		for i = 1, BaseConfig.SLOT_COUNT do
 			local globalIndex = profile.slots[i]
 			if globalIndex then
@@ -1346,6 +1527,23 @@ end
 
 -- Moves the slime in slot `slotNumber` back to inventory, freeing the slot.
 -- Fails if the slot number is out of range or already empty.
+--
+-- ===== BANKS THAT SLOT'S POT FIRST (see REPORT.md STEP 1e). This is the ONLY
+-- function in the project that empties a slot -- verified, not assumed: it is
+-- the only `profile.slots[n] = nil` in the tree, and the two other paths that
+-- could destroy a slime's earnings both route through it (devClearBase calls it
+-- per slot; devWipeProfile calls devClearBase). sellFromInventory cannot reach a
+-- slot at all -- it only ever reads/decrements profile.inventory, which is
+-- exactly what makes "remove before you sell" true by construction -- and there
+-- is no replacement path: placeFromInventory refuses when the base is full
+-- rather than swapping anything out.
+--
+-- So this one line is the whole guarantee. A slime carrying $2M that silently
+-- lost it when the player pressed Remove would be a trap nobody sees coming, and
+-- the pad it would have been collected at is destroyed with the slime a few
+-- lines below. Banking goes through bankSlot, the same single door a collect
+-- pad uses, so a removal pays exactly what walking over the pad first would
+-- have paid.
 function PlayerProfile.removeToInventory(player: Player, slotNumber: number): (boolean, string?)
 	local profile = profiles[player]
 	if not profile then
@@ -1358,6 +1556,10 @@ function PlayerProfile.removeToInventory(player: Player, slotNumber: number): (b
 	if not globalIndex then
 		return false, "that slot is already empty"
 	end
+
+	-- BEFORE the slot is cleared, and before the model (and with it the pad) is
+	-- destroyed. Silent if the pot was empty, which is the common case.
+	bankSlot(profile, slotNumber)
 
 	profile.slots[slotNumber] = nil
 	-- Level is discarded here, not carried into the inventory stack -- see
@@ -1580,14 +1782,25 @@ end
 -- player's base earns independently of whether they currently hold the swing's
 -- shared rider slot.
 --
--- ===== INCOME NOW ACCRUES INTO THE PENDING POT, NOT INTO CASH. This is the
--- one line of the loop that changed (`money` -> `pendingIncome`); the RATE
--- calculation above is untouched, and so is the interval. The player banks it by
--- walking over any collect pad -- see collectPending.
+-- ===== INCOME ACCRUES INTO THE PENDING POTS, NOT INTO CASH, AND EACH SLOT
+-- CREDITS ITS OWN POT AT ITS OWN RATE (see REPORT.md STEP 1b) -- never a share
+-- of the total. The player banks a slot by walking over that slime's own collect
+-- pad; ten slimes are ten independent pots, and walking the row banks all ten.
 --
--- The pot is the same destination offline time credits to (creditOfflineIncome),
--- from the same totalIncomePerSecond, which is what makes "an hour away is worth
--- an hour present" true by construction rather than by two formulas agreeing.
+-- The pots are the same destination offline time credits to
+-- (creditOfflineIncome), through the same slotIncomePerSecond, which is what
+-- keeps the online and offline rates impossible to diverge -- the only thing
+-- between them is BaseConfig.OFFLINE_RATE_MULTIPLIER, deliberately the single
+-- knob.
+--
+-- NO CAP, and no clamp of any kind on how large a pot may grow while the player
+-- is connected. An AFK player is ONLINE: they earn at the full rate, forever,
+-- and the 12-hour offline cap does not touch them. That asymmetry is a design
+-- position, not an oversight -- see BaseConfig.OFFLINE_CAP_SECONDS.
+--
+-- ONE publishPending PER PROFILE PER TICK, after the whole slot loop, not one
+-- per slot: publishing is an attribute write plus a JSON encode, and the ten
+-- slots of one profile are one state change as far as any client is concerned.
 -- ===== PAYS FOR TIME THAT ACTUALLY PASSED, NOT FOR THE INTERVAL WE ASKED FOR.
 -- BUG FIX (see REPORT.md). This loop used to credit `rate *
 -- BASE_INCOME_TICK_SECONDS` -- the NOMINAL interval -- while task.wait(n)
@@ -1626,9 +1839,16 @@ task.spawn(function()
 		local elapsed = now - lastTick
 		lastTick = now
 		for _, profile in profiles do
-			local income = totalIncomePerSecond(profile)
-			if income > 0 then
-				setPending(profile, profile.pendingIncome + income * elapsed, profile.offlineCredit)
+			local credited = false
+			for i = 1, BaseConfig.SLOT_COUNT do
+				local income = slotIncomePerSecond(profile, i)
+				if income > 0 then
+					profile.pendingBySlot[i] = (profile.pendingBySlot[i] or 0) + income * elapsed
+					credited = true
+				end
+			end
+			if credited then
+				publishPending(profile)
 			end
 		end
 	end
@@ -1747,13 +1967,25 @@ function PlayerProfile.devWipeProfile(player: Player)
 	if not profile then
 		return
 	end
+	-- devClearBase routes every occupied slot through removeToInventory, which
+	-- banks that slot's pot before clearing it -- so by the time the two lines
+	-- below run, every pot has already been paid into `money`, and `money` is
+	-- then zeroed with everything else. That ordering is deliberate rather than
+	-- wasteful: a wipe is a full reset and is SUPPOSED to end at zero, but it
+	-- gets there through the same single door every other pot uses, so there is
+	-- no second "discard a pot" path in the file for a later reader to find and
+	-- copy.
 	PlayerProfile.devClearBase(player)
 	profile.money = 0
 	profile.baseFolder:SetAttribute("Money", 0)
-	-- The pot is part of "fresh-player state" -- a wipe that left it would have
-	-- the player collect the pre-wipe base's earnings a moment later, which is
-	-- exactly the confusion this button exists to avoid.
-	setPending(profile, 0, 0)
+	-- The pots are part of "fresh-player state" -- a wipe that left one would
+	-- have the player collect the pre-wipe base's earnings a moment later, which
+	-- is exactly the confusion this button exists to avoid. Empty after
+	-- devClearBase in every ordinary case; this covers a pot on a slot that was
+	-- somehow already empty.
+	profile.pendingBySlot = {}
+	profile.offlineCredit = 0
+	publishPending(profile)
 	profile.inventory = {}
 	profile.seen = {}
 	profile.swingTier = 1
