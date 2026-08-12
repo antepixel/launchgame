@@ -288,16 +288,29 @@ local BaseConfig: BaseConfig = {
 	-- own any more.
 
 	-- ===== The COLLECT PAD: one green pad on the ground IN FRONT OF each
-	-- occupied slot -- the spot a player will eventually stand on to take
-	-- that slime's accumulated money. THIS PASS IS THE PAD ONLY: geometry,
-	-- colour and placement. There is no collection logic and no accumulated-
-	-- money system behind it yet; income still ticks straight into Money
-	-- exactly as before (see PlayerProfile's income loop, untouched).
+	-- occupied slot -- the spot a player stands on to take THAT SLIME's own
+	-- accumulated money (see PlayerProfile.collectPending; each pad banks its own
+	-- slot and nothing else).
 	--
-	-- NO TEXT ON IT, deliberately. A green pad on the floor already reads as
-	-- "stand here" -- a SurfaceGui saying COLLECT would be ten more labels
-	-- per base competing with the nametags and the button strips already
-	-- hanging over these same pads.
+	-- ===== TEXT ON IT AFTER ALL, AND THE DECISION WAS REVISITED, NOT FORGOTTEN.
+	-- This block used to say "NO TEXT ON IT, deliberately" -- the argument being
+	-- that a green pad already reads as "stand here", and that ten more labels
+	-- per base would compete with the nametags and upgrade strips already
+	-- hanging over these same pads. HALF of that still holds and is why the
+	-- label is not a BillboardGui: a third floating label per slime, across six
+	-- bases, would stack three things in the air over every slot.
+	--
+	-- What changed is that the pad now has something to say that the player
+	-- cannot get anywhere else. Under one shared pot, a pad was only ever a
+	-- place to stand and the HUD carried the number. Under ten pots the amount
+	-- waiting on THIS slime is per-pad information, and the walk down the row is
+	-- a series of small decisions about which ones are worth stepping onto.
+	--
+	-- So the amount is painted ON the pad's top face with a SurfaceGui -- this
+	-- codebase's own convention for text on geometry (the entrance sign board,
+	-- the runway band numbers, the slot pad numbers MapBuilder paints) -- at
+	-- ground level, where the player is walking, competing with nothing above
+	-- it. Hidden entirely at zero. See BaseClient.client.luau, which builds it.
 	--
 	-- IN FRONT means TOWARD THE CENTRAL PATH -- the direction the slime
 	-- itself faces (see PlayerProfile.spawnSlimeVisual's facing correction,

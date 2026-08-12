@@ -180,17 +180,29 @@ local SOUNDS: { [string]: SoundEntry } = {
 		maxLifetimeSeconds = 2,
 	},
 
-	-- WHAT: the pending pot was banked by walking over a collect pad. Fired to
-	--   the OWNING player only (2D), from the server, at the moment the pot
-	--   actually moves -- see PlayerProfile.collectPending.
-	-- LENGTH: 0.15-0.25 s, and this ceiling is the important part of the entry.
-	--   The return pad sits on the post-flight walk, so this fires on EVERY
-	--   cycle -- roughly every 5 to 16 seconds, indefinitely, for the whole
-	--   session. It will be heard hundreds of times an hour.
+	-- WHAT: ONE SLOT's pending pot was banked by walking over that slime's own
+	--   collect pad. Fired to the OWNING player only (2D), from the server, at
+	--   the moment the pot actually moves -- see PlayerProfile.collectPending.
+	-- LENGTH: 0.15-0.25 s, and this ceiling is now the MOST important thing in
+	--   the entry. THE FIRING PATTERN CHANGED (see REPORT.md STEP 5g): income is
+	--   per slot now and the return pad is gone, so this no longer fires once per
+	--   launch cycle -- it fires UP TO TEN TIMES IN ONE WALK, as the player
+	--   crosses the row of pads, and then not at all for several launches. Ten
+	--   pads 14 studs apart at a walk speed of 16 means one every ~0.9 s in a
+	--   single column, and under half that where a zig-zag takes both columns of
+	--   a row in quick succession. Anything with a tail will overlap ITSELF.
 	-- CHARACTER: a single soft coin or register "ding". Short decay, no tail,
 	--   no melody, nothing that resolves -- a sound that goes somewhere is a
-	--   sound you notice, and this one must become texture. If in doubt pick
-	--   the quieter, duller option. One-shot.
+	--   sound you notice, and this one must become texture. If in doubt pick the
+	--   quieter, duller option. One-shot.
+	--   A run of ten of these is the DESIRED read, not a problem to design
+	--   around: it is the sound of a good haul, and it is the reward for having
+	--   made the trip. Nothing varies them -- no pitch step per pad in the run --
+	--   deliberately: a rising run turns ten confirmations into a melody, which
+	--   is the one thing this entry says it must never become, and it would also
+	--   have meant a pitch argument on SoundBroadcast.playFor, which currently
+	--   carries a key and nothing else. Revisit only if a real asset in a real
+	--   playtest turns out to machine-gun.
 	UI_COLLECT = {
 		id = nil,
 		volume = 0.45,
