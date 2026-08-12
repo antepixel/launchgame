@@ -1,683 +1,648 @@
-# The sound system
+# Per-slot collection, and the offline retune
 
-**Branch `ladder-renumber`. Started from `2d28d1d9a186f91e20d3fbb1357dc15595975735`** (the tip of the
-collect-system pass), clean tree.
+Started from `59e38c215a3a48fb23e3268b3828754431f937fa` ("Report the sound system
+pass"), on `ladder-renumber`.
 
-Six commits, one per step, each independently revertable:
+One pending pot per player became ten — one per slot, banked at that slime's own
+pad. The return pad on the approach link is gone. Offline earnings dropped from
+uncapped-rate/8-hour to 22% of rate, capped at 12 hours.
 
-| step | commit | what |
+Every measurement below is reproducible with:
+
+```
+lune run dev/analysis/verify_offline.luau
+```
+
+which prints only and writes nothing to `dev/out/`.
+
+---
+
+## STEP 0 — SURVEY
+
+### 0a. The auto-mount trap — checked first, and there is no trap
+
+`checkProximityMounts` (`src/ServerScriptService/LaunchServer.server.luau:2242`)
+is called every frame from the Heartbeat connection at
+`LaunchServer.server.luau:2274`. It is **not** gated by a flag, a cooldown, or a
+timer. Its only gates, per player, are:
+
+- `states[player] ~= "grounded"` → skip (`:2244`)
+- no character / dead humanoid / no root part → skip (`:2247-2258`)
+- no pivot or no lane index → skip (`:2259-2263`)
+- then: horizontal (X/Z, Y dropped) distance from that player's own pivot
+  `<= LaunchConfig.SWING_MOUNT_RADIUS_STUDS` (18) → `mountPlayer` (`:2266-2270`)
+
+So yes — it fires continuously, every frame, for any grounded player inside the
+circle. **But a dismounted player can walk away freely, and the reason is
+geometry, not gating.**
+
+`onDismount` (`:1557`) and `onReturnToSwing` (`:1501`) both end at
+`moveToLaneReturn` (`:1299`), which places the character at
+`LaneConfig.SWING_PIVOT_Z + LaunchConfig.SWING_RETURN_CLEARANCE_STUDS`
+= 30 + 22 = **Z 52** (`:1304`), on the lane's own X. The mount circle reaches
+Z 48. The player is dropped 4 studs **outside** it.
+
+The base is at **higher Z** — `BaseConfig.BASE_SLOT_Z_START = 117`, plot centre
+150, back edge 192 (`BaseConfig.luau:247`, `:407`, `:440`). The swing pivot is at
+Z 30. So the walk from the return position to the base runs in **+Z, directly
+away from the pivot**: the measured distance increases monotonically from 22
+studs at the first step and never comes back inside 18. There is no fight to
+lose.
+
+Walking the other way (−Z) re-seats the player at Z 48, which is the intended
+auto-mount and unchanged by this pass.
+
+Verified as an assertion rather than prose — `verify_offline.luau` §6h checks
+both `returnZ > mountZ` and `BASE_SLOT_Z_START > returnZ`.
+
+**No STOP condition. Nothing in this prompt's assumptions was contradicted.**
+
+### 0b. The route from the swing to the base
+
+| leg | Z span | surface | built by |
+|---|---|---|---|
+| return position → approach link end | 52 → 67 | static concrete, `APPROACH_LINK_WIDTH` 9 | `PathConfig:115-117` |
+| the conveyor | 67 → 85 | two 9-deep belt halves | `PathConfig:165-167` |
+| spur | 85 → 108 | static, 10 wide | `PathConfig:138-140` |
+| plot mat + central path | 108 → 192 | static, path 10 wide | `BaseConfig:407,418` |
+| the ten collect pads | 117 → 173 | two columns at baseX ∓8 | `BaseGeometry.collectPadPlacement` |
+
+**The conveyor helps neither direction.** `MapBuilder.server.luau:304` sets
+`belt.AssemblyLinearVelocity = Vector3.new(half.direction * BELT_SPEED_STUDS_PER_SECOND, 0, 0)`
+— **X only**. It is a cross-map shuttle between the two shops
+(`PathConfig:142-167`: the two halves run in opposing X directions so a player
+can reach any lane or either shop without walking). The swing→base trip is a
+pure **Z** journey, perpendicular to it.
+
+What the belt actually does to this trip is push the player sideways for the 18
+studs of crossing: 1.12 s at walk speed, ~18 studs of drift per half, opposed
+between the halves so the net displacement across the full width is ≈0 — a
+shallow S, not a detour. Neither an assist nor an obstacle; the number below
+ignores it, correctly.
+
+### 0c. Round trip on foot
+
+Nothing in `src/` ever assigns `Humanoid.WalkSpeed` (checked by grep), so the
+real speed is Roblox's default **16 studs/s**.
+
+Measured in `verify_offline.luau` §6h against the real
+`BaseGeometry.collectPadPlacement` output, walking all ten pads in a
+boustrophedon (both columns of a row, then the next row):
+
+```
+out 65.4 studs + row 126.0 + back 121.2 = 312.6 studs -> 19.54 s at 16 studs/s
+```
+
+Cycle times (perfect play, same four-term model `dev/analysis/cycle_time.luau`
+uses: bar wait 1.20 + flight + reward + the 4-stud remount walk 0.25):
+
+| | tier 1 | tier 10 |
 |---|---|---|
-| 1 | `1b4e6a8` | the registry and the one module allowed to create a `Sound` |
-| 2 | `7a54545` | world-sound routing, the UI click hook, the conveyor, the mute toggle |
-| 3 | `f7106e0` | the flight rush and the sweet-spot tick |
-| 4 | `6a4e178` | the reward chain: box, doubling climb, tier-scaled reveal, chest |
-| 5 | `24ede1f` | purchase and inventory confirmations |
-| 6 | `7791d17` | verification, and two real gaps the tests found |
+| cycle | 5.45 s | 15.80 s |
+| trip as % of ONE cycle | **358%** | **124%** |
 
-## Reproduce
+That is the number the prompt's "+155% if you collect every cycle" figure was
+measuring, and it is worse than that figure because the trip now walks the whole
+row rather than touching one pad. Amortised, it is a different animal — see 6h.
 
-```
-lune run dev/analysis/verify_sound.luau      # 6a-6f, exits non-zero on failure
-lune run dev/analysis/verify_offline.luau    # last pass, re-run: still passes
-lune run dev/analysis/verify_ladder.luau     # unchanged, still passes
-rojo build default.project.json -o <path>    # whole-tree syntax check
-```
+### 0d. The ten collect pads
 
-**30 checks pass.** Nothing in `dev/out/` was regenerated or touched.
+Created in `PlayerProfile.spawnSlimeVisual` at `:485-509` (line numbers as
+found at survey time):
 
----
+- position/size from `BaseGeometry.collectPadPlacement(baseIndex, slotNumber)`
+  (`BaseGeometry.luau:168`), nothing literal
+- X: centred in the channel between the slot pad's inner edge and the central
+  path's near edge — `baseX ∓ 8`, **4 studs wide** (`BASE_COLLECT_PAD_WIDTH_STUDS`)
+- Z: the slot pad's own Z, **8 deep** (`BASE_COLLECT_PAD_DEPTH_STUDS`), so pad
+  and slime line up end to end
+- Y: mat top + half height (`BASE_COLLECT_PAD_HEIGHT_STUDS` 0.4)
+- named `"CollectPad"`, `Anchored`, `CanCollide = false`, `CanTouch` left at its
+  default true
+- **parented into the slime `Model`** (`:509`), which is the whole teardown
+  story: the pad cannot outlive its slime, so `removeToInventory`'s
+  `model:Destroy()` and `onPlayerRemoving`'s `baseFolder:Destroy()` both take it
+  with them without knowing it exists.
 
-# The headline: 23 entries, every id nil
+Confirmed: created in `spawnSlimeVisual`, destroyed with their slime.
 
-**No asset ID was invented, guessed, or recalled.** All 23 entries ship with `id = nil` and are
-silent. `SoundConfig` asserts at load that any id which *is* filled in is a well-formed
-`rbxassetid://<digits>` string, so a typo'd or bare number fails loudly the moment it is added rather
-than resolving to nothing.
+The slime `Model` carries a `SlotNumber` attribute, set **before** it is parented
+(`:452-454`), for `SlimeUpgradeTagClient`. That attribute is what this pass reuses
+to bind a pad to a slot — no new registry, no change to the pad's construction.
 
-**§6f is the shopping table** and is the most important output of this pass. It is at the bottom.
+### 0e. Every path that can empty a slot
 
----
+**Exactly one**, and this is verified rather than assumed: `profile.slots[n] = nil`
+appears once in the entire tree, in `PlayerProfile.removeToInventory`. The scan
+in §6b asserts the count.
 
-# 0. Survey
-
-## 0a — there is genuinely no audio
-
-`grep -rniE "sound|playbackloudness|rbxassetid" --include=*.luau src/` returned **5 hits, none of
-them audio**:
-
-| hit | verdict |
+| named in the prompt | what actually exists |
 |---|---|
-| `LaneConfig.luau:80` "That reasoning was **sound** in isolation" | English prose |
-| `SlimeConfig.luau:255` "The reasoning for raising it was **sound**" | English prose |
-| `ConveyorScroll.luau:22` "The reasoning was **sound** and the cost" | English prose |
-| `PlayerProfile.luau:933` "not an error worth a **sound** or a message" | English prose (and now out of date — that path does have a sound; see §0b) |
-| `PathConfig.luau:226` `BELT_RIDGE_TEXTURE_ASSET_ID = "rbxassetid://87264921429321"` | a **Texture**, not audio |
+| manual removal | `PlayerProfile.removeToInventory` — the one site |
+| wipe | `devWipeProfile` → `devClearBase` → `removeToInventory` per slot |
+| sell | **cannot empty a slot.** `sellFromInventory` only ever reads/decrements `profile.inventory`; that is what makes "remove before you sell" true by construction |
+| replacement | **does not exist.** `placeFromInventory` refuses when the base is full ("no free slot -- remove one first") rather than swapping anything out |
 
-Also checked and clean: `default.project.json` contains no `Sound`, and none of the three `.rbxmx`
-assets (`Chest`, `Sign`, `Slime`) contains a `Sound` instance. **Confirmed: this pass adds the first
-audio in the project, and `SoundPlayer` contains the first `Instance.new("Sound")`.**
+Removed slimes land in `profile.inventory` (stacked by globalIndex), and
+`sellFromInventory` is the sell route from there
+(`incomePerSecond * SELL_VALUE_INCOME_MULTIPLIER * quantity`).
 
-## 0b/0c/0d — every moment, where it fires, and who hears it
+So banking-on-removal needed **one line in one function**, and the other three
+paths inherit it.
 
-| moment | fires at | side | who hears | entry |
-|---|---|---|---|---|
-| swing mount | `LaunchServer:1840` `mountPlayer` | server | **nearby** | `WORLD_SWING_MOUNT` |
-| bar sweep enters sweet spot | `LaunchClient:1633` render loop | client | self | `FLIGHT_SWEET_SPOT_ENTER` |
-| release (apparatus) | `LaunchServer:2136` after `flightStartedRemote` | server | **nearby** | `WORLD_LAUNCH_RELEASE` |
-| release (the flyer's own) | `LaunchClient:1094` `FlightStarted` | client | self | `FLIGHT_RELEASE` |
-| flight | `LaunchClient:1099`→`1610` | client | self | `FLIGHT_WIND_LOOP` |
-| landing, road | `LaunchServer:2360` landing handler | server | **nearby** | `WORLD_LANDING_ROAD` |
-| landing, short | same, `flight.zone == "short"` | server | **nearby** | `WORLD_LANDING_SHORT` |
-| landing, past (chest) | same, `flight.zone == "past"` | server | **nearby** | `WORLD_LANDING_PAST` |
-| box appears | `LaunchClient:1209` `BoxStarted` | client | self | `REWARD_BOX_APPEAR` |
-| box press | `LaunchServer:2494` `onBoxPress` | **server** | self | `REWARD_BOX_PRESS` |
-| each doubling | `LaunchClient:1247` `BoxResult(false)` | client | self | `REWARD_BOX_DOUBLE` |
-| box opens | `LaunchClient:1224` `BoxResult(true)` | client | self | `REWARD_BOX_OPEN` |
-| slime reveal | `LaunchClient:1355` `SlimeRevealed` | client | self | `REWARD_SLIME_REVEAL` (+`_RARE`) |
-| first-ever slime | same, `isNew` | client | self | `REWARD_SLIME_NEW` |
-| chest lid opens | `LaunchServer:2690` `prompt.Triggered` | server | **nearby** | `WORLD_CHEST_OPEN` |
-| chest reveal | `LaunchClient:1334` `ChestRevealStarted` | client | self | `REWARD_CHEST_REVEAL` |
-| collect | `PlayerProfile:1010` `collectPending` | **server** | self | `UI_COLLECT` |
-| upgrade bought | `InventoryClient` `upgradeResult(true)` | client | self | `UI_PURCHASE_SUCCESS` |
-| swing tier bought | `ShopClient` `buyTierResult(true)` | client | self | `UI_PURCHASE_SUCCESS` |
-| any purchase refused | both result remotes, `false` | client | self | `UI_ACTION_DENIED` |
-| slime placed / removed / sold | `InventoryClient` `inventoryActionResult(true)` | client | self | `UI_INVENTORY_ACTION` |
-| any UI button | `SoundClient`, `PlayerGui.DescendantAdded` | client | self | `UI_BUTTON_CLICK` |
-| the conveyor | `SoundClient`, on `BeltNear`/`BeltFar` | client | **nearby** | `WORLD_CONVEYOR_LOOP` |
+### 0f. `totalIncomePerSecond`
 
-**0d, which should be public and which would be noise.** Six players share one map, so in principle
-every launch, landing and chest is witnessable. The rule I applied: **a sound is public only if the
-thing that caused it is visible from where it can be heard.**
+At survey time (`PlayerProfile.luau:669`) it looped slots 1..`SLOT_COUNT`, looked
+up `SlimeData.SLIMES[globalIndex]`, and summed
+`SlimeUpgrade.incomeForLevel(slime.incomePerSecond, profile.levels[i] or 1)`.
 
-- **Public (7 entries):** mount, release, the three landings, the chest lid, the conveyor. All have a
-  visible cause — a person on a swing, a person hitting the ground, a lid moving, a belt running.
-- **Private (16 entries):** everything in UI, FLIGHT and REWARD. Two reasons. The reward scene is
-  framed by a camera move around one player's own frozen character and the box hangs at *their* arm's
-  length — it is not visible to anyone else, so a sound from it would come from nowhere. And UI is
-  worse: six players' button clicks and collect chimes, at 5–16-second cycles each, would be a
-  continuous stream of unattributable noise. **`UI_COLLECT` is the sharpest case** — it fires on
-  every cycle for every player, so broadcasting it would put five other people's cash registers in
-  everyone's ears permanently.
+**No per-slot rate was available** — the per-slot value existed only as a loop
+temporary. It had to be extracted, and was: `slotIncomePerSecond(profile, slot)`
+is now the primitive and `totalIncomePerSecond` is a sum of it, so there is still
+exactly one expression for "what does a slot earn".
 
-## 0e — existing button affordances
+### 0g. The single-pot implementation, in full
 
-**14 `TextButton` construction sites, no `ImageButton`s, and none of them has any click affordance
-today** beyond `BackgroundColor3` changes:
+Everything the rework had to touch:
 
-`LaunchHud.luau:372` (release), `:411` (dismount); `DevPanelClient:182, 204, 304`;
-`InventoryClient:45` (error), `:138` (open), `:194` (close), `:288` (rows);
-`ShopClient:47` (error), `:97` (open), `:153` (close), `:231` (buy);
-`SlimeUpgradeTagClient:340` (the world-space upgrade strips).
-
-**None of those files was edited.** `SoundClient` connects `PlayerGui.DescendantAdded` and puts
-`UI_BUTTON_CLICK` on every `GuiButton`'s **`Activated`** — chosen over `MouseButton1Click` because
-`Activated` also fires for touch and gamepad, and this game is played on phones.
-
-## 0f — `RespectFilteringEnabled`, and where sounds live
-
-**It matters, and it is now set explicitly** (`SoundClient.client.luau`), rather than left at its
-default. Every `Sound` in this game is created by a LocalScript. With this property false, Roblox's
-legacy behaviour replicates a client's `Sound:Play()` outward — which would mean every player
-hearing every other player's button clicks and collect chimes, i.e. exactly the failure the 2D/3D
-split exists to prevent. Setting it `true` keeps client-initiated playback local, which is what makes
-"2D means only I hear it" true rather than merely intended.
-
-**What the existing split implies.** This codebase's rule is *server owns state, client renders* —
-`LaunchRemoteLanes` recomputes other players' entire flights client-side from replicated attributes
-rather than being driven per-frame by the server. Audio follows the same rule: **the server creates
-no `Sound` at all.** It broadcasts a key and a position; each client builds the sound locally. See
-§2 for the routing decision this drives.
-
----
-
-# 1. The registry
-
-**1a/1b — `SoundConfig.luau`**, 23 entries in four groups. Every entry carries `id`, `volume`,
-`pitch`, `group`, `spatial`, `looped`, `maxLifetimeSeconds`, and (for 3D) `rollOffMinDistance` /
-`rollOffMaxDistance`. Each has a **WHAT / LENGTH / CHARACTER** comment written to be shopped from —
-what it is for, how long it may run, and what it should feel like.
-
-Two things are asserted at load, because both are otherwise *silent* failures that nobody without
-ears could diagnose:
-
-- a `spatial` entry with no positive `rollOffMaxDistance` (it would fall back to default attenuation
-  and be audible across a 3,000-stud map);
-- a `group` name that is not one of the four (the sound would be created outside the mixer entirely).
-
-**1c — one construction path, and how it is enforced.** `SoundPlayer.luau` is the only module that
-calls `Instance.new("Sound")` or `Instance.new("SoundGroup")`. There is no language-level way to
-prevent another script doing it, so the rule is kept by a **test**: `verify_sound.luau` walks all 54
-`.luau` files under `src/`, greps for both constructors, and fails if any hit is outside
-`SoundPlayer`. It also asserts `SoundPlayer` *does* contain them (6 sites), so the rule cannot pass
-vacuously if the module is ever gutted.
-
-```
-scanned 54 .luau files under src/
-[PASS] no Sound/SoundGroup constructed outside src/ReplicatedStorage/SoundPlayer.luau
-[PASS] src/ReplicatedStorage/SoundPlayer.luau does construct them (6 sites) -- the rule is not vacuous
-```
-
-**1d — nil-safe by construction.** `resolve()` is the single gate. A key that does not exist and a
-key whose `id` is nil both return `nil`, and every public function returns early on that — so
-`play2D`, `playAt` and `startLoop` all no-op. `stopLoop(nil)` is a no-op too, which is what lets the
-flight's three teardown paths call it unconditionally.
-
-**Warned once per key, never per call.** `warned[key]` is set *before* the warn fires and never
-cleared. The two message texts differ on purpose: an unknown key says "this is a typo at a call
-site, not a missing asset", while a nil id says "silent by design — drop an id into
-`SoundConfig.SOUNDS.<KEY>`". Demonstrated in §6e.
-
----
-
-# 2. 2D versus 3D
-
-## The routing decision
-
-**Not one `Sound` is created on the server.** World sounds are broadcast by `SoundBroadcast.luau` as
-a key plus a `Vector3` and built locally by each receiving client.
-
-The obvious alternative — parent a `Sound` to a part on the server and let Roblox replicate it — is
-fewer moving parts, and **I rejected it for one specific reason: the mute toggle.** Because every
-`SoundGroup` is created locally, muting is a plain property write on an instance the server has never
-heard of, and there is no mechanism by which one player's mute could reach another. With
-server-created groups, muting would depend on the rule that a client's property writes to replicated
-instances stay local — true, but a rule the whole feature would be silently resting on. Owning every
-`Sound` on the client makes locality **structural** rather than incidental.
-
-The cost: one `FireAllClients` per public event, carrying a short string and a `Vector3`. At six
-players and a few events per second that is negligible. `SoundBroadcast`'s header names the point at
-which it would stop being negligible (a much higher player cap) and what to do then.
-
-**2a — UI is 2D**: parented to `SoundService` itself, which is what makes it non-positional — a
-`Sound` with no `BasePart`/`Attachment` ancestor has nothing to attenuate from. All 16 UI, FLIGHT and
-REWARD entries.
-
-**2b — world is 3D**: `SoundPlayer.playAt` builds a throwaway holder part at the position, because
-these fire at *places* rather than at instances that reliably persist. The holder is invisible,
-`CanCollide = false`, **`CanTouch = false`** and `CanQuery = false` — the `CanTouch` part is
-load-bearing, not tidiness: this project has exactly one `.Touched` in it (the collect pads), and a
-stray touchable part appearing at a landing spot would be a gameplay change, which this pass is not
-allowed to make.
-
-## 2c — the map is ~3,000 studs, and `RollOffMode` is the whole answer
-
-The road runs **Z −4.3 to −2,964.3** (74 bands × 40 studs); the plots sit at **Z 150**. Map length
-end to end: **3,114 studs**. The deepest landing that can actually happen — tier 10's perfect launch
-at **Z −3,061.7** — is **3,212 studs** from a base.
-
-**Roblox's default `RollOffMode` is `Inverse`, under which `RollOffMaxDistance` is NOT a cutoff.**
-Volume falls as roughly 1/d and `MaxDistance` is merely where attenuation stops getting worse — the
-sound then holds that level indefinitely. On this map an `Inverse` sound is faintly audible from
-anywhere, which is precisely the bug 2c asks about.
-
-**`SoundPlayer` forces `Enum.RollOffMode.Linear`**, which falls to true silence at
-`RollOffMaxDistance`. That is what makes every distance below a real, checkable boundary. *Rejected:*
-`LinearSquare`, which also reaches zero but front-loads the falloff so hard these already-tight radii
-would go inaudible almost immediately.
-
-| entry | max audible | as % of the 3,212-stud landing-to-base distance |
-|---|---|---|
-| `WORLD_LANDING_ROAD` / `_SHORT` / `_PAST` | 250 | 7.8% |
-| `WORLD_CHEST_OPEN` | 150 | 4.7% |
-| `WORLD_LAUNCH_RELEASE` / `WORLD_SWING_MOUNT` | 120 | 3.7% |
-| `WORLD_CONVEYOR_LOOP` | 40 | 1.2% |
-
-**Confirmed: a landing at Z −2,744 is inaudible at the base.** The loudest-reaching world sound
-covers 250 studs of a 3,114-stud map — 8%. Checked per entry by `verify_sound.luau` against the
-figures re-derived from the real config, so it fails if either a distance or the map changes.
-
-**Why 250 for landings specifically:** tiers land **320 studs apart** in Z. At 250 a player hears
-landings only from others on **their own tier** — which is exactly the "someone landed near me"
-signal worth having — and never from an adjacent tier. *Rejected:* 1,000, which would have made
-mid-road landings audible back at the swings.
-
-## 2d — six players, and what stacks
-
-| entry | max simultaneous | assessment |
-|---|---|---|
-| `WORLD_LAUNCH_RELEASE`, `WORLD_SWING_MOUNT` | **3** | bounded by the 120-stud rolloff |
-| `WORLD_LANDING_*` | up to 6 | only if all six are on the same tier and synchronised |
-| `WORLD_CHEST_OPEN` | up to 6 | requires six simultaneous chest opens; vanishingly rare |
-| `WORLD_CONVEYOR_LOOP` | 2 | fixed — one per belt half, always on |
-
-**The swing area was the real risk and it is the one I acted on.** The six swings sit 60 studs apart
-across a 360-stud row, so a sound reaching 300 studs would be audible from all six lanes — six
-launch whooshes at once, every cycle, forever. **120 studs bounds it to three**: this lane and one
-either side. Under Linear rolloff a listener at exactly 120 studs hears silence, so the lane two away
-(120 studs) does not count — verified rather than assumed:
-
-```
-lane pitch 60 studs; WORLD_LAUNCH_RELEASE reaches 120 -> at most 3 of 6 lanes audible at once
-```
-
-*(This corrected a claim I had made: my first version of the check counted 5, using
-`floor(reach/pitch)` and so including the boundary lane. The strict inequality is the right one and
-3 is the true figure.)*
-
-**Landings can stack six-deep in principle** and I deliberately did nothing about it. It requires all
-six players on the same swing tier landing within ~0.5 s of each other, which the 5–16-second cycles
-and independent bar timing make rare; and when it does happen, six people landing together *is* the
-event. Suppressing it would need a per-position rate limiter — real complexity for a case that is
-arguably a feature. Flagged rather than fixed.
-
----
-
-# 3. The flight
-
-## 3a — the rush, and its teardown
-
-One looping 2D sound on the flying player's own client, alive for exactly the flight: **2 s at tier
-1, 11 s at tier 10** — the longest continuous moment in the game.
-
-**Hooked at four sites, three of them teardown**, all idempotent and nil-tolerant so none has to
-coordinate with the others:
-
-| # | site | catches |
-|---|---|---|
-| — | `FlightStarted` handler | *starts* it, after a defensive stop so a second flight cannot orphan the first's loop |
-| 1 | the landing frame (`u >= 1`) | an **ordinary landing** |
-| 2 | `resetFlightState()` | **death, disconnect, mid-flight dismount, cancellation** |
-| 3 | `setGrounded(true)` | belt-and-braces: every route back to neutral |
-
-**Site 2 is the one that answers "is it the same path that already cancels the flight state?" — yes,
-exactly.** `resetFlightState` has precisely one caller: the `resetReadyRemote` handler. And
-`LaunchServer.clearActiveRider` **reuses `resetReadyRemote` as its death/disconnect cancellation
-signal** (its own comment says so: *"This is a DEATH/DISCONNECT CANCELLATION signal, not a landing
-signal — reusing resetReadyRemote … because its own OnClientEvent handler already does exactly
-'return to neutral'"*). So the single line in `resetFlightState` inherits every cancellation route
-the flight state itself already has.
-
-**Site 1 cannot be folded into site 2.** `resetReadyRemote` arrives `RESET_DELAY` (0.75 s) *after*
-the landing, so relying on it alone would leave the rush droning for three-quarters of a second after
-the player had visibly hit the ground — on every single flight.
-
-## 3b — pitch and volume track speed, not time
-
-Speed is derived from the **derivative of the same trajectory the render loop already positions the
-character with**:
-
-```
-z(u) = startZ − distance·u          → dz/du = −distance
-y(u) = startY + (topY−startY)·u
-       + arch·4·u·(1−u)             → dy/du = (topY−startY) + arch·4·(1−2u)
-speed = |(dy/du, dz/du)| / duration
-```
-
-Read-only — it derives a number *from* the flight formulas and changes nothing about them. **The
-vertical term is why this is worth doing:** the rush dips at the apex and swells again on the
-descent, so the sound follows the arc rather than merely counting down.
-
-**Measured instantaneous 3D speed across all ten tiers: 100.0 to 296.1 studs/s.** Rounded outward to
-100/300 so the mapping never clamps in play.
-
-| | pitch | volume |
-|---|---|---|
-| at 100 studs/s | 0.85 | 0.40 |
-| at 300 studs/s | 1.30 | 1.00 |
-
-**Range at both ends of the ladder:**
-
-| | speed over the flight | pitch | volume |
-|---|---|---|---|
-| tier 1 | 100.0 → 171.7 | 0.85 → 1.01 | 0.40 → 0.68 |
-| tier 10 | 279.2 → 296.1 (dips to 279 at apex) | 1.25 → 1.29 | 0.94 → 0.98 |
-
-So a tier-1 flight is a low, quiet whoosh that swells noticeably; a tier-10 flight is a loud, high,
-near-constant rush. *Rejected:* mapping to a wider 0.5–2.0 pitch span, which would make the top tier
-a shriek and the bottom a rumble — two different sounds rather than one sound moving.
-
-## 3c — the bar sweep: wired, as an edge
-
-**I wired it, and I think it helps rather than clutters** — but only in the form I chose.
-
-It fires on the frame the bar crosses **into** the sweet-spot window and not again until it has left
-— **one tick per 2.4-second sweep**, not a tone for as long as you are inside. It uses
-`LaunchFormulas.inSweetSpot`, the same predicate the grading uses, so the tick can never mark a
-window the multiplier disagrees with.
-
-**Why it earns its place:** the full window is 0.288 s, but only **0.072 s** of that reaches tier
-10's snap threshold of 1.95. A 72-millisecond target is genuinely hard to hit by eye, and an audible
-edge is something a player can act on by reflex rather than by watching.
-
-**What I did NOT do, and this is the version that would clutter:** a rising tone tracking the bar
-continuously. It would run for the entire time any player sits on a swing — which is most of the
-game — and it would be a pitch-varying tone competing with the flight rush for the same perceptual
-space. No entry exists for it; the one that exists is documented as an edge tick and nothing else.
-
-The starting state is `wasInSweetSpot = true`, so a rider who mounts with the bar *already* inside
-the window does not get a tick for a crossing that never happened.
-
-## 3d — the three landing zones do not sound alike
-
-Three separate entries, selected from **`flight.zone`** — the enum the server itself branched on when
-it decided whether this landing earns a box, nothing, or a chest. Read, not re-derived, so the sound
-can never disagree with the outcome.
-
-- `WORLD_LANDING_ROAD` — solid, weighty, "arriving".
-- `WORLD_LANDING_SHORT` — duller and flatter, no ring. Recognisably worse without being a punishment;
-  the player already knows and the HUD already says so.
-- `WORLD_LANDING_PAST` — triumphant, with a bright ascending tail, and allowed to be longer (0.6–1.2 s)
-  because nothing follows it immediately.
-
----
-
-# 4. The reward chain
-
-## 4a — box, press, and the doubling climb
-
-**The press is played from the SERVER, and that was a forced choice worth explaining.** Every route
-into a press — Space, tap-anywhere, and **the `ClickDetector` on the box itself, which lives inside
-`LaunchRewardScene.luau`** — converges on `boxPressRemote`, so `onBoxPress` is the only place that
-sees all of them.
-
-The client-side alternative was hooking `RewardScene.press()` at its two `LaunchClient` call sites.
-That would have been latency-free, but it would have **missed the `ClickDetector` route entirely** —
-clicking the box would be silent while clicking beside it was not. Inconsistent is worse than late,
-so the press costs one round trip. It buys something real: placed after the rate-limit guard, it
-fires only for presses the server **accepted**, so it never promises a roll that was swallowed.
-
-**The pitch climb.** `+0.06` per link, **ceiling 2.0** (one octave). The chain is geometric at
-`BOX_DOUBLE_CHANCE = 0.55`:
-
-| | doublings |
+| piece | where |
 |---|---|
-| mean | 1.22 |
-| 99% of boxes stop by | 7 |
-| 99.9% by | 11 |
-| **99.99% by** | **15** |
+| `pendingIncome: number` | `Profile` type, `PlayerProfile:60` |
+| `offlineCredit: number` | `Profile` type, `:68` (session-only, never persisted) |
+| `lastCollectAt: number` | `Profile` type, `:73` — one debounce timestamp per player |
+| `setPending(profile, pending, offline)` | `:692` — the pot's one writer, sets both attributes |
+| `collectPending(player, profile, pad, hit)` | `:955` — owner check, debounce, whole-pot read, distance check, atomic payout, `UI_COLLECT` |
+| `wireCollectPad` / `wireCollectPads` | `:1039` / `:1061` — `DescendantAdded` + initial pass, matching two names |
+| `PendingIncome` attribute | written in `buildBaseFolder:320` and `setPending` |
+| `OfflineCredit` attribute | same |
+| the return pad part | `buildBaseFolder:302-313`, name `ReturnCollectPad` |
+| return pad geometry | `BaseGeometry.returnPadPlacement:232` + two load-time asserts `:253-273` |
+| return pad constants | `BaseConfig.BASE_RETURN_PAD_EDGE_MARGIN_STUDS`, `_Z_MARGIN_STUDS` |
+| return pad label | `BaseClient.client.luau:215-287` (BillboardGui, collect line + "while away" line) |
+| HUD pending line | `BaseClient:134-153` |
+| the tick | `PlayerProfile:1621-1635` — `os.clock()` delta, into `pendingIncome` |
+| offline accrual | `creditOfflineIncome:881` → `OfflineIncome.creditFor` |
+| persistence | `toSaveShape` writes `pendingIncome`; `applyLoadedData` reads it |
+| the debounce window | `BaseConfig.BASE_INCOME_TICK_SECONDS` (1 s) |
+| the sound | `SoundConfig.UI_COLLECT`, fired from `collectPending` |
 
-**The longest realistic chain is ~15.** At +0.06 the ceiling is reached on the **18th** doubling
-(1 + 0.06×17 = 2.02 → clamped), which occurs about **once in 47,000 boxes** (0.55¹⁸ = 2.1×10⁻⁵).
-**Past that it holds at 2.0** rather than continuing into inaudibility. So in normal play the climb
-never runs out of range, and the monster chain that does simply stops rising. *Rejected:* a
-multiplicative climb (×1.06/link), which sounds identical for the first few links and then runs away
-fastest on exactly the chains most worth hearing.
+---
 
-The counter resets on `BoxStarted`, not on `BoxResult`, so it tracks one box from first press to open
-and cannot inherit a previous box's height. The first doubling plays at the entry's own pitch, so the
-climb is audible *as* a climb from the second link.
+## STEP 1 — PER-SLOT POTS
 
-## 4b — the reveal, scaled by tier
+**1a.** `pendingIncome: number` → `pendingBySlot: { [number]: number }` (slot →
+dollars, missing = nothing pending). An empty slot holds no entry, not a zero.
 
-**By tier, not by luck**, as instructed — and the reason is that they genuinely diverge: a huge luck
-roll can still land a Common. The player is looking at the slime, so the sound must describe the
-slime.
+**1b.** The tick credits each slot `slotIncomePerSecond(profile, i) * elapsed` —
+its own slime at its own level, never a share of a total. The `os.clock()` delta
+from the previous pass is kept exactly (`elapsed = now - lastTick`, not the
+nominal `BASE_INCOME_TICK_SECONDS`), and is still deliberately unclamped.
 
-Rarer reads as **lower, louder**, across the 8 tiers (`Common … Divine`):
+One `publishPending` per profile per tick, after the slot loop rather than inside
+it: the ten slots of one profile are one state change to any client, and
+publishing is an attribute write plus a JSON encode.
 
-| | tier 1 (Common) | tier 8 (Divine) |
+**1c.** No cap, no clamp, nothing bounding a pot while the player is connected.
+Measured: 24 h AFK on the test profile accrues **9.1×** the entire offline
+ceiling. That is the intended relationship, not a leak — see 2c.
+
+**1d.** Persisted as a dense `pendingBySlot` array with a 0 sentinel, the same
+shape `slots` and `levels` already use (DataStore arrays cannot hold holes
+reliably). A player who logs off holding money on eight slimes keeps all eight.
+
+*Migration from the single pot:* a save written by the previous pass has one
+scalar `pendingIncome` with no slot attached. It is spread across the slots **in
+proportion to each slot's own rate** — the same rule offline accrual uses — so it
+turns up where it would have been earned. The one case proportion cannot answer
+is a base with no slimes at all (nothing to be proportional to); such a pot is
+parked on slot 1 and picked up by the orphan pass below, which banks it, since an
+empty base has no pad to ever collect it at.
+
+*Orphan pots:* a pot on a slot that did not end up occupied cannot come from a
+save this code wrote (removal banks first), but can arrive hand-edited, or from a
+save whose slot held a `globalIndex` that no longer exists in `SlimeData` and was
+skipped on load. Those are banked through `bankSlot` rather than stranded or
+silently dropped — routing it that way is what keeps `bankSlot` the *only* place
+in the file that moves a pot into cash (§6f counts the sites).
+
+**1e. Removal banks first.** One line, at the top of `removeToInventory`, before
+`profile.slots[slotNumber] = nil` and before `model:Destroy()` takes the pad with
+it. Paths covered, from 0e:
+
+| path | how it is covered | demonstrated in |
 |---|---|---|
-| pitch | 1.15 | 0.90 |
-| volume scale | 0.85 | 1.15 |
+| manual removal (the Remove button → `InventoryServer`) | `bankSlot` called directly | §6b, and a source scan asserting bank-before-clear in source order |
+| dev clear base | routes every slot through `removeToInventory` | §6b (all ten pots banked) |
+| dev wipe | routes through `devClearBase` → `removeToInventory`, then zeroes money as a wipe should | §6b + source scan |
+| sell | unreachable from a slot — needs no banking, and the scan asserts `sellFromInventory` never mentions `profile.slots` | §6b |
+| replacement | does not exist — the scan asserts `placeFromInventory` never clears an occupied slot | §6b |
 
-Both ramps are derived from `#SlimeConfig.SLIME_TIER_NAMES` rather than hardcoded, so adding a tier
-rescales the ramp instead of leaving the top two indistinguishable.
+**1f.** Replicated as **`PendingBySlot`, a JSON array of `{slot, pending}` on the
+base folder** — the exact shape and encoding `syncClientState` already uses for
+`Slots` and `Inventory`, decoded on the client the same way `InventoryClient`
+decodes those. No remote was added.
 
-**Pitch alone across eight tiers is a gradient nobody can name**, so `REWARD_SLIME_REVEAL_RARE` is
-layered on top for **tiers ≥ 6** (Mythic, Secret, Divine). That makes the best pulls *categorically*
-different, not merely lower. Threshold 6 rather than 8 deliberately: a fanfare that fires only on the
-single rarest tier would almost never be heard.
+*Chosen over an attribute on each `CollectPad` part.* That would have been
+marginally cheaper (no encode, no parse) and the pad already knows its slot — but
+it means ten attribute writes per player per tick instead of one, and it puts the
+value on an instance that only exists while a slime does, so nothing could render
+a pot for a pad that had not been built yet.
 
-`REWARD_SLIME_NEW` layers on a slime this player has never seen — `isNew` is already on the wire, so
-it costs nothing to know. It fires on the chest path too: a *first* Divine out of a chest deserves it
-most.
-
-## 4c — the chest
-
-`REWARD_CHEST_REVEAL` **replaces** the ordinary reveal on a chest pull rather than stacking with it.
-The chest table is 20% Divine, so layering box-reveal + rarity fanfare + chest swell would put three
-celebratory sounds together on most opens. A flag set by `ChestRevealStarted` and consumed by the
-`SlimeRevealed` that follows one line later does the swap; it is also cleared in `setGrounded`, so a
-leak could never silence a *later* reveal — the failure mode there would be a silent reveal, exactly
-the class of bug nobody can hear their way to.
-
-It plays over the 3D `WORLD_CHEST_OPEN` broadcast from the lid, deliberately in a different register:
-that one is wood and metal, this one is light and air.
-
-## 4d — collect
-
-**0.15–0.25 s specified, and the ceiling is the important part of the entry.** The return pad sits on
-the post-flight walk, so this fires **every cycle** — roughly every 5 to 16 seconds, indefinitely,
-hundreds of times an hour. The entry's comment says so explicitly and directs: single soft coin or
-register ding, short decay, no tail, no melody, nothing that resolves — *a sound that goes somewhere
-is a sound you notice, and this one must become texture.* Volume 0.45, the second-quietest thing in
-the UI group.
+`PendingIncome` survives as the **total** across slots, for the HUD (5d).
 
 ---
 
-# 5. Mixing and control
+## STEP 2 — OFFLINE: 12-HOUR CAP AT 22%
 
-## 5a — groups and levels
+**2a.** `OFFLINE_RATE_MULTIPLIER = 0.22`, commented with the intent: offline
+should be meaningfully worse than playing — not worthless (coming back to nothing
+is the fastest way to not come back at all) but far enough below the online rate
+that idling is never a strategy and returning is always the rewarded choice. The
+comment records that it is expected to be retuned once real player data exists,
+and what data should decide it (the observed split between slot income and launch
+income in a real session).
 
-Four `SoundGroup`s **nested inside one master**, so the master multiplies over all four rather than
-being a fifth sibling controlling nothing.
+**2b.** `OFFLINE_CAP_SECONDS = 43200`, commented as a **design limit, not a
+sanity bound** — and pointing at where the sanity bounds actually live
+(`OfflineIncome.elapsedSeconds` handles a non-number, a NaN and a negative
+elapsed, none of which go near this number). It covers both dominant absence
+patterns, a night's sleep and a school or work day, so an ordinary player never
+discovers a cap exists.
 
-| group | volume | reasoning |
+The reason recorded for capping at all is protecting the returning player, not
+punishing absence: uncapped at 22%, a three-month absence returns **475 hours**
+of income (measured, printed by §6c), which is several swing tiers already
+affordable and the next week of content deleted as a welcome-back gift.
+
+Combined ceiling: 12 h × 0.22 = **2.64 hours of income**, however long the
+absence. Asserted, not just stated (§6c).
+
+**2c.** The AFK asymmetry is recorded in the same comment block, explicitly as a
+design position and not an oversight: online is uncapped and paid at full rate,
+offline is capped and discounted; a player who leaves the game running keeps
+earning 100% forever while a player who logs out earns 22% for at most twelve
+hours. The comment says why making them consistent in either direction would
+delete the reason to stay.
+
+**2d.** Distribution is per slot **by construction rather than by a division**:
+`creditOfflineIncome` calls `OfflineIncome.creditFor(lastSeen, now, rate_i)` once
+per slot, at that slot's own rate, through the same arithmetic the total used to
+go through. Since `elapsed` depends only on the timestamps,
+`Σ elapsed·M·rate_i = elapsed·M·Σrate_i` — the per-slot credits sum to exactly
+what one call at the summed rate returns, and no special case is needed for a
+total rate of zero. `os.time()` is read **once**, before the loop, so every slot
+is credited for the identical absence.
+
+**2e.** Every guard from the previous pass kept and re-verified (§6d):
+
+| guard | result |
+|---|---|
+| nil `lastSeen` | credits 0, and is checked *not* to equal the full cap (the `lastSeen or 0` epoch bug) |
+| non-number / NaN `lastSeen` | credits 0 |
+| negative elapsed (cross-server clock skew) | clamps to 0 at 1 s, 60 s, 1 h and 10× the cap of skew |
+| failed load | guarded upstream by the `not ok` bail; source scan asserts the bail sits above both `applyLoadedData` and `creditOfflineIncome`, and the second line of defence (rate 0) is measured |
+| accrual runs after `applyLoadedData` | source scan asserts the order |
+
+**2f.** `offlineCredit` stays session-only and unpersisted, and stays **one
+figure, not ten**. It feeds one summary sentence shown once on return; a per-slot
+breakdown would need a surface to render on, and the only candidate is the pads —
+which already show that slot's whole pot, of which the offline share is an
+invisible fraction the player has no decision to make about.
+
+---
+
+## STEP 3 — THE TEN PADS
+
+**3a.** Each pad banks its own slot only. The slot is read from the pad's parent
+`Model`'s `SlotNumber` attribute at **wiring time**, once, not per touch: a pad's
+slot cannot change (the pad dies with its slime; a new slime builds a new pad),
+so re-reading it per Touched would re-derive a constant several times a step. A
+pad whose parent carries no `SlotNumber` warns and is left unwired rather than
+silently bound to nothing.
+
+**3b.** `lastCollectAt: number` → `lastCollectAtBySlot: { [number]: number }`.
+This is load-bearing, not cosmetic, and §6e measures why: **the closest two pads
+on the walking route are 0.88 s apart at 16 studs/s, against a 1.00 s debounce
+window.** A single shared timestamp would have banked the first pad of a walk and
+silently skipped the rest — the exact failure the per-slot design exists to
+avoid. The whole ten-pad walk takes 7.88 s, well under ten windows.
+
+The atomic read-zero-credit is kept and moved into `bankSlot`, which is now the
+single door from a pot into cash. §6e demonstrates independently that with the
+debounce removed entirely, the atomic zero alone still yields exactly one payout
+per pot — the two guards do not depend on each other.
+
+**3c.** Banking zero is a silent no-op: `bankSlot` returns 0 and `collectPending`
+returns before the sound. With ten pots and one walk, most pads are empty most of
+the time — that is the normal case, not an error.
+
+**3d.** Server-authoritative and owner-only, unchanged in shape: the handler
+bails unless the touching part is a descendant of **the owner's** character, so a
+player crossing a neighbour's pad banks nothing. (Six bases stand in a row with
+nothing stopping a player wandering into one, so this is a live case.) Both the
+slot and the amount are decided server-side; there is no remote in the path at
+all.
+
+**3e.** Confirmed: the `DescendantAdded` approach still handles a slime placed
+hours after join, and it is now the *only* thing that matters — the return pad
+was the only pad the initial `GetDescendants` pass ever actually found, because
+it was the only one built synchronously at join. The watch is armed before the
+load starts, which is what it has to be for the first `spawnSlimeVisual` of the
+session to be caught.
+
+---
+
+## STEP 4 — THE RETURN PAD IS GONE
+
+Removed:
+
+| thing | file |
+|---|---|
+| the `ReturnCollectPad` part and its 12 build lines | `PlayerProfile.buildBaseFolder` |
+| `RETURN_PAD_NAME` and its comment block | `PlayerProfile` |
+| its branch in `wireCollectPads`' name match | `PlayerProfile` |
+| `BaseGeometry.returnPadPlacement` (whole function) | `BaseGeometry` |
+| its two load-time asserts (on the link's Z span, and clearing the conveyor) | `BaseGeometry` |
+| the now-unused `LaunchConfig` require | `BaseGeometry` |
+| `BASE_RETURN_PAD_EDGE_MARGIN_STUDS`, `BASE_RETURN_PAD_Z_MARGIN_STUDS` and their block | `BaseConfig` (value table **and** the `BaseConfig` export type) |
+| the pad's `BillboardGui` label, its two lines, the `WaitForChild` and the fallback warning | `BaseClient.client.luau` |
+| §7g of the old verification (which asserted the pad covered the whole walk) | `dev/analysis/verify_offline.luau` |
+
+**Nothing else referenced it.** Checked by grep for `ReturnCollectPad`,
+`returnPadPlacement` and `BASE_RETURN_PAD` across `src/` and `dev/analysis/`; the
+only survivors are the comments that record the removal, and §6g asserts each
+file no longer contains its own piece.
+
+`PathConfig` stays required in `BaseGeometry` — `entranceSignPosition` still
+measures its setback from the walkway. `GroundConfig` stays required in
+`PlayerProfile` — the ten pads still use its shared top-surface finish.
+
+---
+
+## STEP 5 — UI
+
+**5a. The amount is painted ON the pad**, a `SurfaceGui` on the top face
+(`Face = Top`, `LightInfluence = 0`, `PixelsPerStud = 24` — the same three
+properties `MapBuilder`'s slot-number labels use), not a `BillboardGui` above it.
+
+`BaseConfig:231-234`'s original "no text on it, deliberately" argument was that a
+green pad already reads as "stand here" and that ten more labels per base would
+compete with the nametags and upgrade strips already hanging over these pads.
+**Half of that still holds and is exactly why this is not a BillboardGui** — a
+third floating label would stack three things in the air over every slime across
+six bases. What changed is that the pad now has something to say that the player
+cannot get anywhere else: under one pot a pad was only a place to stand and the
+HUD carried the number; under ten pots the amount waiting on *this* slime is
+per-pad information, and the walk down the row is a series of small decisions.
+
+The `BaseConfig` comment is updated to record that the decision was revisited,
+what changed, and which half of the original reasoning survived.
+
+*Rejected:* a `BillboardGui` with a `MaxDistance` clamp matching the nametags. It
+reads from further away, which is the one thing a SurfaceGui gives up — but
+"readable from across the plot" is not this label's job. The HUD total answers
+"is a trip worth it" from anywhere; the pad answers "is *this* pad worth stepping
+on" from the path beside it.
+
+**5b.** Hidden at zero — `label.Visible = amount > 0`. A row of ten "$0"s would
+turn the thing that says "there is money here" into wallpaper. The pad itself
+stays visible.
+
+**5c. The "while you were away" line moved to the HUD**, one 30 px step above the
+pending readout. There is no single pad to hang it on any more, and the credit is
+spread across ten of them — hanging it over one would be arbitrary, over all ten
+would say the same sentence ten times. Shown once on return, hidden while zero,
+and cleared by the first collect at *any* pad (the server zeroes `OfflineCredit`
+inside `bankSlot`), so nothing client-side has to time or remember it.
+
+**5d.** The HUD's pending readout is now the **total across slots** —
+`PendingIncome` is written by `publishPending` as `pendingTotal(profile)`. That
+is what makes collection a decision: the number is readable from the swing, which
+is where the player chooses between another launch and a trip.
+
+**5e.** Both `GuiObject` traps set explicitly on every new element (the HUD away
+line, the pad `TextLabel`): `BorderSizePixel = 0`, since a transparent background
+does not clear the 1 px default border, and `TextStrokeTransparency` set
+explicitly — here to **0** with a dark `TextStrokeColor3`, which is what
+`BaseConfig`'s own `BASE_COLLECT_PAD_COLOR` comment prescribed for white text
+over a bright Neon pad ("solve it on the text"). That comment is updated to note
+the readout now exists and took the advice.
+
+**5f.** Client-side only. The server writes `PendingIncome` / `PendingBySlot` /
+`OfflineCredit` when they change (once per income tick, once per collect) and
+never per frame; the client renders from attribute-changed signals. There are no
+per-frame server writes and no remote in this path.
+
+**5g. `UI_COLLECT`.** The entry's *tuning* is untouched (id still `nil`, volume
+0.45, pitch 1.0, group UI, 2 s lifetime) — its **brief was rewritten**, because
+the old one stated a firing pattern that is now false ("the return pad sits on
+the post-flight walk, so this fires on EVERY cycle — roughly every 5 to 16
+seconds"). Leaving that in the file would have been a lie in the one place
+someone shops for the asset from.
+
+**The guidance itself holds, and holds harder.** "Short decay, no tail, no
+melody, nothing that resolves; if in doubt pick the quieter, duller option" was
+written for a sound heard hundreds of times an hour; it is now a sound heard up
+to ten times in ~8 seconds and then not at all for several launches. The length
+ceiling (0.15–0.25 s) went from a preference to a requirement: at 0.88 s between
+the closest two pads, anything with a tail overlaps *itself*.
+
+**A rapid ten-in-a-row needs nothing.** No pitch step per pad, deliberately, for
+two reasons: a rising run turns ten confirmations into a melody, which is the one
+thing the entry says this sound must never become; and it would require a pitch
+argument on `SoundBroadcast.playFor`, which today carries a key and nothing else
+(the pitch lives in the registry, client-side). A run of ten is the *desired*
+read — it is the sound of a good haul and the reward for having made the trip.
+Recorded in the entry as "revisit only if a real asset in a real playtest turns
+out to machine-gun." No asset ID was added.
+
+---
+
+## STEP 6 — VERIFICATION
+
+`lune run dev/analysis/verify_offline.luau` — 84 checks, all passing, prints
+only. Everything it can require, it requires for real (`OfflineIncome`,
+`BaseConfig`, `BaseGeometry`, `PathConfig`, `LaneConfig`, `LaunchConfig`,
+`SlimeData`, `SlimeUpgrade`). What it cannot (`PlayerProfile` requires `Players`,
+`HttpService` and a DataStore-backed `PlayerStore` at module scope) is modelled
+inline **and pinned to the real file with a structural scan**, so a model that
+drifts from the code it stands in for fails the scan rather than passing quietly.
+All source scanning goes through `common.readSource` (CRLF-normalising).
+
+### 6a. Per-slot accrual
+
+**Method:** a test profile of ten different slimes at mixed levels, asserted
+first to have ten *distinct* per-slot rates (so "each grew at its own rate" is a
+real claim, not one ten equal numbers satisfy by accident). Seven deliberately
+ragged ticks (0.972–1.317 s) are run through the transcribed tick loop; each
+slot's pot is compared against `slotIncomePerSecond(i) × span` individually, and
+the ten are then summed against `RATE × span`.
+
+```
+ten pots sum to $27869.244851; one shared pot over the same 7.491 s would hold $27869.244851
+```
+
+Ten individual PASSes plus the sum. Uneven ticks are the point — the payout is
+for time that actually passed, not for the nominal interval.
+
+**No online cap:** 24 h AFK accrues $3.21e8 against an offline ceiling of
+$3.54e7 — **9.1×**, asserted as a strict inequality.
+
+### 6b. Removal banks first
+
+**Method:** the ordering is modelled (bank, then clear, then destroy), exercised
+on three cases, and then the model is pinned to the source:
+
+- manual removal of slot 4 banks $4,000 and leaves slot 5's $5,000 alone
+- devClearBase banks all ten ($55,000)
+- removing a slot with an empty pot banks nothing, silently
+
+Source scan (comments stripped first, so documentation cannot satisfy a check and
+a commented-out line cannot count as present):
+
+- exactly **one** site in the file empties a slot (both a literal and a pattern
+  count agree)
+- `bankSlot(profile, slotNumber)` appears **before** `profile.slots[slotNumber] = nil`
+  in source order
+- `devClearBase` empties through `removeToInventory`, not by hand
+- `devWipeProfile` empties through `devClearBase`
+- `sellFromInventory`'s body never mentions `profile.slots`
+- `placeFromInventory` never clears an occupied slot
+
+### 6c. Offline at 22%
+
+**Method:** per-slot `creditFor` at a fixed synthetic `now`, against the real
+module and the real constants.
+
+| away | paid for | credit (test profile) |
 |---|---|---|
-| REWARD | **0.85** | the payoff, short, at most once per cycle — should sit on top |
-| UI | **0.60** | crisp confirmations, but clicks fire constantly while a menu is open |
-| WORLD | **0.50** | mostly other people's events; scenery, not competition |
-| FLIGHT | **0.30** | the only category that runs **continuously for up to 11 s** |
+| 1 h | 1.0 h | $2.95M |
+| 12 h (the cap) | 12.0 h | **$35.4M** |
+| 24 h | 12.0 h | **$35.4M** |
+| 1 week | 12.0 h | **$35.4M** |
+| 3 months | 12.0 h | **$35.4M** |
 
-**FLIGHT at 0.30 is the number most likely to need retuning and the one with the clearest argument.**
-A rush loop mixed at one-shot level would dominate the single longest moment in the game and mask the
-landing that ends it. The collect chime and the flight loop are the two sounds that repeat most, and
-both sit well below the one-shot purchase chime — which is exactly what 5a asks for.
+Everything past 12 h returns the **identical** figure — asserted as equality
+against the first capped result, not as "approximately". 
 
-## 5b — the mute toggle
+The 12 h value is checked to equal **2.64 hours of this profile's own online
+income** (`RATE × 2.64 × 3600`), measured rather than asserted, and separately
+`12 × 0.22 = 2.64` exactly.
 
-**There is no settings system in this project, and this does not invent one.** `PlayerProfile`
-persists gameplay state; there is no client-preferences store, no settings panel, and nothing that
-survives a rejoin except the profile.
+Proportional distribution is checked at **every** one of the five absences: for
+each slot, `credit_i / total` is compared against `rate_i / RATE` to 1e-9.
 
-So the mute is **session-only**, stated rather than hidden: a player who mutes is unmuted on their
-next join. *Rejected:* adding a `muted` field to the save shape plus a remote to set it — that puts a
-client preference into the gameplay save schema and adds a write path to a profile system built last
-pass, for one boolean. If audio settings ever grow past that (per-group sliders), they want their own
-store and this becomes its first field.
+For scale, printed alongside: uncapped at 22%, a week would return 37.0 h of
+income and three months **475 h**. That is what the cap is for.
 
-**Both a keybind and a button**, matching how this codebase already works: `MUTE_TOGGLE_KEYCODE` in
-config read at one `InputBegan` site (`DevConfig.TOGGLE_KEYCODE`'s pattern), plus an on-screen 🔊/🔇
-button, because a keybind alone excludes every touch player. It continues the existing top-right
-stack (shop at y-offset 0, inventory at 54, this at 108) and carries both `GuiObject` traps —
-`BorderSizePixel = 0` and `TextStrokeTransparency = 1`.
+### 6d. Zero cases
 
-It drives the **master group only**, never the four category volumes, so unmuting restores exactly
-the authored mix rather than flattening everything to one level.
+nil, non-number, NaN, four magnitudes of future-dated `lastSeen`, a zero-rate
+slot, and a failed load's empty profile at the full cap — all credit exactly 0.
+The nil case is additionally checked *not* to equal the full cap, which is the
+`lastSeen or 0` epoch bug stated as a test. The failed-load and ordering
+guarantees are asserted structurally in 6b.
 
-## 5c — no collision with the reward scene, and `LaunchRewardScene` was not opened
+### 6e. Walking the row
 
-**Not opened.** Every reward hook is in `LaunchClient.client.luau`, which already handles all five
-reward remotes (`BoxStarted`, `BoxResult`, `ChestRevealStarted`, `SlimeRevealed`, `ResetReady`) — the
-scene module is only *called* from there. The one thing that genuinely could not be reached from
-outside was the box's own `ClickDetector`, which is why the press is played server-side (§4a).
+**Method:** the walk is simulated against the **real** pad positions from
+`BaseGeometry.collectPadPlacement`, in the order a player meets them
+(boustrophedon), with arrival times derived from the real distances at 16
+studs/s, and a realistic 7-event per-limb Touched burst at each pad. The guard
+sequence is `collectPending`'s, transcribed.
 
-**The timeline, checked against the real constants:**
+```
+the walk takes 7.88 s, 70 Touched events fired across 10 pads
+```
 
-| t | scene event | sound | length |
-|---|---|---|---|
-| 0 | box appears, camera moves in | `REWARD_BOX_APPEAR` | 0.4–0.8 s |
-| … | each press (≥ `BOX_PRESS_COOLDOWN_SECONDS` = 0.25 apart) | `REWARD_BOX_PRESS` | **0.08–0.15 s** |
-| … | each doubling | `REWARD_BOX_DOUBLE` | 0.15–0.3 s |
-| 0 | open → thrash (`BOX_THRASH_SECONDS` = 0.25) → burst (`BOX_OPEN_BURST_SECONDS` = 0.3) | `REWARD_BOX_OPEN` | **0.3–0.6 s** |
-| +0.6 | slime reveal (`REVEAL_BOX_TO_SLIME_DELAY_SECONDS` = 0.6) | `REWARD_SLIME_REVEAL` | 0.5–0.9 s |
+- all ten pots banked ($5,500 of $5,500)
+- every pad paid **exactly once** — none skipped, none twice
+- the whole walk is shorter than ten debounce windows, so a shared debounce would
+  have banked one pad and skipped nine
+- closest two pads: **0.88 s apart against a 1.00 s window** — per-slot keying is
+  load-bearing
+- with the debounce removed entirely, the atomic zero alone still yields one
+  payout
 
-**Two length ceilings are set by these constants and are recorded in the entries themselves**: the
-press must be under 0.25 s or presses overlap each other, and the open must be under 0.6 s or it is
-still ringing when the slime arrives. Nothing plays during the camera move itself except the box
-appearing, which is what the camera is moving toward.
+### 6f. Nothing sums pending into spendable cash
+
+The previous pass's source-level check, re-run against the new shape:
+
+- `upgradeSlime` gates on `profile.money < cost` and never reads `pendingBySlot`
+  or `pendingTotal`
+- `buyNextTier` gates on `profile.money < price`, same
+- no `spendableMoney` helper exists
+- **exactly one** site moves a pot into cash (`bankSlot`) — the needle changed
+  with the shape, the property did not
+- `bankSlot` zeroes the pot inside the same yield-free stretch that credits the
+  cash
+
+### 6g. Cycle time unchanged
+
+The launch loop gained **no term at all**, and could not have: collection left
+the loop entirely rather than being added to it.
+
+- the post-flight walk is still 0.25 s (4 studs at 16 studs/s) — asserted;
+  removing the return pad did not move where the player lands or where auto-mount
+  takes them, since the pad was scenery on a walk defined by
+  `SWING_RETURN_CLEARANCE_STUDS` and `SWING_MOUNT_RADIUS_STUDS`
+- `LaunchServer.server.luau` never mentions `pendingBySlot`, `collectPending`,
+  `bankSlot`, `PendingIncome` or `CollectPad` — five asserted absences; the
+  launch loop and collection do not touch
+- each file that built, placed or labelled the return pad is asserted to no
+  longer contain its own piece of it
+
+Cycle times are therefore exactly as the previous pass left them: **5.45 s at
+tier 1, 15.80 s at tier 10** (perfect play).
+
+### 6h. What the trip costs
+
+The trip is 19.54 s (312.6 studs at 16 studs/s). Amortised — the player launches
+N times, then makes one trip:
+
+| launches per trip | cost at tier 1 | cost at tier 10 |
+|---|---|---|
+| 5 | 71.7% | 24.7% |
+| 10 | **35.8%** | **12.4%** |
+| 20 | 17.9% | 6.2% |
+
+**Reading it.** The prompt's amortisation estimate (~15% at eight-to-ten
+launches) lands between the two columns and is closest to the tier-10 figure. The
+tier-1 column is the pessimistic end and is also the least real: a tier-1 player
+has one or two slimes, a tiny pot, and no reason to walk at all — the trip is
+priced against a cycle so short (5.45 s) that *anything* costs a lot of it. By
+tier 10 the same trip is 12% at ten launches, and a tier-10 player is the one
+with ten slimes and a pot worth walking for.
+
+The direction that matters is the shape: cost falls linearly with launches
+between trips, and the player sets that number. Ten pots visibly filling at
+different rates, with a total on the HUD, is what turns "when do I walk?" into a
+decision they can actually make. At 36% (worst case, tier 1) it is a real cost;
+at 12% it is close to free. Nobody is forced to either end.
 
 ---
 
-# 6. Verification
+## WHERE I CHOSE
 
-`lune run dev/analysis/verify_sound.luau` — **VERIFY PASSED, 30 checks.**
+| choice | rejected alternative |
+|---|---|
+| per-slot pending replicated as one JSON attribute (`PendingBySlot`), matching `Slots`/`Inventory` | an attribute on each `CollectPad` part — cheaper to read, but ten writes per tick instead of one, and no value can exist before its pad does |
+| offline credited by calling `creditFor` once per slot at that slot's rate | one call at the total rate, then divided by rate share — same result, but a second formula to keep in step and a zero-rate special case |
+| `bankSlot` as the single door from any pot into cash | banking inline at each call site — three atomic sequences to keep identical, and §6f's "exactly one site" check would have nothing to count |
+| pad slot bound once at wiring time from the parent Model's `SlotNumber` | re-reading the attribute per Touched — re-deriving a constant several times per step |
+| legacy single pot distributed by rate; the no-slimes case parked on slot 1 for the orphan pass to bank | adding to `money` directly — would have created a second route into cash |
+| the "while you were away" line on the HUD | on one arbitrary pad (which one?), or on all ten (the same sentence ten times) |
+| `SurfaceGui` on the pad's top face | `BillboardGui` above it — reads further away, but stacks a third label in the air over every slime |
+| `UI_COLLECT` left exactly as tuned, brief rewritten | a pitch step per pad — turns ten confirmations into a melody, and needs a pitch argument on `playFor` that does not exist |
 
-Its header states the boundary first: this checks **structure**, not sound. It cannot verify that any
-asset is appropriate, audible or correctly mixed — those need ears and a filled-in registry.
+## WHAT I DID NOT TOUCH
 
-**6a — every id nil, and the game runs with zero audio errors.** Method: load the real `SoundConfig`
-through the shim (which runs its load-time asserts), then check all 23 `id` fields. *How this was
-tested without playtesting:* three independent layers — `rojo build` parses the whole tree after
-every step (syntax); the shim loads the real `SoundConfig` and `SoundPlayer` and calls into them
-(runtime, for the nil path); and every call site is a bare added statement beside a decision already
-made, verified by the additive-only diff check below.
-
-```
-SoundConfig loaded: 23 entries across 4 groups
-[PASS] all 23 entries have id = nil
-```
-
-**6b — no `Instance.new("Sound")` outside `SoundPlayer`.** Quoted in §1c. 54 files scanned, 0
-offenders, 6 sites inside the allowed module.
-
-**6c — the flight loop's teardown.** Method: read the real client source for the call count and the
-three contexts.
-
-```
-[PASS] stopFlightWind appears 5 times (1 definition + 4 call sites); found 5
-[PASS] teardown context present: resetFlightState -- every cancellation via clearActiveRider's resetReadyRemote
-[PASS] teardown context present: setGrounded -- the catch-all every route back to neutral funnels through
-[PASS] teardown context present: the landing frame -- an ordinary landing, which cannot wait for ResetReady
-[PASS] teardown context present: FlightStarted -- the defensive stop before starting a new loop
-[PASS] stopLoop(nil) is a safe no-op, and is safe to call repeatedly
-```
-
-The four exit paths walked: **normal landing** → the `u >= 1` branch, line 1610. **Death** →
-`clearActiveRider` → `resetReadyRemote` → `resetFlightState`, line 535. **Disconnect** → same, guarded
-on `player.Parent` server-side. **Mid-flight dismount/cancellation** → same. Plus `setGrounded` under
-all of them.
-
-**6d — reach per world sound.** Table in §2c. Every entry checked against the 3,212-stud
-deepest-landing-to-base distance and the 3,114-stud map length, both re-derived from the real config
-rather than quoted. Plus a check that `SoundPlayer` forces `RollOffMode.Linear`, without which none
-of the distances would be a real cutoff.
-
-**6e — warned once per key.** Method: call the real `SoundPlayer` 100 times across two keys — one
-that does not exist, one that exists with a nil id — and count.
-
-```
-100 calls across 2 keys (50 each): warned keys went 0 -> 2
-[PASS] 100 calls with a bad key and an unfilled key raised no error
-[PASS] exactly 2 new warnings for 2 distinct keys over 100 calls; got 2
-[PASS] 25 further calls with an already-warned key add no warnings at all
-[PASS] play2D returns nil for an unknown key
-[PASS] play2D returns nil for an entry whose id is still unset
-[PASS] startLoop returns nil for an unfilled entry, which stopLoop then accepts
-```
-
-**Additive-only.** A `git diff --numstat` against `2d28d1d` confirms every pre-existing file this
-pass touched **gained lines and lost none** — a sound call is additive; a changed condition or a
-moved call would not be. This is the mechanised form of "no gameplay behaviour changes at all".
-
-## Two real bugs the tests found
-
-Both were found by writing the checks, not by reasoning, and both are fixed in `7791d17`.
-
-1. **`dev/rbxshim.luau` never provided `warn`.** It is a Roblox global, and several real modules call
-   it — `PlayerProfile`'s load-failure path, `BaseClient`'s missing-base warning, `SoundPlayer`'s
-   warn-once. Any analysis script that reached one of those lines died on *"attempt to call a nil
-   value"*. Now routed to `print` with a `[warn]` prefix, which is also what lets a test observe
-   warnings at all.
-
-2. **The working tree is CRLF, so every source-scanning needle written with `\n` silently matched
-   nothing.** This already affected the *previous* pass: `verify_offline.luau`'s `bodyOf()`
-   terminator `"\nend\n"` never matched, so it scanned to end-of-file instead of to the end of the
-   function. It passed either way — overshooting only made it stricter — but it was passing for the
-   wrong reason. Source reads now go through a new `common.readSource`, which normalises line
-   endings, so any future structural check gets it right by default. `verify_offline` re-runs and
-   still passes with the terminator now actually working.
-
-I also corrected two of my own claims: `stopFlightWind` has four call sites, not three; and a
-120-stud launch reaches **three** lanes, not five — under Linear rolloff a listener exactly at
-`RollOffMaxDistance` hears silence, so the boundary lane does not count.
-
----
-
-# 6f. THE REGISTRY — the shopping table
-
-**All 23 ids are nil.** Fill any `id` in `SoundConfig.SOUNDS` and it starts playing everywhere it is
-already wired, with no code change. Each entry's own comment in `SoundConfig.luau` carries this same
-guidance in full.
-
-### UI — 2D, own client only
-
-| entry | vol | length | character |
-|---|---|---|---|
-| `UI_BUTTON_CLICK` | 0.35 | **0.05–0.12 s** | Soft, neutral, non-musical click. Fires more than anything else in the game — must have **no pitch identity**; anything melodic becomes maddening. |
-| `UI_PURCHASE_SUCCESS` | 0.70 | 0.4–0.8 s | Ascending 2–3 note confirmation. Warm, not triumphant — must not compete with the reveal. |
-| `UI_ACTION_DENIED` | 0.50 | 0.15–0.3 s | Short, low, soft "no". Dull thud or descending two-note. **Not** harsh or buzzer-like — players hit this constantly while saving up. |
-| `UI_INVENTORY_ACTION` | 0.55 | 0.2–0.4 s | Soft organic "plop" — something physical set down. Slimes are the subject, so wet/squishy beats a UI beep. Covers place, remove and sell. |
-| `UI_COLLECT` | 0.45 | **0.15–0.25 s** | Single soft coin/register ding. **Fires every cycle, hundreds of times an hour.** Short decay, no tail, no melody. If in doubt pick the quieter, duller option. |
-
-### FLIGHT — 2D, flying player only
-
-| entry | vol | length | character |
-|---|---|---|---|
-| `FLIGHT_WIND_LOOP` | 1.00 | **2–4 s, seamless loop** | Broadband wind/air rush. Steady, no melody, no pitch centre. Pitched live 0.85–1.30× — pick **noise, not a tone**. No gust or flutter: any recognisable event gives away the loop point, which repeats 3–5× at tier 10. |
-| `FLIGHT_RELEASE` | 0.80 | 0.3–0.6 s | Sharp upward whoosh. The most physical moment in the game; should feel like effort released. Must decay before the loop establishes. |
-| `FLIGHT_SWEET_SPOT_ENTER` | 0.40 | **0.04–0.08 s** | Single dry tick or rimshot. Marks an **edge** — not a tone, emphatically not a rising sweep. Repeats every 2.4 s while anyone rides, so it must be tiny. |
-
-### WORLD — 3D, heard by nearby players
-
-| entry | vol | rolloff | length | character |
-|---|---|---|---|---|
-| `WORLD_LANDING_ROAD` | 0.90 | 15–250 | 0.3–0.5 s | Solid, weighty impact. Dust and body, not a crash. Reads as *arriving*. |
-| `WORLD_LANDING_SHORT` | 0.80 | 15–250 | 0.3–0.5 s | Duller, flatter, no ring. A soft flop into dirt. Recognisably worse without being a punishment. |
-| `WORLD_LANDING_PAST` | 1.00 | 20–250 | 0.6–1.2 s | Triumphant arrival — impact with a bright ascending tail or shimmer. Unmistakably the good one within a tenth of a second. |
-| `WORLD_LAUNCH_RELEASE` | 0.70 | 10–120 | 0.3–0.5 s | Rope and timber under load, then release. Mechanical and woody — the air is the flyer's sound, this is the apparatus. |
-| `WORLD_SWING_MOUNT` | 0.40 | 10–120 | 0.15–0.3 s | Light creak and settle; weight arriving on a seat. Very quiet — fires every cycle for every player, so it is texture. |
-| `WORLD_CHEST_OPEN` | 1.00 | 20–150 | 0.8–1.5 s | Heavy wooden lid with metal fittings, hinges under strain, then a bright magical bloom. **Two-part: mechanism, then payoff.** The sound the whole ladder exists to reach. |
-| `WORLD_CONVEYOR_LOOP` | 0.35 | 8–40 | **2–5 s, seamless loop** | Low mechanical rumble with faint roller texture. **No squeak, no rhythmic clank** — this is the only always-on sound in the game and anything periodic will drive players mad. |
-
-### REWARD — 2D, rewarded player only
-
-| entry | vol | length | character |
-|---|---|---|---|
-| `REWARD_BOX_APPEAR` | 0.80 | 0.4–0.8 s | Magical appear — shimmer with a soft impact under it. Anticipatory; asks the question the press answers. |
-| `REWARD_BOX_PRESS` | 0.60 | **0.08–0.15 s** | Dull thump, knuckles on a crate. Deliberately unrewarding — the reward is the doubling that may follow. Must be under the 0.25 s press cooldown. |
-| `REWARD_BOX_DOUBLE` | 0.75 | 0.15–0.3 s | Bright rising "ching" or arpeggio step. **Transposed up to an octave by the chain**, so it needs a clear pitch centre — a bell or pluck, not noise. The game's escalation sound. |
-| `REWARD_BOX_OPEN` | 0.90 | **0.3–0.6 s** | Crack and burst — something breaking open and scattering. Decisive. Must be clear of the 0.6 s reveal delay. |
-| `REWARD_SLIME_REVEAL` | 0.80 | 0.5–0.9 s | Soft organic rise with a bright bloom. **Pitched 0.90–1.15 by tier**, so avoid strong formants or a recognisable instrument that will sound obviously slowed. |
-| `REWARD_SLIME_REVEAL_RARE` | 0.95 | 1.0–2.0 s | Fanfare or choral swell, unashamedly celebratory. Layered on tiers 6–8. The sound a player should recognise before reading the name. |
-| `REWARD_SLIME_NEW` | 0.70 | 0.4–0.8 s | Short discovery sting, distinct from the rarity fanfare — both can fire together on a first Divine. Keep it thin and high so it sits **on top**. |
-| `REWARD_CHEST_REVEAL` | 1.00 | 1.5–2.5 s | Grand ascending swell — the biggest sound in the file. Plays over `WORLD_CHEST_OPEN`, so occupy a different register: that one is wood and metal, this is light and air. |
-
----
-
-# 7. Deliberately left silent
-
-Per the brief's "if a moment would be better silent, say so":
-
-- **The income tick.** Fires every second, per player, forever. It would be the single most grating
-  sound possible, and the pot already has a visible readout.
-- **Dismount.** The inverse of mounting, but rare and deliberate, and `WORLD_SWING_MOUNT` already
-  covers seat transitions. A second creak would double the swing-area noise for no new information.
-- **Reveal dismiss / click-to-return.** The reveal has already resolved audibly; a chime for
-  *closing* it would be a sound for ending a sound.
-- **Death and respawn.** There is no combat and death is not a designed state here; it is an
-  interruption, and interruptions should not be celebrated or stung.
-- **A continuous bar-sweep tone** — see §3c. The edge tick replaces it deliberately.
-- **A `LaunchRewardScene`-internal press hook** — not silent, but moved server-side rather than
-  reached by opening that file. See §4a.
-
----
-
-# 8. What I did not touch
-
-Per MUST NOT CHANGE, verified: `SlimeRoll.luau`, the income tables, weight ratios, luck constants and
-spreads — not opened. The chest table, the ladder, every price, the upgrade curve, `SLOT_COUNT` —
-untouched; `verify_ladder.luau` re-run and **PASSED**. The flight formulas including the tier-keyed
-duration, the arch, the ping compensation and the sweet-spot constants — untouched; the flight sound
-*reads* the trajectory's derivative and writes nothing back. The collect system from last pass — the
-pot, the accrual, the pads, the debounce — untouched; `verify_offline.luau` re-run and **PASSED**.
-**`LaunchRewardScene.luau` — not opened.** Every file in `dev/out/` — nothing regenerated, nothing
-edited.
-
-**No gameplay behaviour changed.** Every call added is a bare notification placed beside a decision
-already made, and the additive-only diff check in §6 is the mechanised proof: every pre-existing file
-touched gained lines and lost none. No sound required moving or re-timing anything — nothing to
-report under that heading.
-
-No gamepass, no doubling reward, no group-join button, no monetisation. The levelling-discovery
-problem is untouched. `start_playtest`/`stop_playtest` were never called.
+`SlimeRoll.luau`, the income tables, weight ratios, luck constants and spreads;
+the chest table, the ladder, every price, the upgrade curve, `SLOT_COUNT`; the
+flight formulas including the tier-keyed duration, the arch, ping compensation
+and the sweet-spot constants; `PlayerStore.luau`'s session logic;
+`LaunchRewardScene.luau` (not opened); every `nil` asset ID in the sound
+registry; every file in `dev/out/`. The ten pads' positions, sizes, colours and
+their construction inside `spawnSlimeVisual` are byte-for-byte unchanged — the
+wiring reads a `SlotNumber` that was already there, and the `SurfaceGui` is built
+client-side, in `BaseClient`, onto a pad it did not create.
