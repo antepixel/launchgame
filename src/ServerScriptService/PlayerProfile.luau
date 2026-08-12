@@ -23,6 +23,12 @@ local GroundConfig = require(ReplicatedStorage.Config.GroundConfig)
 local InventoryConfig = require(ReplicatedStorage.Config.InventoryConfig)
 local LaneConfig = require(ReplicatedStorage.Config.LaneConfig)
 local LaunchConfig = require(ReplicatedStorage.Config.LaunchConfig)
+-- For the leaderboard's Money and $/s columns. THE SHARED formatter, not a
+-- local copy like formatIncomePerSecond below: the leaderboard's Money column
+-- and the HUD's money readout are two views of the same number, and MoneyFormat
+-- exists precisely so those cannot render it differently (see its own header,
+-- which makes the same argument about the HUD and the shop's prices).
+local MoneyFormat = require(ReplicatedStorage.Config.MoneyFormat)
 local OfflineIncome = require(ReplicatedStorage.Config.OfflineIncome)
 local PersistenceConfig = require(ReplicatedStorage.Config.PersistenceConfig)
 local ShopConfig = require(ReplicatedStorage.Config.ShopConfig)
@@ -42,6 +48,19 @@ local PlayerProfile = {}
 type Profile = {
 	baseIndex: number,
 	baseFolder: Folder,
+	-- ===== THE ROBLOX LEADERBOARD (see REPORT.md). Carried on the profile the
+	-- same way baseFolder is, and for the same reason: every function here
+	-- already has a profile in hand, so a refresh needs no reverse lookup from
+	-- Player and no second registry to keep in step. The three Value instances
+	-- are held directly rather than found by name on each refresh -- FindFirstChild
+	-- on a three-child folder is cheap, but these never move and never change
+	-- identity, so looking them up repeatedly would be re-deriving a constant.
+	leaderstats: {
+		folder: Folder,
+		swing: IntValue,
+		money: StringValue,
+		rate: StringValue,
+	},
 	money: number,
 	-- ===== THE PENDING POTS: income earned but not yet banked, ONE POT PER
 	-- SLOT -- slot number -> dollars, missing = nothing pending. Every second of
@@ -304,6 +323,83 @@ local function buildBaseFolder(player: Player, baseIndex: number): Folder
 	folder:SetAttribute("SwingTier", 1)
 	folder:SetAttribute("SaveDisabled", false)
 	return folder
+end
+
+-- ===== THE ROBLOX LEADERBOARD (see REPORT.md). Three columns -- Swing, Money,
+-- $/s -- on the built-in player list, which costs no UI work, is always
+-- visible, and makes six players' numbers visible to each other. It is also the
+-- ONLY place in the game that shows a player their own total income per second:
+-- the HUD shows banked money, the current tier and the pending pot's total, and
+-- nothing anywhere showed a rate.
+--
+-- PARENTED TO THE PLAYER, named exactly "leaderstats" -- both are Roblox
+-- requirements, not choices: the engine looks for a child of the Player with
+-- that exact name and renders its Value children as columns. Built here rather
+-- than in a separate script for the same reason the base folder is built here:
+-- this module is the single owner of all per-player state, and a second script
+-- writing to the same player would need its own copy of the profile lookup.
+--
+-- COLUMN ORDER IS PARENT ORDER. Roblox's player list shows the values in the
+-- order they were parented into the folder, so Swing, Money, $/s below is the
+-- order they appear left to right.
+--
+-- ===== WHY MONEY AND $/s ARE StringValues, AND WHAT IT COSTS.
+--
+-- An IntValue is a signed 32-bit integer and caps at 2,147,483,647 -- which
+-- MoneyFormat renders as "$2.1B". The top swing tier costs $800B, i.e. 373x
+-- that cap, and a fully levelled ceiling base earns $244.5M/s and would blow
+-- through it in under ten seconds of holding. An integer column would therefore
+-- overflow well inside ordinary play, not at some theoretical extreme. A
+-- NumberValue (double) would hold the magnitude but renders as raw
+-- "8.0000000000e+11" in the player list, which is worse than useless.
+--
+-- THE COST, STATED PLAINLY SO NOBODY "FIXES" IT LATER: Roblox sorts StringValue
+-- columns ALPHABETICALLY, not numerically. So "$9.1M" sorts above "$800B", and
+-- the Money and $/s columns are therefore NOT a ranking -- they are readouts
+-- that happen to sit next to each other. This is accepted deliberately. The
+-- alternative is a custom scoreboard GUI: a ScreenGui, a sorted list, per-player
+-- rows, a refresh path, and six rows of layout to maintain -- a great deal of UI
+-- for the gain of one column sorting properly. If a real ranking is ever wanted,
+-- build the custom board; do NOT convert these to IntValues, which would trade
+-- a cosmetic sort problem for silently wrong numbers.
+--
+-- Swing IS an IntValue, and that is exactly why: the tier is 1-10, reads
+-- naturally as a bare number, and sorts numerically -- so the one column where
+-- ranking is meaningful and possible gets it.
+local function buildLeaderstats(player: Player)
+	local folder = Instance.new("Folder")
+	folder.Name = "leaderstats"
+
+	local swing = Instance.new("IntValue")
+	swing.Name = "Swing"
+	-- 1, not 0: every profile starts on tier 1 (see the Profile literal in
+	-- onPlayerAdded and buildBaseFolder's own SwingTier attribute), so this is
+	-- the true value for a brand-new player rather than a placeholder that has
+	-- to be corrected. See refreshLeaderstats on the load window.
+	swing.Value = 1
+	swing.Parent = folder
+
+	local money = Instance.new("StringValue")
+	money.Name = "Money"
+	money.Value = MoneyFormat.format(0)
+	money.Parent = folder
+
+	local rate = Instance.new("StringValue")
+	-- The column HEADER carries the unit, so the value is a bare money figure --
+	-- "$5.4K" under a "$/s" header reads as "$5.4K per second". Appending "/s"
+	-- to the value as well (PlayerProfile's own formatIncomePerSecond does, for
+	-- the on-slime nametag, which has no header to carry it) would render
+	-- "$5.4K/s" under "$/s".
+	rate.Name = "$/s"
+	rate.Value = MoneyFormat.format(0)
+	rate.Parent = folder
+
+	-- Parented LAST, once all three children exist, so the engine can never see
+	-- a half-populated leaderstats folder -- the same ordering guarantee
+	-- SoundBroadcast's remotes folder and buildBaseFolder's own attributes are
+	-- built with.
+	folder.Parent = player
+	return { folder = folder, swing = swing, money = money, rate = rate }
 end
 
 -- Matches BaseClient.client.luau's money formatter (itself matching
@@ -678,6 +774,45 @@ local function totalIncomePerSecond(profile: Profile): number
 	return total
 end
 
+-- ===== THE LEADERBOARD'S ONE WRITER (see REPORT.md STEP 1e). Every path that
+-- can change a tier, a balance or an income rate calls THIS -- there is no
+-- second update path, and the three columns are always written together from
+-- one read of the profile, so they cannot drift out of step with each other
+-- even for a frame.
+--
+-- TAKES THE PROFILE ALONE, not (player, profile). Everything it needs is on the
+-- profile, including the Value instances themselves -- and two of its callers,
+-- bankSlot and applyLoadedData, have no Player in scope at all. Requiring one
+-- would have meant either threading a player argument through the collect path
+-- or a reverse lookup from the profiles table, for no gain.
+--
+-- $/s IS totalIncomePerSecond, THE SAME FUNCTION the income tick and the
+-- offline accrual read (through slotIncomePerSecond), never a re-derivation.
+-- That is the whole point: a leaderboard showing a rate that disagrees with the
+-- rate actually being paid would be lying about the one thing it exists to
+-- display, and the only way to guarantee it cannot is to have one expression.
+--
+-- WRITES ONLY ON A REAL CHANGE. Assigning a Value its current value is not free
+-- -- it fires Changed and replicates -- and this is called from several sites
+-- that often fire together (an upgrade changes money AND the rate; a removal
+-- banks a pot and then clears a slot). The three comparisons make a redundant
+-- call provably free, which is what lets callers be added liberally rather than
+-- carefully.
+local function refreshLeaderstats(profile: Profile)
+	local stats = profile.leaderstats
+	if stats.swing.Value ~= profile.swingTier then
+		stats.swing.Value = profile.swingTier
+	end
+	local moneyText = MoneyFormat.format(profile.money)
+	if stats.money.Value ~= moneyText then
+		stats.money.Value = moneyText
+	end
+	local rateText = MoneyFormat.format(totalIncomePerSecond(profile))
+	if stats.rate.Value ~= rateText then
+		stats.rate.Value = rateText
+	end
+end
+
 -- The sum of every slot's pot -- what the HUD shows, and the number that tells
 -- a player at the swing whether the walk is worth making.
 local function pendingTotal(profile: Profile): number
@@ -749,6 +884,11 @@ local function bankSlot(profile: Profile, slotNumber: number): number
 	-- served its purpose, whichever pad it happened at.
 	profile.offlineCredit = 0
 	publishPending(profile)
+	-- LAST, after the pot has already moved and been published. Deliberately
+	-- below the atomic stretch rather than inside it: this is a pure read of
+	-- state that is already final, it cannot yield, and putting it here means the
+	-- payout's own no-yield guarantee is untouched by it.
+	refreshLeaderstats(profile)
 	return amount
 end
 
@@ -1276,10 +1416,26 @@ local function onPlayerAdded(player: Player)
 		return
 	end
 	local baseFolder = buildBaseFolder(player, baseIndex)
+	-- ===== BUILT BEFORE THE LOAD, NOT AFTER IT (see REPORT.md STEP 1f), and
+	-- that is safe because its three starting values are not placeholders -- they
+	-- are the true values of a brand-new profile: tier 1, $0, $0/s. The profile
+	-- literal directly below starts at exactly those, so nothing wrong is on
+	-- screen during the DataStore read; the leaderboard simply shows a fresh
+	-- player until the load says otherwise, and refreshLeaderstats corrects it at
+	-- the bottom of the load.
+	--
+	-- The rejected alternative was building it after the load resolves. It would
+	-- have left the player with no leaderboard row at all for the length of a
+	-- DataStore read (and its retries), and -- worse -- a FAILED load returns
+	-- early, so a player whose load failed would have had no leaderboard for the
+	-- whole session. Those sessions play on a blank profile, for which 1/$0/$0 is
+	-- the correct display anyway.
+	local leaderstats = buildLeaderstats(player)
 
 	local profile: Profile = {
 		baseIndex = baseIndex,
 		baseFolder = baseFolder,
+		leaderstats = leaderstats,
 		money = 0,
 		pendingBySlot = {},
 		offlineCredit = 0,
@@ -1366,6 +1522,13 @@ local function onPlayerAdded(player: Player)
 			end
 		end
 		syncClientState(profile)
+		-- LAST, after every piece of the load has landed -- money, tier, slots
+		-- and levels are all final by this line, so one call publishes all three
+		-- columns correctly. Placing it beside the Money/SwingTier attribute
+		-- writes further up would have published a correct tier and balance
+		-- against a still-empty slot table, i.e. a $/s of zero, and then left it
+		-- there until the player's next purchase.
+		refreshLeaderstats(profile)
 	end)
 end
 
@@ -1440,6 +1603,12 @@ function PlayerProfile.recordChestOpened(player: Player)
 	profile.chestsOpened += 1
 	refreshSignCrown(profile)
 	syncClientState(profile)
+	-- Nothing on the leaderboard changes here (a chest count is not a column),
+	-- and refreshLeaderstats writes nothing when nothing differs. It is called
+	-- anyway so the rule is exceptionless -- EVERY syncClientState call site is
+	-- followed by one -- which is what dev/analysis/verify_leaderstats.luau
+	-- checks. A rule with one documented exception is a rule nobody can verify.
+	refreshLeaderstats(profile)
 end
 
 function PlayerProfile.recordSeen(player: Player, globalIndex: number): boolean
@@ -1472,11 +1641,16 @@ function PlayerProfile.receiveSlime(player: Player, slime: SlimeData.Slime): boo
 			profile.levels[i] = 1
 			spawnSlimeVisual(profile, i, slime, 1)
 			syncClientState(profile)
+			-- A slime just started earning: $/s moves.
+			refreshLeaderstats(profile)
 			return true
 		end
 	end
 	profile.inventory[slime.globalIndex] = (profile.inventory[slime.globalIndex] or 0) + 1
 	syncClientState(profile)
+	-- The base was full, so this went to inventory and NOTHING changed -- an
+	-- unplaced slime earns nothing. Called for the exceptionless rule above.
+	refreshLeaderstats(profile)
 	return false
 end
 
@@ -1519,6 +1693,8 @@ function PlayerProfile.placeFromInventory(player: Player, globalIndex: number): 
 				profile.inventory[globalIndex] = owned - 1
 			end
 			syncClientState(profile)
+			-- A slime just started earning: $/s moves.
+			refreshLeaderstats(profile)
 			return true, nil
 		end
 	end
@@ -1572,6 +1748,11 @@ function PlayerProfile.removeToInventory(player: Player, slotNumber: number): (b
 	end
 	profile.inventory[globalIndex] = (profile.inventory[globalIndex] or 0) + 1
 	syncClientState(profile)
+	-- BOTH columns move here, which is why this call is not redundant with the
+	-- one bankSlot already made a few lines above: that one published the banked
+	-- money while the slot was still occupied and still earning. This one
+	-- publishes the rate AFTER the slot was cleared.
+	refreshLeaderstats(profile)
 	return true, nil
 end
 
@@ -1610,6 +1791,9 @@ function PlayerProfile.sellFromInventory(player: Player, globalIndex: number, qu
 	profile.money += proceeds
 	profile.baseFolder:SetAttribute("Money", profile.money)
 	syncClientState(profile)
+	-- Money only: selling reads and decrements INVENTORY, never slots, so the
+	-- rate cannot move here (see this function's own header).
+	refreshLeaderstats(profile)
 	return true, nil
 end
 
@@ -1700,6 +1884,11 @@ function PlayerProfile.upgradeSlime(player: Player, slotNumber: number, count: n
 	profile.baseFolder:SetAttribute("Money", profile.money)
 	refreshSlimeVisualLabel(profile, slotNumber)
 	syncClientState(profile)
+	-- THE ONE MOST LIKELY TO BE MISSED (see REPORT.md STEP 3c): an upgrade moves
+	-- money AND the income rate, and a leaderboard wired only to money changes
+	-- would show the new balance beside a stale $/s -- which is precisely the
+	-- number this column exists to make visible.
+	refreshLeaderstats(profile)
 	return true, nil, buyCount
 end
 
@@ -1771,6 +1960,11 @@ function PlayerProfile.buyNextTier(player: Player): (boolean, string?)
 	profile.swingTier = nextTier
 	profile.baseFolder:SetAttribute("Money", profile.money)
 	profile.baseFolder:SetAttribute("SwingTier", profile.swingTier)
+	-- Swing AND Money both move. Note this function does NOT call
+	-- syncClientState (it touches neither slots nor inventory), so this is one of
+	-- the sites the "every syncClientState is followed by a refresh" rule does
+	-- not reach -- it needs its own call.
+	refreshLeaderstats(profile)
 	return true, nil
 end
 
@@ -1922,6 +2116,7 @@ function PlayerProfile.devSetMoney(player: Player, amount: number)
 	end
 	profile.money = math.max(0, amount)
 	profile.baseFolder:SetAttribute("Money", profile.money)
+	refreshLeaderstats(profile)
 end
 
 -- Adds a (possibly negative) delta to money, clamped to >= 0 -- covers the
@@ -1933,6 +2128,7 @@ function PlayerProfile.devAddMoney(player: Player, delta: number)
 	end
 	profile.money = math.max(0, profile.money + delta)
 	profile.baseFolder:SetAttribute("Money", profile.money)
+	refreshLeaderstats(profile)
 end
 
 -- Empties every slot in this player's base -- routed through the SAME
@@ -1991,6 +2187,9 @@ function PlayerProfile.devWipeProfile(player: Player)
 	profile.swingTier = 1
 	profile.baseFolder:SetAttribute("SwingTier", 1)
 	syncClientState(profile)
+	-- All three columns at once: devClearBase emptied every slot (rate -> 0),
+	-- money was zeroed, and the tier was reset.
+	refreshLeaderstats(profile)
 	if profile.canSave then
 		PlayerStore.save(player.UserId, toSaveShape(profile), false)
 	end
@@ -2009,6 +2208,7 @@ function PlayerProfile.devSetSwingTier(player: Player, tier: number)
 	local tierCount = #LaunchConfig.SWING_TIER_DISTANCE_SCALE
 	profile.swingTier = math.clamp(math.floor(tier), 1, tierCount)
 	profile.baseFolder:SetAttribute("SwingTier", profile.swingTier)
+	refreshLeaderstats(profile)
 end
 
 -- Sets the level of the slime PLACED in slot `slotNumber` directly, bypassing
@@ -2030,6 +2230,8 @@ function PlayerProfile.devSetSlimeLevel(player: Player, slotNumber: number, leve
 	profile.levels[slotNumber] = SlimeUpgrade.clampLevel(level)
 	refreshSlimeVisualLabel(profile, slotNumber)
 	syncClientState(profile)
+	-- A level change is a rate change, same as a real upgrade.
+	refreshLeaderstats(profile)
 end
 -- ===== END DEV PANEL SUPPORT =====
 
