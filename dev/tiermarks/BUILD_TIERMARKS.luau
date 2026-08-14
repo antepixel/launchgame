@@ -465,8 +465,15 @@ local function run()
 	end
 	assert(sample, "[TierMarks] no slime body found in T1_Common")
 
-	local existing = workspace:FindFirstChild(CONFIG.ROOT_NAME)
-	if existing then existing:Destroy() end
+	-- REMOVE EVERY FOLDER OF THAT NAME, not just the first. FindFirstChild
+	-- returns ONE match, so a self-clean built on it cannot remove a duplicate
+	-- -- and once two exist, each run destroys one and adds one, so the pair
+	-- survives forever and every slime silently carries two stacked Mark parts.
+	-- That is exactly what happened: the workspace was found holding two
+	-- TierMarks folders, 24 marks each, 2 per slime.
+	for _, c in ipairs(workspace:GetChildren()) do
+		if c.Name == CONFIG.ROOT_NAME then c:Destroy() end
+	end
 
 	local P = buildProfile(sample :: BasePart)
 	local G = makeGenerator(P)
