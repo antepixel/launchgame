@@ -195,6 +195,35 @@ do
 		string.format("%d yields over 100k empty ticks (%.1f ms worst)", Y.yields(), Y.worstMs()))
 end
 
+print("\n=== 8. mark() keeps an internally-yielding call off the hold figure ===")
+do
+	-- The first real Studio run aborted a finished 8.7-minute build on a 'hold'
+	-- that was actually CreateEditableMeshAsync yielding. os.clock() measures wall
+	-- time and cannot tell a blocked thread from a parked one, so any span that
+	-- yields internally must be marked. This is that fix, pinned.
+	local Y = newYielder(12)
+	Y.tick()
+	local t = os.clock()
+	while os.clock() - t < 0.150 do end   -- stand-in for an Async engine call
+	Y.mark("after-async")
+	Y.tick()
+	Y.close()
+	check("a marked span is not charged as a stall", Y.worstMs() < 100,
+		string.format("worst %.1f ms in '%s' after marking a 150 ms span", Y.worstMs(), Y.worstLabel()))
+end
+
+print("\n=== 9. NEGATIVE CONTROL: unmarked, the same span IS charged ===")
+do
+	local Y = newYielder(12)
+	Y.tick()
+	local t = os.clock()
+	while os.clock() - t < 0.150 do end
+	Y.tick()
+	Y.close()
+	check("an unmarked long span shows up as a hold", Y.worstMs() > 100,
+		string.format("worst %.1f ms in '%s' -- this is what aborted run 1", Y.worstMs(), Y.worstLabel()))
+end
+
 print(string.format("\n%s  (%d failure%s)", fails == 0 and "ALL PASS" or "FAILURES", fails, fails == 1 and "" or "s"))
 if fails > 0 then
 	require("@lune/process").exit(1)
