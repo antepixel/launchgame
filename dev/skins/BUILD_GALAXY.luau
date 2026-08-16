@@ -57,10 +57,47 @@
 -- whose centre lies slightly off the surface are cut nearer their rim and read
 -- dimmer, which is exactly the uneven field a real sky has.
 --
+-- THE GENERATION LOOP MUST YIELD OR STUDIO KILLS THE PLUGIN. A million texels
+-- of galaxy() is tens of seconds of straight-line work, and holding the main
+-- thread that long makes Studio raise "user_MCPPlugin.rbxmx is not responding"
+-- and offer to end the plugin. If the user takes that offer -- or Studio decides
+-- on its own -- the MCP bridge dies WITH the plugin and the whole generation is
+-- lost with no partial result. So every heavy loop yields.
+--
+-- THE YIELD IS TIME-BUDGETED, NOT EVERY-N-ROWS. A fixed row stride does not
+-- work here because cost per row is wildly uneven: rows outside the UV island
+-- are pure buffer writes, rows through a dense cloud run the full 27-cell star
+-- lattice on all 1024 texels. One stride is either useless on the cheap rows or
+-- still over budget on the expensive ones. Instead the loops check the clock at
+-- a sub-row boundary and yield once they have held the thread for YIELD_MS,
+-- which bounds the block by construction whatever the content does. The worst
+-- hold actually observed is reported on every run, so a regression shows up as
+-- a number rather than as another watchdog dialog.
+--
 -- RESOLUTION IS 1024 x 1024, AND 67% OF IT IS WASTED. Not a choice -- the UV
 -- island covers only 32.8% of the sheet, so two thirds of the memory paints
 -- nothing. Rescaling the UVs in Blender to fill 0..1 would give roughly 1.7x the
 -- linear resolution for the same 4 MB. See the report for the sizing arithmetic.
+--
+-- VERIFICATION STATUS -- READ THIS BEFORE TRUSTING THE NUMBERS ABOVE.
+-- The maths is verified OFFLINE, without Studio, by two suites that load this
+-- very file and exercise its real functions:
+--     lune run dev/analysis/verify_galaxy_core.luau     -- noise, galaxy(), yielder
+--     lune run dev/analysis/verify_galaxy_uvmap.luau    -- buildUVMap vs ground truth
+-- The second builds a synthetic UV sphere whose correct answer for every texel
+-- is known analytically, and confirms the map lands within 0.34 texels of it --
+-- with a negative control that strips the straddle lift and shows the error blow
+-- out to 325 texels, so the fix is demonstrably load-bearing rather than merely
+-- untriggered.
+--
+-- NOT YET VERIFIED IN STUDIO. This file has not been through a destroy-and-
+-- rebuild against the real slime_uv asset, so the seam/pole figures quoted above
+-- describe the intended and offline-confirmed behaviour, NOT a measurement taken
+-- from the real mesh in this state. The run asserts both properties itself, so a
+-- real build either reproduces them or stops. Outstanding checks:
+--   * straight-down screenshot at the pole -- radiating streaks means not fixed;
+--   * the OVERLAP line (see buildUVMap) -- if the u overshoot past 1.0 makes two
+--     faces claim one texel, a band of body gets colour from the wrong region.
 --
 -- REVERSAL: workspace.GalaxySkin:Destroy().
 -- ===========================================================================
@@ -87,6 +124,13 @@ local P = {
 	-- leave the dark ground dark. Neon also removes the blob but self-lights the
 	-- whole body, flattening the form. The lineup slimes are Plastic too.
 	BODY_MATERIAL = Enum.Material.Plastic,
+
+	-- ---- watchdog guard ----
+	-- Longest the generation loops may hold the main thread before yielding.
+	-- One 60 Hz frame is 16.7 ms, so 12 ms leaves headroom for the partial chunk
+	-- in flight when the budget expires and still keeps each block inside a
+	-- frame or two. See the header for why this is time-based, not row-based.
+	YIELD_MS = 12,
 
 	-- ---- the dark ground ----
 	-- Near-black with a blue-violet tint. Everything else is ADDED to this, so
@@ -161,6 +205,39 @@ local FACE_PARTS = {
 	  size = Vector3.new(7.190265, 0.950127, 5.825126),
 	  color = Color3.fromRGB(222, 66, 114) },
 }
+
+-- ===================================================================
+-- WATCHDOG GUARD. tick() is called at loop boundaries; it yields only once the
+-- thread has been held for YIELD_MS, so the cost on a cheap iteration is one
+-- os.clock() and nothing else. Yielding is what keeps Studio from killing the
+-- plugin (and the MCP bridge with it) partway through generation.
+-- ===================================================================
+local function newYielder(budgetMs: number)
+	local budget = budgetMs / 1000
+	local last = os.clock()
+	local yields, worst = 0, 0
+	local function note()
+		local held = os.clock() - last
+		if held > worst then worst = held end
+	end
+	return {
+		tick = function()
+			if os.clock() - last >= budget then
+				note()
+				task.wait()
+				last = os.clock()
+				yields += 1
+			end
+		end,
+		-- call at the end of a loop so the final unyielded chunk is measured too
+		close = function()
+			note()
+			last = os.clock()
+		end,
+		yields = function(): number return yields end,
+		worstMs = function(): number return worst * 1000 end,
+	}
+end
 
 -- ===================================================================
 -- NOISE. Integer hash, no trig: every multiply is kept under 2^53 so the
@@ -327,7 +404,7 @@ end
 -- ===================================================================
 -- THE UV -> 3D MAP, derived by rasterising the mesh's own UV triangles.
 -- ===================================================================
-local function buildUVMap(meshId: string, W: number, H: number)
+local function buildUVMap(meshId: string, W: number, H: number, Y)
 	local em = AssetService:CreateEditableMeshAsync(Content.fromUri(meshId))
 	local verts, faces = em:GetVertices(), em:GetFaces()
 
@@ -336,6 +413,7 @@ local function buildUVMap(meshId: string, W: number, H: number)
 	local mny, mxy = math.huge, -math.huge
 	local mnz, mxz = math.huge, -math.huge
 	for _, id in ipairs(verts) do
+		Y.tick()   -- ~45k GetPosition calls is itself past the watchdog on a cold cache
 		local p = em:GetPosition(id)
 		if p.Y < 0 then
 			mnx = math.min(mnx, p.X); mxx = math.max(mxx, p.X)
@@ -350,7 +428,19 @@ local function buildUVMap(meshId: string, W: number, H: number)
 	local MASK = buffer.create(W * H)
 	local covered, seamTris, skipped = 0, 0, 0
 
+	-- OVERLAP WATCH. The position write below is unconditional, so when two faces
+	-- claim one texel the last one wins. Adjacent faces sharing an edge texel are
+	-- harmless (they agree to within rounding). What would NOT be harmless is the
+	-- u overshoot past 1.0: those UVs wrap via px % W onto texels another face
+	-- already owns, and the loser's band of body would then be painted with colour
+	-- sampled from a different part of the galaxy. Measure it rather than assume.
+	-- A texel step is ~0.006 body-radii, so 0.05 is ~8 texels -- far outside any
+	-- edge-sharing disagreement, squarely a real collision.
+	local CONFLICT_EPS = 0.05
+	local conflicts, worstConflict = 0, 0
+
 	for _, f in ipairs(faces) do
+		Y.tick()   -- ~15k faces; average face is tiny, so per-face is fine granularity
 		local fv = em:GetFaceVertices(f)
 		local fu = em:GetFaceUVs(f)
 		local p1, p2, p3 = em:GetPosition(fv[1]), em:GetPosition(fv[2]), em:GetPosition(fv[3])
@@ -392,32 +482,49 @@ local function buildUVMap(meshId: string, W: number, H: number)
 				local l3 = 1 - l1 - l2
 				if l1 >= -0.002 and l2 >= -0.002 and l3 >= -0.002 then
 					local idx = py * W + (px % W)
-					if buffer.readu8(MASK, idx) == 0 then
+					local first = buffer.readu8(MASK, idx) == 0
+					if first then
 						buffer.writeu8(MASK, idx, 1)
 						covered += 1
 					end
 					local o = idx * 12
-					buffer.writef32(POS, o, (l1 * p1.X + l2 * p2.X + l3 * p3.X - CX) / RAD)
-					buffer.writef32(POS, o + 4, (l1 * p1.Y + l2 * p2.Y + l3 * p3.Y - CY) / RAD)
-					buffer.writef32(POS, o + 8, (l1 * p1.Z + l2 * p2.Z + l3 * p3.Z - CZ) / RAD)
+					local nx = (l1 * p1.X + l2 * p2.X + l3 * p3.X - CX) / RAD
+					local ny = (l1 * p1.Y + l2 * p2.Y + l3 * p3.Y - CY) / RAD
+					local nz = (l1 * p1.Z + l2 * p2.Z + l3 * p3.Z - CZ) / RAD
+					if not first then
+						local dx = nx - buffer.readf32(POS, o)
+						local dy = ny - buffer.readf32(POS, o + 4)
+						local dz = nz - buffer.readf32(POS, o + 8)
+						local d = math.sqrt(dx * dx + dy * dy + dz * dz)
+						if d > CONFLICT_EPS then
+							conflicts += 1
+							if d > worstConflict then worstConflict = d end
+						end
+					end
+					buffer.writef32(POS, o, nx)
+					buffer.writef32(POS, o + 4, ny)
+					buffer.writef32(POS, o + 8, nz)
 				end
 			end
 		end
 	end
 
+	Y.close()
 	return {
 		POS = POS, MASK = MASK, covered = covered, seamTris = seamTris, skipped = skipped,
+		conflicts = conflicts, worstConflict = worstConflict,
 		CX = CX, CY = CY, CZ = CZ, RAD = RAD,
 	}
 end
 
 -- Grow the painted region a few texels past the island edge, so bilinear
 -- filtering at the boundary samples real colour instead of unwritten black.
-local function dilate(POS, MASK, W: number, H: number, passes: number, y0: number, y1: number): number
+local function dilate(POS, MASK, W: number, H: number, passes: number, y0: number, y1: number, Y): number
 	local grown = 0
 	for _ = 1, passes do
 		local add = {}
 		for y = math.max(0, y0), math.min(H - 1, y1) do
+			Y.tick()   -- a row here is 1024 buffer reads; row granularity is well inside budget
 			for x = 0, W - 1 do
 				local idx = y * W + x
 				if buffer.readu8(MASK, idx) == 0 then
@@ -442,6 +549,7 @@ local function dilate(POS, MASK, W: number, H: number, passes: number, y0: numbe
 		end
 		for _, pair in ipairs(add) do buffer.writeu8(MASK, pair[1], 1) end
 	end
+	Y.close()
 	return grown
 end
 
@@ -461,9 +569,12 @@ local function run()
 	assert(src, "[Galaxy] " .. P.SOURCE_MODEL .. "." .. P.SOURCE_PART .. " not found")
 
 	local W, H = P.TEX_W, P.TEX_H
-	local M = buildUVMap((src :: any).MeshId, W, H)
+	local Y = newYielder(P.YIELD_MS)
+	local M = buildUVMap((src :: any).MeshId, W, H, Y)
 	log("[Galaxy] UV map: %d texels covered (%.1f%% of sheet), %d seam triangles fixed, %d cube faces skipped",
 		M.covered, 100 * M.covered / (W * H), M.seamTris, M.skipped)
+	log("[Galaxy] OVERLAP: %d texels claimed by two faces that disagree (%.2f%% of the island), worst %.3f body-radii",
+		M.conflicts, 100 * M.conflicts / math.max(1, M.covered), M.worstConflict)
 
 	-- prove the two properties the whole approach rests on
 	local POS, MASK = M.POS, M.MASK
@@ -475,6 +586,7 @@ local function run()
 	end
 	local rmin, rmax = H, -1
 	for y = 0, H - 1 do
+		Y.tick()   -- an uncovered row scans all 1024 columns before giving up
 		for x = 0, W - 1 do
 			if buffer.readu8(MASK, y * W + x) == 1 then
 				if y < rmin then rmin = y end
@@ -491,9 +603,24 @@ local function run()
 			seamWorst = math.max(seamWorst, math.sqrt((ax - bx) ^ 2 + (ay - by) ^ 2 + (az - bz) ^ 2))
 		end
 	end
-	local px1, py1, pz1 = getp(400, (rmin + rmax) // 2)
-	local px2, py2, pz2 = getp(401, (rmin + rmax) // 2)
-	local step = math.sqrt((px1 - px2) ^ 2 + (py1 - py2) ^ 2 + (pz1 - pz2) ^ 2)
+	-- Reference scale: the 3D distance between two horizontally adjacent texels,
+	-- averaged over every adjacent covered pair in the island's middle row. This
+	-- used to sample the single hardcoded pair (400, 401), which throws on a nil
+	-- if either texel happens to land outside the island -- and it would throw
+	-- only after buildUVMap, i.e. after the expensive half of the run.
+	local midRow = (rmin + rmax) // 2
+	local stepSum, stepN = 0, 0
+	for x = 0, W - 2 do
+		local ax, ay, az = getp(x, midRow)
+		local bx, by, bz = getp(x + 1, midRow)
+		if ax and bx then
+			stepSum += math.sqrt((ax - bx) ^ 2 + (ay - by) ^ 2 + (az - bz) ^ 2)
+			stepN += 1
+		end
+	end
+	assert(stepN > 0, "[Galaxy] island middle row has no adjacent covered texels -- UV map is broken")
+	local step = stepSum / stepN
+	assert(step > 0, "[Galaxy] adjacent texels map to the same 3D point -- UV map is degenerate")
 	local sx, sy, sz, cnt = 0, 0, 0, 0
 	local pts = {}
 	for x = 0, W - 1 do
@@ -513,7 +640,7 @@ local function run()
 	assert(poleSpread < 0.15, "[Galaxy] pole row does not converge -- streaking would return")
 
 	-- only the band around the island can ever need growing
-	local grown = dilate(POS, MASK, W, H, 4, rmin - 8, rmax + 8)
+	local grown = dilate(POS, MASK, W, H, 4, rmin - 8, rmax + 8, Y)
 	log("[Galaxy] dilated %d texels past the island edge (bilinear guard)", grown)
 
 	-- ---- paint ----
@@ -521,8 +648,14 @@ local function run()
 	local buf = buffer.create(W * H * 4)
 	local darkCount, litCount, starCount = 0, 0, 0
 	local painted = 0
+	-- Sub-row, NOT per-row. A single row through a dense cloud runs galaxy() on
+	-- all 1024 texels and on its own overruns a frame several times over, so a
+	-- per-row check would never bring the block inside budget. 128 makes the
+	-- check granularity ~8x finer than a row while costing one cheap test per texel.
+	local TICK_STRIDE = 128
 	for y = 0, H - 1 do
 		for x = 0, W - 1 do
+			if x % TICK_STRIDE == 0 then Y.tick() end
 			local idx = y * W + x
 			if buffer.readu8(MASK, idx) ~= 0 then
 				local o = idx * 12
@@ -548,9 +681,14 @@ local function run()
 			end
 		end
 	end
+	Y.close()
 	img:WritePixelsBuffer(Vector2.zero, Vector2.new(W, H), buf)
 	log("[Galaxy] painted %d texels | dark %.1f%% | lit %.1f%% | star-bright %.2f%%",
 		painted, 100 * darkCount / painted, 100 * litCount / painted, 100 * starCount / painted)
+	log("[Galaxy] WATCHDOG: yielded %d times, longest main-thread hold %.1f ms (budget %d ms)",
+		Y.yields(), Y.worstMs(), P.YIELD_MS)
+	assert(Y.worstMs() < 100,
+		"[Galaxy] a loop held the main thread past 100 ms -- the watchdog guard is not covering it")
 
 	-- ---- assemble ----
 	for _, c in ipairs(workspace:GetChildren()) do
