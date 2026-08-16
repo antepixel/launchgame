@@ -38,54 +38,34 @@
 -- lesser colour read as paint. Rarity needs a different axis entirely. It is
 -- DELIBERATELY NOT SOLVED HERE, and nothing below encodes a tier.
 --
--- THE RESOLVE RULE STILL BINDS, AND THE CROWN IS WHERE IT BIT. A feature is
--- either clearly visible at 40 studs or it is not present -- three cheap-looking
--- results in this project were the same mistake, a feature that HALF resolves:
--- 1-texel stars that mipped to mush, 1 px halo gaps that merged, sub-stud motes
--- that read as stray balls.
+-- THE RESOLVE RULE STILL BINDS. A feature is either clearly visible at 40 studs
+-- or it is not present -- three cheap-looking results in this project were the
+-- same mistake, a feature that HALF resolves: 1-texel stars that mipped to mush,
+-- 1 px halo gaps that merged, sub-stud motes that read as stray balls.
 --
--- Stripe width is proportional to horizontal radius, so it falls to ZERO at the
--- pole by construction. An earlier version let it, on the reasoning that a beach
--- ball converges at its crown and reads as correct. The GEOMETRY does. The
--- ANTIALIASING does not: once every boundary crowds inside a texel a smoothstep
--- has nothing left to resolve, and the top rendered as a ragged fan -- a
--- rendering fault, not a feature, and precisely the cheap look being avoided.
+-- IT IS CHECKED AT THE EQUATOR, NOT AT THE POLE. Stripe width falls to zero at
+-- the pole by construction -- that is what converging to a point means -- so
+-- asserting on the minimum would fail every build for the one thing the design
+-- exists to do. The equator width is the characteristic feature; the pole is a
+-- vertex, not a feature.
 --
--- So the stripes are stopped by a solid white cap while still well clear of the
--- floor: CAP_AT_STRIPE_PX = 12, against a floor of 8. A FADE was the alternative
--- and would also have removed the artifact, but it resolves to a half-and-half
--- blend -- a washed pastel smear that looks like the texture giving up, where a
--- hard cap is what a real beach ball has and a crisp edge is what this design is
--- made of. The cap is a SECOND boundary, which every earlier pass avoided, but
--- here it is a deliberate feature rather than a mask leaking through.
+-- THE CROWN CAP AND THE TWIST RAMP ARE BOTH OFF, and the reason is the mesh.
+-- Both were built to survive the OLD parameterisation, where the crown crowded
+-- every boundary into a few texels: the cap stopped the stripes before they got
+-- there, and the ramp stopped the helix cutting across longitude into the point
+-- where all longitudes meet. On the re-unwrapped mesh the pole sits at each
+-- island's centre on an equal-area radial coordinate, so stripes converge evenly
+-- unaided. Verified by building both ways on the new mesh -- both poles converge
+-- to a clean point, and the cap is now just a white disc doing nothing.
 --
--- THE CAP ALONE WAS NOT ENOUGH, AND THE SPIRAL IS WHY. Capping fixed the plain
--- narrowing and left a second, different artifact: the crown SPLAYED into
--- feathered spikes. A straight meridian converges cleanly to a point, but a
--- constant-rate helix keeps cutting across longitude right into the place where
--- all longitudes meet -- near the crown a single texel spans many longitudes of
--- boundary, and the smoothstep again has nothing coherent to resolve. Capping
--- lower would only have hidden more of the body under white.
---
--- The fix is that the TWIST RATE reaches zero before the pole does. It is shaped
--- as (1 - h^2), peaking at the equator and vanishing at both poles, so the
--- boundary is running straight along a meridian by the time it converges, and
--- only then does the cap take over. Measured, the boundary's lean off the
--- meridian falls from 30-60 degrees at the equator to 0.14-1.02 degrees at the
--- cap, and it sweeps 0.04-0.25% of a stripe width per texel there -- against
--- roughly 4-5% for the unramped helix, which is what the spikes were.
---
--- The cap is keyed to stripe WIDTH rather than to a latitude, so it self-adjusts
--- to the count and the twist instead of being guessed per design. It catches
--- both poles, since it tests horizontal radius -- the underside converged and
--- fanned just as badly as the top.
---
--- MEASURED, at 40 studs: equator width runs 63.7 px (6 stripes, 30 deg twist)
--- down to 27.5 px (8 stripes, 90 deg) -- twist NARROWS stripes, since a sheared
--- stripe is thinner across than around, and the ramp concentrates the shear at
--- the equator so a given total leans harder there than a flat rate would. Every
--- one is above the floor, and the narrowest stripe that renders anywhere is
--- 12.0 px at the cap edge.
+-- DO NOT READ "the ramp is off" AS "the ramp did nothing". It was never only a
+-- pole fix. It CONCENTRATES SHEAR AT THE EQUATOR -- peaking at 1.5x the flat rate
+-- there, because it has to deliver the same total twist over a rate that falls to
+-- zero at both ends. Switching it off therefore makes every spiral GENTLER for
+-- the same twistDeg: at 30 degrees the equator lean drops from 30.1 to 21.1. The
+-- STRIPE_SPECS were multiplied by 1.5 to 45/90/135 at the same time to hold the
+-- look steady, so twistDeg is NOT comparable across that setting -- 45 flat and
+-- 30 ramped are the same picture. Anyone turning the ramp back on must divide.
 --
 -- 40 studs, FOV 70, a 563 px tall frame => 10.05 px per stud. The body is 14
 -- studs across, so it lands 141 px wide, and 8 px is 0.80 studs.
@@ -248,13 +228,16 @@ local P = {
 	-- rate is not constant over that span -- see TWIST_RAMP_POWER -- so the same
 	-- total buys a steeper equator than it used to; these values are lower than
 	-- the unramped set for that reason.
+	-- 45/90/135, not 30/60/90. These went UP by 1.5x when the ramp was switched
+	-- off -- see TWIST_RAMP_POWER for why that factor, and why the numbers are not
+	-- comparable across that setting.
 	STRIPE_SPECS = {
-		{ count = 6, phaseDeg = 0, twistDeg = 30 },
-		{ count = 6, phaseDeg = 30, twistDeg = 60 },
-		{ count = 8, phaseDeg = 0, twistDeg = 30 },
-		{ count = 8, phaseDeg = 22.5, twistDeg = 60 },
-		{ count = 6, phaseDeg = 15, twistDeg = 90 },
-		{ count = 8, phaseDeg = 11.25, twistDeg = 90 },
+		{ count = 6, phaseDeg = 0, twistDeg = 45 },
+		{ count = 6, phaseDeg = 30, twistDeg = 90 },
+		{ count = 8, phaseDeg = 0, twistDeg = 45 },
+		{ count = 8, phaseDeg = 22.5, twistDeg = 90 },
+		{ count = 6, phaseDeg = 15, twistDeg = 135 },
+		{ count = 8, phaseDeg = 11.25, twistDeg = 135 },
 	},
 
 	-- ---- the twist ramp ----
@@ -270,10 +253,22 @@ local P = {
 	-- is running STRAIGHT along a meridian by the time it converges. Only then
 	-- does the cap take over.
 	--
-	-- Power 1 integrates to h - h^3/3, so alpha(h) = 0.75 * total * (h - h^3/3)
-	-- delivers exactly twistDeg end to end while peaking at 1.5x the flat rate.
-	-- SET 0 to switch the ramp off and get the flat rate back, for comparison.
-	TWIST_RAMP_POWER = 1,
+	-- OFF (0 = flat rate). The ramp existed to stop a constant-rate helix cutting
+	-- across longitude right into the pole, where the old parameterisation had it
+	-- splaying into feathered spikes. The re-unwrapped mesh puts the pole at each
+	-- island's centre on an equal-area radial coordinate, so stripes converge
+	-- evenly by construction and the ramp has nothing left to fix. Verified by
+	-- building both ways on the new mesh: both poles converge to a clean point.
+	--
+	-- DO NOT READ "the ramp is off" AS "the ramp did nothing". It was never only a
+	-- pole fix -- it CONCENTRATES SHEAR AT THE EQUATOR, peaking at 1.5x the flat
+	-- rate there in order to deliver the same total twist over a rate that falls to
+	-- zero at both ends. So switching it off makes every spiral GENTLER for the
+	-- same twistDeg: at 30 degrees the equator lean drops from 30.1 to 21.1. The
+	-- STRIPE_SPECS above were multiplied by 1.5 at the same time to hold the look
+	-- steady. twistDeg values are therefore NOT comparable across this setting --
+	-- 45 flat and 30 ramped are the same picture.
+	TWIST_RAMP_POWER = 0,
 
 	-- ---- the crown cap ----
 	-- Stripes must NOT be allowed to reach the pole. Their width falls to zero
@@ -291,9 +286,13 @@ local P = {
 	-- earlier pass avoided, but here it is a deliberate feature rather than a
 	-- mask leaking through.
 	--
-	-- Expressed as the stripe width at which the cap starts, so it self-adjusts
-	-- to the stripe count rather than being a latitude guessed per design.
-	CAP_AT_STRIPE_PX = 12,           -- 1.5x the 8 px floor
+	-- OFF (0 = no cap). Same story as the ramp: the cap existed because the old
+	-- parameterisation crowded every boundary into a few texels at the crown, where
+	-- the smoothstep had nothing coherent to resolve and the result read as a
+	-- rendering fault. On the re-unwrapped mesh the stripes converge to a clean
+	-- point unaided, so the cap is now just a white disc sitting on the pole doing
+	-- nothing. Set a pixel width to bring it back.
+	CAP_AT_STRIPE_PX = 0,
 
 	-- ---- watchdog ----
 	YIELD_MS = 12,
@@ -860,13 +859,16 @@ local function run()
 			balLo = math.min(balLo, measured)
 			balHi = math.max(balHi, measured)
 
-			-- The stripe width at the equator is what the design lives or dies by;
-			-- the width AT THE CAP is the smallest one that ever renders.
+			-- THE FLOOR IS CHECKED AT THE EQUATOR, not at the pole. Without a cap the
+			-- narrowest stripe is zero by construction -- that is what converging to a
+			-- point means -- so measuring the minimum would fail every build for the
+			-- one thing the design is supposed to do. The equator width is the
+			-- characteristic feature; the pole is a vertex, not a feature.
 			local featureStuds = stripeWidthStuds(1.0, count, twist)
 			local featurePx = featureStuds * pxPerStud
-			if capPx < worstFeaturePx then
-				worstFeaturePx = capPx
-				worstFeatureWhat = string.format("%d stripes at the cap", count)
+			if featurePx < worstFeaturePx then
+				worstFeaturePx = featurePx
+				worstFeatureWhat = string.format("%d stripes at the equator", count)
 			end
 			local capFrac = capFraction(rCap)
 
@@ -958,12 +960,15 @@ local function run()
 			slime:SetAttribute("WhiteFraction", measured)
 
 			table.insert(rows, string.format(
-				"[Skins]   %-7s %d stripes twist %3d deg | white %.1f%% | equator %.1f px"
-					.. " | cap r=%.3f at %.1f px | boundary tilt %.1f deg at equator -> %.2f deg at cap"
-					.. " | cap covers %.1f%%",
+				"[Skins]   %-7s %d stripes twist %3d deg | white %.1f%% | equator %.1f px,"
+					.. " lean %.1f deg | %s",
 				hue.name, count, spec.twistDeg, measured * 100, featurePx,
-				rCap, capPx, boundaryTiltDeg(1.0, twist), boundaryTiltDeg(rCap, twist),
-				capFrac * 100))
+				boundaryTiltDeg(1.0, twist),
+				-- guard on the SETTING, not on rCap: the bisection lands at ~4e-13
+				-- rather than exactly zero when the cap is disabled
+				P.CAP_AT_STRIPE_PX > 0
+					and string.format("cap r=%.3f at %.1f px covering %.1f%%", rCap, capPx, capFrac * 100)
+					or "no cap: stripes converge to a point"))
 		end
 
 		table.insert(rows, string.format(
@@ -977,8 +982,10 @@ local function run()
 		"[Skins] smallest feature is %.1f px (%s) at %d studs, under the %d px floor -- "
 			.. "it would half-resolve, which is the exact failure this design exists to avoid",
 		worstFeaturePx, worstFeatureWhat, P.VIEW_DISTANCE, P.MIN_FEATURE_PX))
-	log("[Skins] smallest boundary excursion: %.1f px (%s), floor is %d px",
-		worstFeaturePx, worstFeatureWhat, P.MIN_FEATURE_PX)
+	log("[Skins] narrowest equator stripe: %.1f px (%s), floor is %d px | ramp %s, cap %s",
+		worstFeaturePx, worstFeatureWhat, P.MIN_FEATURE_PX,
+		P.TWIST_RAMP_POWER == 0 and "OFF" or "ON",
+		P.CAP_AT_STRIPE_PX > 0 and "ON" or "OFF")
 	log("[Skins] worst hue against white: %s", worstGapHue)
 
 	local perTexKB = W * W * 4 / 1024
