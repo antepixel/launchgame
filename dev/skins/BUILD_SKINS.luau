@@ -59,15 +59,33 @@
 -- made of. The cap is a SECOND boundary, which every earlier pass avoided, but
 -- here it is a deliberate feature rather than a mask leaking through.
 --
+-- THE CAP ALONE WAS NOT ENOUGH, AND THE SPIRAL IS WHY. Capping fixed the plain
+-- narrowing and left a second, different artifact: the crown SPLAYED into
+-- feathered spikes. A straight meridian converges cleanly to a point, but a
+-- constant-rate helix keeps cutting across longitude right into the place where
+-- all longitudes meet -- near the crown a single texel spans many longitudes of
+-- boundary, and the smoothstep again has nothing coherent to resolve. Capping
+-- lower would only have hidden more of the body under white.
+--
+-- The fix is that the TWIST RATE reaches zero before the pole does. It is shaped
+-- as (1 - h^2), peaking at the equator and vanishing at both poles, so the
+-- boundary is running straight along a meridian by the time it converges, and
+-- only then does the cap take over. Measured, the boundary's lean off the
+-- meridian falls from 30-60 degrees at the equator to 0.14-1.02 degrees at the
+-- cap, and it sweeps 0.04-0.25% of a stripe width per texel there -- against
+-- roughly 4-5% for the unramped helix, which is what the spikes were.
+--
 -- The cap is keyed to stripe WIDTH rather than to a latitude, so it self-adjusts
 -- to the count and the twist instead of being guessed per design. It catches
 -- both poles, since it tests horizontal radius -- the underside converged and
 -- fanned just as badly as the top.
 --
--- MEASURED, at 40 studs: equator width runs 65.5 px (6 stripes, 40 deg twist)
--- down to 30.0 px (8 stripes, 120 deg) -- twist NARROWS stripes, since a sheared
--- stripe is thinner across than around. Every one is above the floor, and the
--- narrowest stripe that renders anywhere is 12.0 px at the cap edge.
+-- MEASURED, at 40 studs: equator width runs 63.7 px (6 stripes, 30 deg twist)
+-- down to 27.5 px (8 stripes, 90 deg) -- twist NARROWS stripes, since a sheared
+-- stripe is thinner across than around, and the ramp concentrates the shear at
+-- the equator so a given total leans harder there than a flat rate would. Every
+-- one is above the floor, and the narrowest stripe that renders anywhere is
+-- 12.0 px at the cap edge.
 --
 -- 40 studs, FOV 70, a 563 px tall frame => 10.05 px per stud. The body is 14
 -- studs across, so it lands 141 px wide, and 8 px is 0.80 studs.
@@ -217,14 +235,35 @@ local P = {
 	-- body and the top. 0 gives straight meridians; positive shears them into a
 	-- helix, so a stripe leaving one longitude at the base arrives at a different
 	-- one at the crown. Three values are shown against both counts.
+	-- twistDeg is the TOTAL rotation from the bottom of the body to the top. The
+	-- rate is not constant over that span -- see TWIST_RAMP_POWER -- so the same
+	-- total buys a steeper equator than it used to; these values are lower than
+	-- the unramped set for that reason.
 	STRIPE_SPECS = {
-		{ count = 6, phaseDeg = 0, twistDeg = 40 },
-		{ count = 6, phaseDeg = 30, twistDeg = 80 },
-		{ count = 8, phaseDeg = 0, twistDeg = 40 },
-		{ count = 8, phaseDeg = 22.5, twistDeg = 80 },
-		{ count = 6, phaseDeg = 15, twistDeg = 120 },
-		{ count = 8, phaseDeg = 11.25, twistDeg = 120 },
+		{ count = 6, phaseDeg = 0, twistDeg = 30 },
+		{ count = 6, phaseDeg = 30, twistDeg = 60 },
+		{ count = 8, phaseDeg = 0, twistDeg = 30 },
+		{ count = 8, phaseDeg = 22.5, twistDeg = 60 },
+		{ count = 6, phaseDeg = 15, twistDeg = 90 },
+		{ count = 8, phaseDeg = 11.25, twistDeg = 90 },
 	},
+
+	-- ---- the twist ramp ----
+	-- THE TWIST RATE MUST REACH ZERO BEFORE THE POLE DOES. A constant rate makes
+	-- the boundary a true helix, and a helix does not converge cleanly: it keeps
+	-- cutting across longitude right into the point where all longitudes meet, so
+	-- near the crown one texel spans many longitudes of boundary and the
+	-- smoothstep has nothing coherent to resolve. That renders as feathered spikes
+	-- -- a different failure from plain narrowing, and specific to the spiral.
+	--
+	-- So the rate is shaped as (1 - h^2)^power, h being height normalised to +-1.
+	-- It peaks at the equator and vanishes at both poles, which means the boundary
+	-- is running STRAIGHT along a meridian by the time it converges. Only then
+	-- does the cap take over.
+	--
+	-- Power 1 integrates to h - h^3/3, so alpha(h) = 0.75 * total * (h - h^3/3)
+	-- delivers exactly twistDeg end to end while peaking at 1.5x the flat rate.
+	TWIST_RAMP_POWER = 1,
 
 	-- ---- the crown cap ----
 	-- Stripes must NOT be allowed to reach the pole. Their width falls to zero
@@ -366,10 +405,23 @@ end
 -- rather than just k/r. Because that factor is strictly positive it cannot move
 -- a single boundary -- only the softness changes, never the geometry.
 -- ===================================================================
+-- THE RAMP. alpha(h) is the pattern's rotation at normalised height h in [-1,1];
+-- alphaRate is its derivative with respect to h. The rate is shaped so it peaks
+-- at the equator and reaches ZERO at both poles, which is what stops the
+-- boundary cutting across longitude where longitudes converge.
+local function alphaOf(h: number, total: number): number
+	-- integral of (1 - h^2), normalised so alpha(1) - alpha(-1) == total
+	return total * 0.75 * (h - h * h * h / 3)
+end
+local function alphaRate(h: number, total: number): number
+	return total * 0.75 * (1 - h * h)
+end
+
 -- Returns a SIGNED DISTANCE to the nearest stripe boundary: white where
--- positive. phase is a fixed rotation; slope is d(alpha)/d(qy), the twist.
+-- positive. phase is a fixed rotation; twist is the TOTAL rotation bottom to
+-- top, applied through the ramp above.
 local function stripeField(qx: number, qy: number, qz: number,
-	k: number, phase: number, slope: number): number
+	k: number, phase: number, twist: number, yHalf: number): number
 	local r = math.sqrt(qx * qx + qz * qz)
 	if r < 1e-9 then return 0 end        -- the pole itself; the cap covers it anyway
 	local c, sth = qx / r, qz / r        -- cos(theta), sin(theta)
@@ -380,11 +432,14 @@ local function stripeField(qx: number, qy: number, qz: number,
 		t0, t1 = t1, 2 * c * t1 - t0
 		u0, u1 = u1, 2 * c * u1 - u0
 	end
+	local h = math.clamp(qy / yHalf, -1, 1)
+	local a = k * (phase + alphaOf(h, twist))
 	-- after the loop u0 holds U_{k-1} for every k >= 1, which is the one wanted
-	local f = t1 * math.cos(k * (phase + slope * qy))
-		+ sth * u0 * math.sin(k * (phase + slope * qy))
+	local f = t1 * math.cos(a) + sth * u0 * math.sin(a)
 	-- |grad f| at a crossing, in body-radii: the horizontal term k/r plus the
-	-- vertical one the helix adds. Dividing by it makes f a distance.
+	-- vertical one the twist adds. Dividing by it makes f a distance. The slope
+	-- is now a function of height, so it is evaluated here rather than passed in.
+	local slope = alphaRate(h, twist) / yHalf
 	local grad = k * math.sqrt(1 / (r * r) + slope * slope)
 	return f / grad
 end
@@ -606,6 +661,7 @@ local function run()
 	-- height in the SAME units the field works in, i.e. body-radii, so a twist
 	-- given as degrees bottom-to-top converts to a slope per unit qy
 	local bodyHeightRadii = M.HEIGHT / M.RAD
+	local yHalfRadii = bodyHeightRadii / 2
 	local pxPerStud = P.VIEW_FRAME_PX
 		/ (2 * P.VIEW_DISTANCE * math.tan(math.rad(P.VIEW_FOV_DEG) / 2))
 	log("[Skins] view: %d studs, FOV %d, %d px frame -> %.2f px/stud; body radius %.2f studs (%.0f px wide)",
@@ -634,9 +690,9 @@ local function run()
 	-- field was scaled into a signed distance, this band is the same physical
 	-- width at every latitude -- including where the stripes are finest.
 	local function whiteAt(qx: number, qy: number, qz: number,
-		k: number, phase: number, slope: number, rCap: number): number
+		k: number, phase: number, twist: number, rCap: number): number
 		local stripe = smoothstep(-P.EDGE_SOFT, P.EDGE_SOFT,
-			stripeField(qx, qy, qz, k, phase, slope))
+			stripeField(qx, qy, qz, k, phase, twist, yHalfRadii))
 		-- Inside rCap the crown cap takes over, in solid white. r is the
 		-- horizontal radius, so this catches BOTH poles -- the underside
 		-- converges just as hard as the top and fanned just as badly.
@@ -645,25 +701,42 @@ local function run()
 		return capMix * stripe + (1 - capMix)
 	end
 
+	-- The twist rate at the latitude whose horizontal radius is r. On the body
+	-- h^2 + r^2 ~ 1, so (1 - h^2) is r^2: the rate falls off as the SQUARE of the
+	-- radius, which is why it is already negligible by the time the stripes are
+	-- narrow enough to cap.
+	local function slopeAtRadius(r: number, twist: number): number
+		return alphaRate(math.sqrt(math.max(0, 1 - r * r)), twist) / yHalfRadii
+	end
+
+	-- How far the boundary leans off the meridian at radius r. This is the number
+	-- that says whether it can resolve: 0 degrees is a straight meridian
+	-- converging cleanly to a point, and large angles are the helix cutting
+	-- across longitude as the longitudes themselves converge.
+	local function boundaryTiltDeg(r: number, twist: number): number
+		return math.deg(math.atan(r * slopeAtRadius(r, twist)))
+	end
+
 	-- Stripe width at horizontal radius r, in studs, including the narrowing the
-	-- helix causes: a sheared stripe is thinner across than it is around.
-	local function stripeWidthStuds(r: number, count: number, slope: number): number
+	-- shear causes: a leaning stripe is thinner across than it is around.
+	local function stripeWidthStuds(r: number, count: number, twist: number): number
 		local around = 2 * math.pi * r * bodyRadiusStuds / count
-		return around / math.sqrt(1 + (r * slope) ^ 2)
+		local sl = slopeAtRadius(r, twist)
+		return around / math.sqrt(1 + (r * sl) ^ 2)
 	end
 
 	-- Where to stop the stripes: the radius at which their width falls to
 	-- CAP_AT_STRIPE_PX. Solved by bisection because the twist term makes it
 	-- awkward to invert, and width is monotone in r.
-	local function capRadius(count: number, slope: number): (number, number)
+	local function capRadius(count: number, twist: number): (number, number)
 		local want = P.CAP_AT_STRIPE_PX / pxPerStud
 		local lo, hi = 0.0, 1.0
 		for _ = 1, 40 do
 			local mid = (lo + hi) / 2
-			if stripeWidthStuds(mid, count, slope) < want then lo = mid else hi = mid end
+			if stripeWidthStuds(mid, count, twist) < want then lo = mid else hi = mid end
 		end
 		local r = (lo + hi) / 2
-		return r, stripeWidthStuds(r, count, slope) * pxPerStud
+		return r, stripeWidthStuds(r, count, twist) * pxPerStud
 	end
 
 	-- How much of the surface the crown caps take, measured on the real texel set
@@ -710,16 +783,14 @@ local function run()
 			assert(count % 2 == 0, "[Skins] stripe count must be even to split 50/50")
 			local k = count // 2
 			local phase = math.rad(spec.phaseDeg)
-			-- twistDeg is the rotation from the BOTTOM of the body to the TOP, so
-			-- the per-unit-qy slope divides by the full height, not the half.
-			local slope = math.rad(spec.twistDeg) / bodyHeightRadii
-			local rCap, capPx = capRadius(count, slope)
+			local twist = math.rad(spec.twistDeg)
+			local rCap, capPx = capRadius(count, twist)
 
 			-- measure the split rather than assume it
 			local hit = 0
 			for si, q in ipairs(sample) do
 				if si % P.CALIBRATE_TICK_EVERY == 0 then Y.tick() end
-				hit += whiteAt(q[1], q[2], q[3], k, phase, slope, rCap)
+				hit += whiteAt(q[1], q[2], q[3], k, phase, twist, rCap)
 			end
 			local measured = hit / #sample
 			balLo = math.min(balLo, measured)
@@ -727,7 +798,7 @@ local function run()
 
 			-- The stripe width at the equator is what the design lives or dies by;
 			-- the width AT THE CAP is the smallest one that ever renders.
-			local featureStuds = stripeWidthStuds(1.0, count, slope)
+			local featureStuds = stripeWidthStuds(1.0, count, twist)
 			local featurePx = featureStuds * pxPerStud
 			if capPx < worstFeaturePx then
 				worstFeaturePx = capPx
@@ -755,7 +826,7 @@ local function run()
 						local qx = buffer.readf32(POS, o)
 						local qy = buffer.readf32(POS, o + 4)
 						local qz = buffer.readf32(POS, o + 8)
-						local a = whiteAt(qx, qy, qz, k, phase, slope, rCap)
+						local a = whiteAt(qx, qy, qz, k, phase, twist, rCap)
 						buffer.writeu8(buf, off, math.floor(math.clamp(br + (ar - br) * a, 0, 1) * 255 + 0.5))
 						buffer.writeu8(buf, off + 1, math.floor(math.clamp(bg + (ag - bg) * a, 0, 1) * 255 + 0.5))
 						buffer.writeu8(buf, off + 2, math.floor(math.clamp(bb + (ab - bb) * a, 0, 1) * 255 + 0.5))
@@ -823,9 +894,11 @@ local function run()
 
 			table.insert(rows, string.format(
 				"[Skins]   %-7s %d stripes twist %3d deg | white %.1f%% | equator %.1f px"
-					.. " | cap starts r=%.3f at %.1f px wide, covering %.1f%% of the surface",
+					.. " | cap r=%.3f at %.1f px | boundary tilt %.1f deg at equator -> %.2f deg at cap"
+					.. " | cap covers %.1f%%",
 				hue.name, count, spec.twistDeg, measured * 100, featurePx,
-				rCap, capPx, capFrac * 100))
+				rCap, capPx, boundaryTiltDeg(1.0, twist), boundaryTiltDeg(rCap, twist),
+				capFrac * 100))
 		end
 
 		table.insert(rows, string.format(
