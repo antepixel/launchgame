@@ -1,10 +1,10 @@
 --!strict
--- BUILD_SKINS.luau -- STANDALONE REBUILD SCRIPT FOR THE TIER 1-4 SLIME SKINS.
+-- BUILD_SKINS.luau -- STANDALONE REBUILD SCRIPT FOR THE TWO-TONE SLIME SKINS.
 --
 -- Paste the whole file into the Studio command bar and it builds
--- workspace.SkinLineup from nothing: 24 slimes, four tiers by six hues, each
--- with its own procedurally generated EditableImage. No other file needs to be
--- present.
+-- workspace.SkinLineup from nothing: six slimes, one per hue, each white and
+-- its hue in equal measure across one boundary curve, on a procedurally
+-- generated EditableImage. No other file needs to be present.
 --
 -- NOT SHIPPING CODE and deliberately NOT under src/ (Rojo syncs that). Same
 -- standing as dev/tiermarks/BUILD_TIERMARKS.luau and dev/divine/BUILD_DIVINE.luau.
@@ -16,99 +16,88 @@
 --
 -- ============================ WHAT WAS LEARNED =============================
 --
--- ONE RULE DECIDES EVERYTHING: a feature is either clearly visible at 40 studs
--- or it is not present. Nothing in between. This project has produced three
--- cheap-looking results in a row and all three were the same mistake -- a
--- feature that HALF resolves. 1-texel stars that mipped to mush; a 48-blade halo
--- whose 1 px gaps merged into a washed-out ring; sub-stud motes that read as
--- stray balls. The giant slime looks good for the opposite reason: it is one
--- saturated colour that resolves perfectly at every distance.
+-- NEITHER COLOUR IS THE BASE. BOTH ARE. This is the whole design and it took
+-- three rejected passes to arrive at. A slime is white AND a hue, in roughly
+-- equal weight, forming one shape together -- not a hue with something applied
+-- to it. The moment one colour dominates, the smaller one stops being part of
+-- the object and starts being PAINT ON it, and paint on a toy reads as cheap
+-- however cleanly it resolves.
 --
--- So the resolve threshold is enforced MECHANICALLY here, not by eye. Every
--- shape reports its smallest dimension, that is converted to pixels at 40 studs,
--- and the build ASSERTS it clears MIN_FEATURE_PX. A pattern that would turn to
--- mush stops the build instead of shipping.
+-- SO THE DESIGN IS THE BOUNDARY. With the split fixed at 50/50 there is nothing
+-- left to vary except the curve where the two colours meet: where it sits and
+-- what it does as it travels round the body. That is the entire creative
+-- surface here, and every one of the six entries below is one curve.
+--
+-- WHICH IS WHY COVERAGE CANNOT BE THE RARITY AXIS. An earlier pass escalated
+-- rarity as accent coverage -- 10/25/42/60% -- and that was wrong from the
+-- start, not merely mistuned: any ladder built on coverage forces every rung
+-- except the middle to be lopsided, and lopsided is exactly what makes the
+-- lesser colour read as paint. Rarity needs a different axis entirely. It is
+-- DELIBERATELY NOT SOLVED HERE, and nothing below encodes a tier.
+--
+-- THE RESOLVE RULE STILL BINDS, it just has less to bite on. A feature is either
+-- clearly visible at 40 studs or it is not present -- three cheap-looking
+-- results in this project were all the same mistake, a feature that HALF
+-- resolves: 1-texel stars that mipped to mush, 1 px halo gaps that merged, and
+-- sub-stud motes that read as stray balls. At 50/50 both regions are half a body
+-- and cannot be too small; the only thing that can is a wave's excursion, so
+-- that is what gets measured and asserted against MIN_FEATURE_PX.
 --
 -- 40 studs, FOV 70, a 563 px tall frame => 10.05 px per stud. The body is 14
--- studs across, so it lands 141 px wide. 8 px is therefore 0.80 studs, or 0.114
--- body-radii. That single number is why there are no speckles, no thin stripes
--- and no texture inside a shape anywhere below.
+-- studs across, so it lands 141 px wide, and 8 px is 0.80 studs.
 --
--- RARITY IS COVERAGE, AND IT IS MEASURED, NOT ESTIMATED. The one axis that
--- escalates across tiers is how much of the body the accent colour takes:
--- Common 10%, Uncommon 25%, Rare 42%, Epic 60%. Complexity is explicitly NOT the
--- axis -- complexity is what reads as cheap. Coverage is not approximated from a
--- formula either: each shape has one scalar knob, and the build binary-searches
--- it against the REAL texel set until measured coverage hits the tier target, so
--- the ladder is exact on the actual mesh rather than on an idealised sphere.
+-- EVERY BOUNDARY IS ANTIALIASED, and on a design that IS its boundary this
+-- stopped being a polish item and became the point. A hard threshold stair-steps
+-- at ANY resolution -- 256 merely made it obvious. Fields return a signed value
+-- and the colour mix runs through a smoothstep band EDGE_SOFT wide. A soft
+-- boundary is NOT a sub-resolution feature and does not violate the 8 px rule:
+-- that rule is about how big a region is, not how sharp its border is.
 --
--- SHAPE VARIES WITHIN A TIER, COVERAGE VARIES ACROSS TIERS. These two axes are
--- orthogonal on purpose. Six placements -- belt-high, belt-low, cap, foot,
--- split-shallow, split-steep -- appear once per tier, so within-tier variety is
--- a genuinely different pattern rather than only a different hue, while the
--- rarity read stays clean because every shape in a tier carries the same
--- coverage. The assignment rotates by tier, so a hue wears a different pattern
--- at each rarity.
+-- The balance search INTEGRATES that soft value rather than counting texels,
+-- because a texel on the boundary is genuinely part white. Worth knowing if you
+-- port this: 0 is truthy in Lua, so a boolean call site keeps compiling and
+-- silently counts every texel the moment fields start returning numbers.
 --
--- RESOLVING IS NECESSARY AND NOT SUFFICIENT -- spots and patches are gone. Both
--- passed the pixel rule comfortably (30.6 px features) and both still looked
--- cheap, because on a rounded body a scatter of blobs reads as STAINING however
--- cleanly its edges land. What survives is the family that follows the body's
--- own form: bands and divisions. Variety then comes from where the band sits and
--- how the plane is angled, not from adding more kinds of thing.
+-- 512, WHICH IS A MEMORY DECISION AND NOT A QUALITY ONE. An early pass derived
+-- 256 from area -- island 32.8% of the sheet, half facing camera, 0.164*R^2 =
+-- 10,300 px -- which is right about area and irrelevant to edges, since one
+-- texel per pixel puts the stair steps at exactly the size the eye resolves.
+-- 1024 fixes that and costs 4 MB a skin, which is 260 MB at the full 65 roster.
+-- With antialiasing carrying the edges, 512 holds up at a quarter of that: 1 MB
+-- a skin, 65 MB at 65. TEX is the only line to change if that judgement shifts.
 --
--- NO WEDGES, AND THE REASON GENERALISES. Longitude wedges were the obvious
--- seventh shape and they are a trap: they converge to a point at the pole, so
--- the feature width goes to zero there by construction. Any shape whose size is
--- a function of latitude will half-resolve somewhere. Every shape kept here has
--- a width that is bounded away from zero over the whole surface.
+-- WHITE IS A COLOUR HERE, NOT AN ABSENCE OF ONE. Two earlier accent schemes
+-- failed on that distinction. A darker shade of the base hue reads as SHADING,
+-- because a lit curved body already spans that luminance range from highlight to
+-- flank. Near-black and near-white fix the shading problem and read as DIRT.
+-- What works is a near-white that is unmistakably a material -- and at 50/50 it
+-- is not an accent at all, it is half the animal.
 --
--- THE ACCENT IS ONE CREAM, AND IT IS A COLOUR RATHER THAN AN ABSENCE OF ONE.
--- Two failed versions got here. A darker shade of the base hue reads as SHADING,
--- because a curved lit body already spans that luminance range from highlight to
--- flank. Near-black and near-white fix that and read as DIRT -- both are
--- absences of colour, so on a saturated toy body they look like a stain or a
--- blown highlight rather than a second material. A warm cream is neither: it
--- sits in the same palette as the bodies, and lighting still cannot produce
--- cream on green, so the constraint that killed version one is still satisfied.
+-- ONE CONTRAST NUMBER IS NOT ENOUGH. Luminance gap alone rejects white on
+-- yellow at 0.13, and white on yellow reads perfectly well because the
+-- separation there is chroma rather than brightness. Both luminance gap and RGB
+-- distance are measured; the worst hue is chosen on RGB distance.
 --
--- ONE CONTRAST NUMBER IS NOT ENOUGH. Luminance gap alone rejects cream on
--- yellow -- only 0.13 -- and cream on yellow reads perfectly well, because the
--- separation there is chroma, not brightness. Both luminance gap and RGB
--- distance are measured and reported; the worst hue is chosen on RGB distance.
+-- NO FACE MASK, AND REMOVING IT WAS A DESIGN FIX RATHER THAN A SIMPLIFICATION.
+-- Earlier passes forced a cone around the eyes back to base colour so the face
+-- would read. On a design whose whole content is ONE boundary, that cone drew a
+-- SECOND one -- a faint disc round the face competing with the real curve. At
+-- 50/50 it is also unnecessary: the dark eye mesh reads on white, and the hue
+-- side is a saturated mid-tone.
 --
--- EVERY BOUNDARY IS ANTIALIASED, AND THAT IS THE REAL FIX FOR THE BLOCKY LOOK.
--- A hard threshold stair-steps at ANY resolution -- 256 simply made it obvious.
--- Shapes return a 0..1 coverage value through a smoothstep band EDGE_SOFT wide,
--- not a boolean. A soft boundary is NOT a sub-resolution feature and does not
--- violate the 8 px rule: that rule is about how big a shape is, not how sharp
--- its border is. Coverage therefore INTEGRATES the soft value rather than
--- counting texels, which is what keeps the tier percentages honest.
---
--- 1024 x 1024, BECAUSE THE 256 DERIVATION ANSWERED THE WRONG QUESTION. That
--- arithmetic -- island 32.8% of the sheet, half of it facing camera, 0.164*R^2 =
--- 10,300 px, so R = 250 -- is correct for AREA and irrelevant for EDGES. Putting
--- one texel per pixel places the stair steps at exactly the size the eye
--- resolves. Edges want headroom over the sampling rate, not parity with it.
---
--- MEMORY IS THE COST OF THAT, AND IT IS NOT SMALL. 1024 RGBA is 4 MB per skin:
--- 24 MB for one tier, 96 MB for 24 skins, 260 MB at the full 65. That last
--- number is past what a Roblox place should spend on slime skins. 512 halves the
--- linear resolution for a quarter of the memory -- 1 MB per skin, 65 MB at 65 --
--- and with antialiasing doing the real work on edges, 512 is the likely shipping
--- value. TEX is the only line that needs changing.
---
--- THE FACE IS MASKED OUT OF THE PATTERN. The eyes and blush are separate
--- MeshParts sitting proud of the body, and they read best against a saturated
--- mid-tone rather than against a pale accent -- white eye_white on a pale accent
--- washes out. A cone around the face direction is forced to base colour, with a
--- soft edge so it is not a visible disc. The mask is applied BEFORE coverage is
--- measured, so the tier percentages are true of the finished skin.
+-- NO SPOTS, NO PATCHES, NO WEDGES -- and the reasons differ, which matters.
+-- Wedges converge to a point at the pole, so their width goes to zero by
+-- construction; any shape sized as a function of latitude half-resolves
+-- somewhere. Spots and patches had no such flaw and passed the pixel rule at
+-- 30.6 px, and were still cut, because on a rounded body a scatter of blobs
+-- reads as STAINING however cleanly its edges land. Resolving is necessary and
+-- not sufficient.
 --
 -- THE TEXTURE PIPELINE IS BUILD_GALAXY's, INCLUDING ITS OWNERSHIP RULE. Per
--- texel, recover the 3D point on the mesh and evaluate the pattern there -- 3D
--- has no seam and no pole, so continuity is free. Texel ownership is decided by
--- containment class, never by rasterisation order, and never by ranking
+-- texel, recover the 3D point on the mesh and evaluate the field there -- 3D has
+-- no seam and no pole, so continuity is free, which is what lets a boundary run
+-- round the whole body without breaking at the wrap. Texel ownership is decided
+-- by containment class, never by rasterisation order, and never by ranking
 -- interiority magnitude. See BUILD_GALAXY's header for why that last one is a
 -- trap. That code is duplicated here rather than shared because these files are
 -- standalone by design.
@@ -128,10 +117,8 @@ local P = {
 	-- it is visible at all, and matching texel size to pixel size puts the steps
 	-- exactly at the size the eye picks up. Edges need headroom over the sampling
 	-- rate, not parity with it.
-	TEX = 1024,
+	TEX = 512,
 	ROOT_NAME = "SkinLineup",
-	-- nil builds all four tiers; a tier name builds only that one
-	ONLY_TIER = "Rare",
 	SOURCE_MODEL = "slime_uv",       -- the UNWRAPPED body; lineup meshes have no UVs
 	SOURCE_PART = "default",
 	-- Plastic, NOT SmoothPlastic. SmoothPlastic's specular lobe puts a hard white
@@ -139,10 +126,9 @@ local P = {
 	-- lineup slimes are Plastic anyway.
 	BODY_MATERIAL = Enum.Material.Plastic,
 
-	-- ---- layout: hues along X, tiers along Z ----
+	-- ---- layout: one row, hues along X ----
 	ORIGIN = Vector3.new(-55, 0, -260),
 	HUE_SPACING = 22,
-	TIER_SPACING = 30,
 	BODY_YAW_DEG = 179.4,            -- turns the face toward the camera
 
 	-- ---- the viewing condition the whole design is calibrated to ----
@@ -151,31 +137,23 @@ local P = {
 	VIEW_FRAME_PX = 563,
 	MIN_FEATURE_PX = 8,              -- below this a feature half-resolves; hard assert
 
-	-- ---- rarity ladder: fraction of the body wearing the accent ----
-	TIER_COVERAGE = { 0.10, 0.25, 0.42, 0.60 },
+	-- ---- the split ----
+	-- NOT a rarity axis. Both colours are the body; neither is applied to the
+	-- other. The search below solves each boundary's offset so the two sides come
+	-- out at this ratio, which is what stops either colour reading as paint.
+	BALANCE = 0.50,
 	COVERAGE_TOLERANCE = 0.004,      -- binary search stops inside this
 	COVERAGE_ITERS = 24,
 	COVERAGE_SAMPLE_STRIDE = 3,      -- every Nth covered texel during the search
 	CALIBRATE_TICK_EVERY = 512,      -- yield check inside the search loop
 	PAINT_TICK_ROWS = 6,             -- yield check every N rows of the paint loop
 
-	-- ---- accent derivation ----
-	-- ONE CREAM, FOR EVERY HUE.
-	--
-	-- The accent must not look like SHADING: a merely darker version of the base
-	-- fails at 40 studs even at a 0.36 luminance gap, because a curved lit body
-	-- already spans that much from highlight to shaded flank, so the pattern reads
-	-- as form. Cream satisfies that -- lighting cannot produce cream on green.
-	--
-	-- But it must not look like DIRT either, which is where near-black and
-	-- near-white landed. Both are absences of colour; on a saturated toy body they
-	-- read as a stain or a blown-out highlight rather than as a second material.
-	-- A warm cream is a colour, and it sits in the same palette as the bodies.
-	--
-	-- Pulled 10% toward the base hue so each slime's marking belongs to that
-	-- slime rather than looking pasted on from outside the palette.
-	ACCENT_CREAM = Color3.fromRGB(255, 246, 226),
-	ACCENT_HUE_MIX = 0.10,
+	-- ---- the two colours ----
+	-- White and the hue, in roughly equal weight. There is no "accent": at 50/50
+	-- with one clean boundary the eye reads ONE object made of two colours, and it
+	-- is dominance that makes the smaller colour look like paint applied to the
+	-- larger. A hair of warmth keeps the white from reading as clinical.
+	COLOUR_WHITE = Color3.fromRGB(252, 251, 247),
 
 	-- ---- edge antialiasing ----
 	-- Half-width of the accent boundary, in body-radii. A hard threshold gives a
@@ -188,24 +166,21 @@ local P = {
 	EDGE_SOFT = 0.012,
 
 	-- ---- face keep-clear ----
-	-- Sized to the face PARTS and no larger. The eyes span about 25 degrees of arc
-	-- from the body centre and the blush sits just under them, so 38 + 12 clears
-	-- them. It was 52 + 16 first, and that masked so much of the camera-facing
-	-- hemisphere that a Common slime showed almost no pattern from the front --
-	-- the coverage was all pushed around the sides where nobody looks.
-	FACE_DIR = Vector3.new(-3.537, 0.257, -4.448),
-	FACE_CLEAR_DEG = 38,
-	FACE_EDGE_DEG = 12,              -- soft falloff so the mask is not a visible disc
+	-- THE FACE MASK IS GONE. It forced a cone around the eyes back to base colour,
+	-- which drew a SECOND boundary on the body -- a faint disc floating around the
+	-- face, competing with the one boundary that is supposed to be the design. It
+	-- earned its place when the pattern was a marking on a base and a pale accent
+	-- could swallow the eye whites. At 50/50 the eyes read on either colour: the
+	-- dark eye mesh contrasts with white, and the hue side is a saturated mid-tone.
 
-	-- ---- shape placement ----
-	-- The high belt rides as a crown band because the face sits on the equator
-	-- (qy ~ 0.05) and a belt there lands squarely under the face mask -- at 10%
-	-- coverage that left the Common slime with two slivers at its edges and
-	-- nothing in front. The low belt sits under the face for the same reason.
-	BELT_HIGH_Y = 0.34,
-	BELT_LOW_Y = -0.30,
-	SPLIT_SHALLOW_DEG = 20,          -- gentle diagonal
-	SPLIT_STEEP_DEG = 55,            -- steep diagonal, nearly a side division
+	-- ---- the boundary, which IS the design ----
+	-- With the split fixed at 50/50 the only thing left to vary is the curve
+	-- itself: where it sits and what it does as it goes round. Amplitude is in
+	-- body-radii, so 0.16 is a peak-to-trough of 0.32 = 2.24 studs = 22.5 px at
+	-- 40 studs. A wave shallower than that is a wobble rather than a shape.
+	TILT_GENTLE_DEG = 22,
+	TILT_STEEP_DEG = 58,
+	WAVE_AMP = 0.16,
 
 	-- ---- watchdog ----
 	YIELD_MS = 12,
@@ -221,7 +196,6 @@ local HUES = {
 	{ name = "orange", color = Color3.fromRGB(250, 140, 40) },
 }
 
-local TIERS = { "Common", "Uncommon", "Rare", "Epic" }
 
 -- face parts, measured off a lineup slime; offsets are in body-local space
 local FACE_PARTS = {
@@ -294,8 +268,30 @@ local function planeNormal(tiltDeg: number): Vector3
 	local t = math.rad(tiltDeg)
 	return Vector3.new(math.sin(t), math.cos(t), 0).Unit
 end
-local N_SHALLOW = planeNormal(P.SPLIT_SHALLOW_DEG)
-local N_STEEP = planeNormal(P.SPLIT_STEEP_DEG)
+local N_GENTLE = planeNormal(P.TILT_GENTLE_DEG)
+local N_STEEP = planeNormal(P.TILT_STEEP_DEG)
+
+-- AZIMUTHAL HARMONICS WITHOUT atan2. cos(k*theta) has no seam as a function of
+-- (x, z) -- it is a polynomial in x/r and z/r -- but atan2 does have a branch
+-- cut, and computing the angle first would import a discontinuity the 3D
+-- evaluation exists to avoid. Chebyshev on cos(theta) keeps it continuous.
+--
+-- The result is damped by r so it vanishes at the poles, where theta is
+-- undefined. Without that the wave would fight itself to a point at the top.
+local function harmonic(qx: number, qz: number, k: number): number
+	local r = math.sqrt(qx * qx + qz * qz)
+	if r < 1e-6 then return 0 end
+	local c = qx / r
+	local v
+	if k == 2 then
+		v = 2 * c * c - 1
+	elseif k == 3 then
+		v = 4 * c * c * c - 3 * c
+	else
+		v = c
+	end
+	return r * v
+end
 
 -- Soft threshold: 1 well inside the shape, 0 well outside, smooth across a band
 -- EDGE_SOFT wide. Everything below goes through this, so no boundary anywhere is
@@ -310,66 +306,65 @@ local function above(value: number, edge: number): number
 	return smoothstep(edge - E, edge + E, value)
 end
 
--- SPOTS AND PATCHES ARE GONE. Both resolved perfectly well by the pixel rule and
--- both still looked cheap: on a rounded body a scatter of blobs reads as
--- staining rather than as a marking, however cleanly its edges land. Resolving
--- is necessary and not sufficient. What survives is the family that follows the
--- body's own form -- bands and divisions -- and within-tier variety now comes
--- from WHERE the band sits and HOW the plane is angled, not from adding kinds.
-local SHAPES = {
+-- ===================================================================
+-- THE SIX BOUNDARIES.
+--
+-- Each is field(q, c) -> a signed number: white where it is positive, hue where
+-- it is negative, and the sign change IS the design. c slides the curve up and
+-- down the body and is the one knob the 50/50 search turns, so every entry only
+-- has to describe the curve's SHAPE, not its position.
+--
+-- waveStuds reports the peak-to-trough excursion, which is the only thing here
+-- that can be too small to read; a plane cut has none and reports the body.
+-- ===================================================================
+local BOUNDARIES = {
 	{
-		name = "belt-high",
-		accent = function(qx: number, qy: number, qz: number, k: number): number
-			return inside(math.abs(qy - P.BELT_HIGH_Y), k)
+		name = "level",
+		-- a flat cut: the plainest possible two-tone, and the control for the rest
+		field = function(qx: number, qy: number, qz: number, c: number): number
+			return qy - c
 		end,
-		minStuds = function(k: number, radius: number): number
-			return 2 * k * radius              -- the band's height
-		end,
+		waveStuds = function(radius: number): number return radius end,
 	},
 	{
-		name = "belt-low",
-		accent = function(qx: number, qy: number, qz: number, k: number): number
-			return inside(math.abs(qy - P.BELT_LOW_Y), k)
+		name = "tilt-gentle",
+		field = function(qx: number, qy: number, qz: number, c: number): number
+			return qx * N_GENTLE.X + qy * N_GENTLE.Y + qz * N_GENTLE.Z - c
 		end,
-		minStuds = function(k: number, radius: number): number
-			return 2 * k * radius
-		end,
+		waveStuds = function(radius: number): number return radius end,
 	},
 	{
-		name = "cap",
-		accent = function(qx: number, qy: number, qz: number, k: number): number
-			return above(qy, 1 - k)
+		name = "tilt-steep",
+		-- close to a left/right division rather than a top/bottom one
+		field = function(qx: number, qy: number, qz: number, c: number): number
+			return qx * N_STEEP.X + qy * N_STEEP.Y + qz * N_STEEP.Z - c
 		end,
-		minStuds = function(k: number, radius: number): number
-			return k * radius                  -- how far down the cap reaches
-		end,
+		waveStuds = function(radius: number): number return radius end,
 	},
 	{
-		name = "foot",
-		accent = function(qx: number, qy: number, qz: number, k: number): number
-			return inside(qy, k - 1)
+		name = "wave2",
+		-- two humps: reads as a soft S sweeping round the body
+		field = function(qx: number, qy: number, qz: number, c: number): number
+			return qy - c - P.WAVE_AMP * harmonic(qx, qz, 2)
 		end,
-		minStuds = function(k: number, radius: number): number
-			return k * radius
-		end,
+		waveStuds = function(radius: number): number return 2 * P.WAVE_AMP * radius end,
 	},
 	{
-		name = "split-shallow",
-		accent = function(qx: number, qy: number, qz: number, k: number): number
-			return above(qx * N_SHALLOW.X + qy * N_SHALLOW.Y + qz * N_SHALLOW.Z, 1 - 2 * k)
+		name = "wave3",
+		-- three humps: a scalloped crown
+		field = function(qx: number, qy: number, qz: number, c: number): number
+			return qy - c - P.WAVE_AMP * harmonic(qx, qz, 3)
 		end,
-		minStuds = function(k: number, radius: number): number
-			return math.min(k, 1 - k) * 2 * radius
-		end,
+		waveStuds = function(radius: number): number return 2 * P.WAVE_AMP * radius end,
 	},
 	{
-		name = "split-steep",
-		accent = function(qx: number, qy: number, qz: number, k: number): number
-			return above(qx * N_STEEP.X + qy * N_STEEP.Y + qz * N_STEEP.Z, 1 - 2 * k)
+		name = "tilt-wave2",
+		-- a tilted cut that also undulates, so neither end of the curve is level
+		field = function(qx: number, qy: number, qz: number, c: number): number
+			return qx * N_GENTLE.X + qy * N_GENTLE.Y + qz * N_GENTLE.Z
+				- c - P.WAVE_AMP * harmonic(qx, qz, 2)
 		end,
-		minStuds = function(k: number, radius: number): number
-			return math.min(k, 1 - k) * 2 * radius
-		end,
+		waveStuds = function(radius: number): number return 2 * P.WAVE_AMP * radius end,
 	},
 }
 
@@ -546,7 +541,7 @@ end
 -- well -- the separation there is chroma, not brightness. RGB distance catches
 -- what luminance misses, so both are measured and both are reported.
 local function accentFor(base: Color3): (Color3, number, number)
-	local acc = P.ACCENT_CREAM:Lerp(base, P.ACCENT_HUE_MIX)
+	local acc = P.COLOUR_WHITE
 	local lumGap = math.abs(luminance(acc) - luminance(base))
 	local dr, dg, db = acc.R - base.R, acc.G - base.G, acc.B - base.B
 	return acc, lumGap, math.sqrt(dr * dr + dg * dg + db * db)
@@ -610,47 +605,43 @@ local function run()
 	end
 	log("[Skins] coverage search samples %d of %d covered texels", #sample, M.covered)
 
-	-- ---- face keep-clear mask ----
-	local FD = P.FACE_DIR.Unit
-	local cosClear = math.cos(math.rad(P.FACE_CLEAR_DEG))
-	local cosEdge = math.cos(math.rad(P.FACE_CLEAR_DEG + P.FACE_EDGE_DEG))
-	local function faceOpen(qx: number, qy: number, qz: number): number
-		local l = math.sqrt(qx * qx + qy * qy + qz * qz)
-		if l < 1e-9 then return 1 end
-		local d = (qx * FD.X + qy * FD.Y + qz * FD.Z) / l
-		-- 0 inside the cone (pure base), 1 well outside it
-		return smoothstep(cosClear, cosEdge, d)
+	-- White where the field is positive, softened across EDGE_SOFT so the boundary
+	-- is never a texel step.
+	local function whiteAt(b, qx: number, qy: number, qz: number, c: number): number
+		return smoothstep(-P.EDGE_SOFT, P.EDGE_SOFT, b.field(qx, qy, qz, c))
 	end
 
-	-- ---- calibrate one shape to a target coverage ----
-	-- Ticks INSIDE the sample loop, not just per iteration. 24 iterations over
-	-- 7680 samples is 184k shape evaluations, and 'spots' costs 27 lattice cells
-	-- each -- that is 5M hash operations per skin. Ticking only at the iteration
-	-- boundary measured a 522 ms main-thread hold, which is the watchdog dialog
-	-- waiting to happen.
-	local function calibrate(shape, target: number): (number, number)
-		local lo, hi = 0.0, 2.0
+	-- ---- slide the boundary until the two sides balance ----
+	-- The offset runs over the body's own extent, not 0..2: these fields are
+	-- signed distances along an axis through a body whose qy only reaches ~0.68,
+	-- and a search range wider than the body wastes its first iterations outside
+	-- it. Monotone in c by construction -- raising the cut can only grow the side
+	-- below it -- which is what makes a bisection valid here.
+	--
+	-- Ticks INSIDE the sample loop, not just per iteration: 24 iterations over
+	-- ~39k samples is a million field evaluations, and ticking only at the
+	-- iteration boundary previously measured a 522 ms main-thread hold.
+	local function balance(b, target: number): (number, number)
+		local lo, hi = -1.2, 1.2
 		local got = 0
 		for _ = 1, P.COVERAGE_ITERS do
 			local mid = (lo + hi) / 2
-			-- Coverage INTEGRATES the soft accent value rather than counting a
-			-- boolean. With antialiased edges a texel can be half accent, and
-			-- summing the fractions is what keeps the tier percentages honest.
 			local hit = 0
 			for si, q in ipairs(sample) do
 				if si % P.CALIBRATE_TICK_EVERY == 0 then Y.tick() end
-				hit += shape.accent(q[1], q[2], q[3], mid) * faceOpen(q[1], q[2], q[3])
+				hit += whiteAt(b, q[1], q[2], q[3], mid)
 			end
 			got = hit / #sample
 			if math.abs(got - target) <= P.COVERAGE_TOLERANCE then
 				return mid, got
 			end
-			if got < target then lo = mid else hi = mid end
+			-- raising the cut shrinks the white side, so the sense is inverted
+			if got > target then lo = mid else hi = mid end
 		end
 		return (lo + hi) / 2, got
 	end
 
-	-- ---- generate the 24 skins ----
+	-- ---- generate one slime per hue ----
 	for _, c in ipairs(workspace:GetChildren()) do
 		if c.Name == P.ROOT_NAME then c:Destroy() end
 	end
@@ -661,41 +652,33 @@ local function run()
 	local localOff = Vector3.new(M.CX, M.CY, M.CZ)
 	local buf = buffer.create(W * W * 4)
 	local worstFeaturePx, worstFeatureWhat = math.huge, "?"
-	local worstGapByTier = {}
 	local rows = {}
 	local texCount = 0
+	local worstGap, worstGapHue = math.huge, "?"
 
-	for ti, tierName in ipairs(TIERS) do
-		if P.ONLY_TIER and tierName ~= P.ONLY_TIER then continue end
-		local target = P.TIER_COVERAGE[ti]
-		local tierWorstGap, tierWorstHue = math.huge, "?"
-		local tierMinPx, tierMinWhat = math.huge, "?"
-		local covLo, covHi = math.huge, -math.huge
+	do
+		local target = P.BALANCE
+		local balLo, balHi = math.huge, -math.huge
 
 		for hi_, hue in ipairs(HUES) do
 			Y.tick()
-			-- shape rotates by tier, so a hue wears a different pattern at each rarity
-			local shape = SHAPES[((hi_ - 1 + ti - 1) % #SHAPES) + 1]
-			local k, measured = calibrate(shape, target)
-			covLo = math.min(covLo, measured)
-			covHi = math.max(covHi, measured)
+			local shape = BOUNDARIES[((hi_ - 1) % #BOUNDARIES) + 1]
+			local k, measured = balance(shape, target)
+			balLo = math.min(balLo, measured)
+			balHi = math.max(balHi, measured)
 
-			local featureStuds = shape.minStuds(k, bodyRadiusStuds)
+			local featureStuds = shape.waveStuds(bodyRadiusStuds)
 			local featurePx = featureStuds * pxPerStud
-			if featurePx < tierMinPx then
-				tierMinPx = featurePx
-				tierMinWhat = shape.name
-			end
 			if featurePx < worstFeaturePx then
 				worstFeaturePx = featurePx
-				worstFeatureWhat = string.format("%s/%s", tierName, shape.name)
+				worstFeatureWhat = shape.name
 			end
 
 			local base = hue.color
 			local accent, lumGap, rgbDist = accentFor(base)
-			if rgbDist < tierWorstGap then
-				tierWorstGap = rgbDist
-				tierWorstHue = string.format("%s (rgb %.3f, lum %.3f)", hue.name, rgbDist, lumGap)
+			if rgbDist < worstGap then
+				worstGap = rgbDist
+				worstGapHue = string.format("%s (rgb %.3f, lum %.3f)", hue.name, rgbDist, lumGap)
 			end
 
 			-- paint
@@ -711,7 +694,7 @@ local function run()
 						local qx = buffer.readf32(POS, o)
 						local qy = buffer.readf32(POS, o + 4)
 						local qz = buffer.readf32(POS, o + 8)
-						local a = shape.accent(qx, qy, qz, k) * faceOpen(qx, qy, qz)
+						local a = whiteAt(shape, qx, qy, qz, k)
 						buffer.writeu8(buf, off, math.floor(math.clamp(br + (ar - br) * a, 0, 1) * 255 + 0.5))
 						buffer.writeu8(buf, off + 1, math.floor(math.clamp(bg + (ag - bg) * a, 0, 1) * 255 + 0.5))
 						buffer.writeu8(buf, off + 2, math.floor(math.clamp(bb + (ab - bb) * a, 0, 1) * 255 + 0.5))
@@ -730,14 +713,13 @@ local function run()
 			texCount += 1
 
 			-- assemble this slime
-			local at = P.ORIGIN
-				+ Vector3.new((hi_ - 1) * P.HUE_SPACING, 0, (ti - 1) * P.TIER_SPACING)
+			local at = P.ORIGIN + Vector3.new((hi_ - 1) * P.HUE_SPACING, 0, 0)
 			-- ORIGIN.Y is the ground; lift by half the body so it rests on it
 			local bodyCF = CFrame.new(at.X, at.Y + bodyHeightStuds / 2, at.Z)
 				* CFrame.Angles(0, math.rad(P.BODY_YAW_DEG), 0)
 
 			local slime = Instance.new("Model")
-			slime.Name = string.format("%s_%s", tierName, hue.name)
+			slime.Name = string.format("%s_%s", hue.name, shape.name)
 			slime.Parent = root
 
 			local body = src:Clone()
@@ -770,18 +752,20 @@ local function run()
 			-- Model:GetBoundingBox both point at empty air. Record where the body
 			-- actually is; anything repositioning these needs it.
 			slime:SetAttribute("BodyCentre", Vector3.new(at.X, at.Y + bodyHeightStuds / 2, at.Z))
-			slime:SetAttribute("Tier", tierName)
+			slime:SetAttribute("Tier", "Balanced")
 			slime:SetAttribute("Hue", hue.name)
 			slime:SetAttribute("Shape", shape.name)
-			slime:SetAttribute("Coverage", measured)
-			slime:SetAttribute("FeaturePx", featurePx)
+			slime:SetAttribute("WhiteFraction", measured)
+			slime:SetAttribute("BoundaryOffset", k)
+
+			table.insert(rows, string.format(
+				"[Skins]   %-7s %-11s offset %+.4f  white %.1f%%  wave %.1f px",
+				hue.name, shape.name, k, measured * 100, featurePx))
 		end
 
-		worstGapByTier[ti] = { hue = tierWorstHue, gap = tierWorstGap }
 		table.insert(rows, string.format(
-			"[Skins] %-9s target %2.0f%% | measured %.1f-%.1f%% | smallest feature %.1f px (%s) | worst hue %s",
-			tierName, target * 100, covLo * 100, covHi * 100, tierMinPx, tierMinWhat,
-			tierWorstHue))
+			"[Skins] balance target %.0f%% | measured %.1f-%.1f%% across the six",
+			target * 100, balLo * 100, balHi * 100))
 	end
 
 	for _, r in ipairs(rows) do table.insert(lines, r) end
@@ -790,15 +774,16 @@ local function run()
 		"[Skins] smallest feature is %.1f px (%s) at %d studs, under the %d px floor -- "
 			.. "it would half-resolve, which is the exact failure this design exists to avoid",
 		worstFeaturePx, worstFeatureWhat, P.VIEW_DISTANCE, P.MIN_FEATURE_PX))
-	log("[Skins] SMALLEST FEATURE across all 24: %.1f px (%s), floor is %d px",
+	log("[Skins] smallest boundary excursion: %.1f px (%s), floor is %d px",
 		worstFeaturePx, worstFeatureWhat, P.MIN_FEATURE_PX)
+	log("[Skins] worst hue against white: %s", worstGapHue)
 
 	local perTexKB = W * W * 4 / 1024
 	log("[Skins] MEMORY: %d x %d RGBA = %.0f KB per skin | %d skins = %.1f MB | all 65 = %.1f MB",
 		W, W, perTexKB, texCount, texCount * perTexKB / 1024, 65 * perTexKB / 1024)
-	log("[Skins] one-texture-per-tier + hue tint would be %.1f MB now / %.1f MB at 65, "
-		.. "but forces all six slimes in a tier to share one shape",
-		4 * perTexKB / 1024, 11 * perTexKB / 1024)
+	-- Sharing is not available here at all: each slime carries a DIFFERENT
+	-- boundary, so there is no shared image to tint. It would only become an
+	-- option if a whole set wore one curve, which is the opposite of the design.
 
 	-- Reported, not asserted: an overrun is a performance fault, not a wrong
 	-- image, and throwing away 24 finished textures over it is worse than saying
