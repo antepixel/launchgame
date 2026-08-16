@@ -124,6 +124,7 @@ local CONFIG = {
 	ShellTransparency = 0.8,
 	LightRange = 60,
 	LightBrightness = 14,
+	LightHeightStuds = 18,   -- was hardcoded inside the pose source; it is a LENGTH
 
 	-- the breath itself, shared with SlimeIdleClient
 	IdleAmplitude = 0.08,
@@ -135,21 +136,112 @@ local CONFIG = {
 }
 
 -- ===================================================================
+-- 1b. BODY PROFILES -- the same treatment on bodies of different size.
+--
+-- Every length in CONFIG above is authored against the GIANT (workspace.w,
+-- 334.42 studs across). A lineup slime is 14.00 across, a uniform 1/23.89, so
+-- those numbers have to come down or the halo swallows the slime. They are
+-- SCALED HERE rather than copied into a second file, because two copies of the
+-- pose maths is exactly how two versions drift apart.
+--
+-- WHAT SCALES AND WHAT DOES NOT is the entire content of this block:
+--   * LENGTHS scale with the body -- HaloRadius, HaloHeightStuds, MoteRadiusMin,
+--     MoteRadiusMax, LightRange, LightHeightStuds, the blade thicknesses, MoteSize.
+--   * NOTHING ELSE DOES. Every colour, every angle (HaloTiltDeg, HaloRollDeg,
+--     MoteInclineMin/MaxDeg), every ratio (HaloGapFraction, HaloWidthRatio,
+--     PulseDepth, ShellInflate, ShellTransparency, IdleAmplitude), every rate
+--     (HaloSpeed, MoteSpeed, HueDriftRate, IdlePeriod), and MoteCount are already
+--     dimensionless.
+--
+-- TWO ARE EASY TO GET WRONG, so they are named. ShellInflate is a FRACTION of
+-- body size -- the pose multiplies it into b.size -- so scaling it would shrink
+-- the shell twice. LightBrightness is an INTENSITY, not a distance; with the
+-- geometry scaled uniformly the same value lands the same illumination, and
+-- dividing it would dim the base glow for no reason.
+--
+-- THIN FEATURES NEED MORE THAN THE SCALE FACTOR. A straight divide is
+-- geometrically right and visually wrong once a feature stops resolving. At 40
+-- studs and FOV 70 the frame is ~10 px per stud, so a blade at 4 / 23.89 = 0.17
+-- studs is a 1.7 px sliver that aliases instead of reading as a shape. ThinBoost
+-- and MoteBoost lift those back over the threshold. Both are 1 on the giant,
+-- where nothing is anywhere near it.
+-- ===================================================================
+local REFERENCE_WIDTH = 334.4164733886719   -- the giant's BaseSizeX; CONFIG is authored for this
+
+local PROFILES = {
+	giant = {
+		RootName = "DivinePrototype",
+		BodyModelName = "w",
+		HaloSegments = 48,
+		ThinBoost = 1,
+		MoteBoost = 1,
+		PhaseExpect = 0.20121376577200081,
+		Baseline = {
+			BaseSizeX = 334.4164733886719,
+			BaseSizeY = 226.50440979003906,
+			BaseSizeZ = 334.5528869628906,
+			BaseX = 78.52466583251953,
+			BaseZ = 240.9720916748047,
+			RestY = -5.515754699707031,
+			OriginalColor = Color3.fromRGB(70, 200, 80),
+			OriginalMaterial = "Plastic",
+		},
+	},
+	lineup = {
+		RootName = "DivineSmall",
+		BodyModelName = "w_small",
+		-- 48 BLADES DO NOT SURVIVE THE SHRINK, and faceting is not why. The
+		-- sagitta at 24 segments on a 6.61 radius is R*(1-cos(pi/24)) = 0.057
+		-- studs, well under a pixel -- even 16 would still look round. The GAPS
+		-- are the constraint: at 48 the chord is 0.865 studs and the 12% gap is
+		-- 0.104 studs, about 1 px, so the blades merge and the ring renders as a
+		-- thin washed-out outline instead of a struck crown. At 24 the gap is 2.1
+		-- px and the taper reads. Verified by building both and comparing.
+		HaloSegments = 24,
+		ThinBoost = 2,
+		MoteBoost = 1.5,
+		PhaseExpect = 0.49993847500041505,
+		Baseline = {
+			BaseSizeX = 14.000000,
+			BaseSizeY = 9.482373,
+			BaseSizeZ = 14.005711,
+			BaseX = -140.000000,
+			BaseZ = 0.000000,
+			RestY = 0.000000,
+			OriginalColor = Color3.fromRGB(225, 60, 60),
+			OriginalMaterial = "Plastic",
+		},
+	},
+}
+
+-- CHANGE THIS LINE to retarget the treatment. Nothing else needs editing.
+local ACTIVE_PROFILE = "giant"
+
+local PROFILE = PROFILES[ACTIVE_PROFILE]
+assert(PROFILE, string.format("[Divine] unknown profile %q", tostring(ACTIVE_PROFILE)))
+
+-- Exactly 1.0 on the giant, so that path stays bit-identical to before profiles.
+local BODY_SCALE = PROFILE.Baseline.BaseSizeX / REFERENCE_WIDTH
+
+CONFIG.BodyModelName = PROFILE.BodyModelName
+CONFIG.HaloSegments = PROFILE.HaloSegments
+for _, k in ipairs({
+	"HaloRadius", "HaloHeightStuds", "MoteRadiusMin", "MoteRadiusMax",
+	"LightRange", "LightHeightStuds",
+}) do
+	CONFIG[k] = CONFIG[k] * BODY_SCALE
+end
+CONFIG.HaloThickMin = CONFIG.HaloThickMin * BODY_SCALE * PROFILE.ThinBoost
+CONFIG.HaloThickMax = CONFIG.HaloThickMax * BODY_SCALE * PROFILE.ThinBoost
+CONFIG.MoteSize = CONFIG.MoteSize * BODY_SCALE * PROFILE.MoteBoost
+
+-- ===================================================================
 -- 2. THE BAKED BASELINE. See the header -- never re-measure this.
 -- Phase is omitted deliberately: it is DERIVED from the rest centre below and
 -- checked against PHASE_EXPECT, so a wrong baseline cannot pass silently.
 -- ===================================================================
-local BASELINE = {
-	BaseSizeX = 334.4164733886719,
-	BaseSizeY = 226.50440979003906,
-	BaseSizeZ = 334.5528869628906,
-	BaseX = 78.52466583251953,
-	BaseZ = 240.9720916748047,
-	RestY = -5.515754699707031,
-	OriginalColor = Color3.fromRGB(70, 200, 80),
-	OriginalMaterial = "Plastic",
-}
-local PHASE_EXPECT = 0.20121376577200081
+local BASELINE = PROFILE.Baseline
+local PHASE_EXPECT = PROFILE.PhaseExpect
 
 -- ===================================================================
 -- 3. THE BODY. workspace.w is NOT a lineup slime: it sits directly under
@@ -246,6 +338,7 @@ function DivinePose.config(root: Instance)
 		PulseDepth = g("PulseDepth"), ShellInflate = g("ShellInflate"),
 		ShellTransparency = g("ShellTransparency"),
 		LightRange = g("LightRange"), LightBrightness = g("LightBrightness"),
+		LightHeightStuds = g("LightHeightStuds"),
 		IdleAmplitude = g("IdleAmplitude"), IdlePeriod = g("IdlePeriod"),
 	}
 end
@@ -351,7 +444,7 @@ function DivinePose.pose(t: number, c, b)
 
 	-- ===== 1e: ground light, same clock again =====
 	local light = {
-		cf = CFrame.new(b.x, b.restY + 18, b.z),
+		cf = CFrame.new(b.x, b.restY + c.LightHeightStuds, b.z),
 		brightness = c.LightBrightness * (1 + 0.5 * c.PulseDepth * u),
 		range = c.LightRange,
 		color = bodyColor:Lerp(Color3.new(1, 1, 1), 0.35),
@@ -455,7 +548,7 @@ end)
 -- ===================================================================
 -- 6. BUILD.
 -- ===================================================================
-local ROOT_NAME = "DivinePrototype"
+local ROOT_NAME = PROFILE.RootName
 
 -- phaseFor, needed here to DERIVE Phase at build time. Same function as the
 -- module's; duplicated because the module does not exist yet when this runs.
@@ -484,14 +577,33 @@ local function ensureBody(lines: { string })
 
 	table.insert(lines, string.format(
 		"[Divine] workspace.%s MISSING -- rebuilding it from baked mesh data", CONFIG.BodyModelName))
+	-- BODY_PARTS are baked in the GIANT's coordinates, so any other profile has to
+	-- bring them down and move them. Scale about the giant's REST CENTRE rather
+	-- than repositioning each part independently -- the four parts' relative
+	-- layout is what puts the face on the body, and moving them separately would
+	-- leave the eyes floating off it.
+	local gb = PROFILES.giant.Baseline
+	local srcCentre = Vector3.new(gb.BaseX, gb.RestY + gb.BaseSizeY / 2, gb.BaseZ)
+	local dstCentre = Vector3.new(
+		BASELINE.BaseX, BASELINE.RestY + BASELINE.BaseSizeY / 2, BASELINE.BaseZ)
+	local identity = BODY_SCALE == 1 and dstCentre == srcCentre
+
 	model = Instance.new("Model")
 	model.Name = CONFIG.BodyModelName
 	for _, spec in ipairs(BODY_PARTS) do
 		-- MeshId is not writable from a script; this is the route that works
 		local part = AssetService:CreateMeshPartAsync(Content.fromUri(spec.mesh))
 		part.Name = spec.name
-		part.Size = spec.size
-		part.CFrame = spec.cf
+		if identity then
+			-- take the baked values untouched, so the giant cannot drift by a
+			-- rounding step just because the scaling path exists
+			part.Size = spec.size
+			part.CFrame = spec.cf
+		else
+			part.Size = spec.size * BODY_SCALE
+			part.CFrame = (spec.cf - spec.cf.Position)
+				+ (dstCentre + (spec.cf.Position - srcCentre) * BODY_SCALE)
+		end
 		part.Color = spec.color
 		part.Material = spec.material
 		part.Anchored = true
