@@ -54,10 +54,14 @@
 local AssetService = game:GetService("AssetService")
 
 local P = {
-	SOURCE_MODEL = "slime_uv",
-	SOURCE_PART = "default",
+	-- Any of these, first match wins, and the first MeshPart ANYWHERE beneath it
+	-- is the body. Importers nest the mesh differently every time -- the current
+	-- one arrives as AuxScene/slime_body_export/slime_body_Node/slime_body -- so
+	-- searching beats naming a fixed child.
+	SOURCE_MODELS = { "AuxScene", "slime_uv" },
 	TEX = 512,                   -- the resolution the skins actually ship at
 	CONFLICT_EPS = 0.05,         -- body-radii; ~8 texels, far outside edge rounding
+	CONFLICT_EPS_TIGHT = 0.02,   -- reported alongside, for comparing with other tools
 	TEAR_FACTOR = 6,             -- a neighbour this many times the median step is a tear
 	MIN_COVERAGE = 0.85,
 	YIELD_MS = 12,
@@ -85,10 +89,18 @@ local function run()
 		log("  [%s] %-28s %s", ok and "PASS" or "FAIL", name, detail)
 	end
 
-	local model = workspace:FindFirstChild(P.SOURCE_MODEL)
-	assert(model, "[Verify] workspace." .. P.SOURCE_MODEL .. " not found")
-	local src = model:FindFirstChild(P.SOURCE_PART) :: BasePart
-	assert(src, "[Verify] " .. P.SOURCE_MODEL .. "." .. P.SOURCE_PART .. " not found")
+	local model, src
+	for _, name in ipairs(P.SOURCE_MODELS) do
+		local m = workspace:FindFirstChild(name)
+		if m then
+			for _, d in ipairs(m:GetDescendants()) do
+				if d:IsA("MeshPart") then model, src = m, d :: BasePart break end
+			end
+			if src then break end
+		end
+	end
+	assert(src, "[Verify] no MeshPart found under any of: " .. table.concat(P.SOURCE_MODELS, ", "))
+	log("[Verify] source: %s", src:GetFullName())
 
 	local Y = newYielder(P.YIELD_MS)
 	local W = P.TEX
@@ -191,6 +203,7 @@ local function run()
 	local PRIO = buffer.create(W*W*8)
 	local MASK = buffer.create(W*W)
 	local covered, contested, worstContest = 0, 0, 0
+	local contestedTight = 0
 	for _, f in ipairs(faces) do
 		Y.tick()
 		if faceIsStray(f) then continue end
@@ -242,6 +255,7 @@ local function run()
 								contested += 1
 								if dist > worstContest then worstContest = dist end
 							end
+							if dist > P.CONFLICT_EPS_TIGHT then contestedTight += 1 end
 							local ic, hc = interior >= 0, hi_ >= 0
 							if ic ~= hc then wins = ic else wins = outward > ho end
 						end
@@ -256,8 +270,10 @@ local function run()
 	end
 
 	check(contested == 0, "injective (no shared texels)",
-		string.format("%d texels claimed by two disagreeing faces (%.2f%% of island), worst %.3f body-radii",
-			contested, 100 * contested / math.max(1, covered), worstContest))
+		string.format("%d texels claimed by two disagreeing faces (%.2f%% of island), worst %.4f body-radii"
+			.. " | at a tighter %.2f tolerance: %d",
+			contested, 100 * contested / math.max(1, covered), worstContest,
+			P.CONFLICT_EPS_TIGHT, contestedTight))
 
 	local coverage = covered / (W*W)
 	check(coverage >= P.MIN_COVERAGE, "island fills the sheet",

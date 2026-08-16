@@ -170,8 +170,17 @@ local P = {
 	-- size, which puts the stair steps at exactly the size the eye resolves.
 	TEX = 512,
 	ROOT_NAME = "SkinLineup",
-	SOURCE_MODEL = "slime_uv",       -- the UNWRAPPED body; lineup meshes have no UVs
-	SOURCE_PART = "default",
+	-- The UNWRAPPED body; the lineup meshes have exactly ONE distinct UV coordinate
+	-- and cannot display a texture at all. First name that resolves wins, and the
+	-- first MeshPart ANYWHERE beneath it is the body -- importers nest it
+	-- differently every time.
+	SOURCE_MODELS = { "AuxScene", "slime_uv" },
+
+	-- Everything is calibrated to the lineup's body width: 40 studs, 10.05 px per
+	-- stud, a 141 px body. The source part arrives at whatever scale the exporter
+	-- chose -- the re-unwrapped mesh is 2.0 units across, not 14 -- so the clone is
+	-- scaled to hit this rather than trusting the import.
+	BODY_WIDTH_STUDS = 14.0,
 	-- Plastic, NOT SmoothPlastic. SmoothPlastic's specular lobe puts a hard white
 	-- highlight on the dome that competes with the pattern for the eye, and the
 	-- lineup slimes are Plastic anyway.
@@ -263,6 +272,7 @@ local P = {
 	--
 	-- Power 1 integrates to h - h^3/3, so alpha(h) = 0.75 * total * (h - h^3/3)
 	-- delivers exactly twistDeg end to end while peaking at 1.5x the flat rate.
+	-- SET 0 to switch the ramp off and get the flat rate back, for comparison.
 	TWIST_RAMP_POWER = 1,
 
 	-- ---- the crown cap ----
@@ -409,11 +419,17 @@ end
 -- alphaRate is its derivative with respect to h. The rate is shaped so it peaks
 -- at the equator and reaches ZERO at both poles, which is what stops the
 -- boundary cutting across longitude where longitudes converge.
+-- POWER 0 IS A REAL SETTING, not a degenerate one: it is the flat rate the ramp
+-- replaced, kept so the ramp can be switched off and compared. Both forms are
+-- normalised so alpha(1) - alpha(-1) is exactly `total` either way, which is what
+-- makes the comparison fair -- the twist delivered end to end is identical and
+-- only its distribution over the height changes.
 local function alphaOf(h: number, total: number): number
-	-- integral of (1 - h^2), normalised so alpha(1) - alpha(-1) == total
-	return total * 0.75 * (h - h * h * h / 3)
+	if P.TWIST_RAMP_POWER == 0 then return total * h / 2 end
+	return total * 0.75 * (h - h * h * h / 3)     -- integral of (1 - h^2)
 end
 local function alphaRate(h: number, total: number): number
+	if P.TWIST_RAMP_POWER == 0 then return total / 2 end
 	return total * 0.75 * (1 - h * h)
 end
 
@@ -455,17 +471,48 @@ local function buildUVMap(meshId: string, W: number, H: number, Y)
 	local verts, faces = em:GetVertices(), em:GetFaces()
 	Y.mark()
 
+	-- STRAY GEOMETRY IS EXCLUDED BY DISTANCE FROM THE CENTROID, not by a Y test.
+	-- This used to read `if p.Y < 0`, which worked only because every vertex of the
+	-- OLD body happened to sit below zero. The re-unwrapped mesh spans Y 0..1.355 --
+	-- entirely above it -- so that test would have excluded the WHOLE BODY and
+	-- produced an empty texture with no error at all. Distance from the centroid
+	-- says what "stray" actually means and survives any re-export or re-centring.
+	local sx, sy, sz = 0, 0, 0
+	for _, id in ipairs(verts) do
+		Y.tick()
+		local p = em:GetPosition(id)
+		sx += p.X; sy += p.Y; sz += p.Z
+	end
+	local gx, gy, gz = sx / #verts, sy / #verts, sz / #verts
+	local dsum = 0
+	for _, id in ipairs(verts) do
+		Y.tick()
+		local p = em:GetPosition(id)
+		dsum += math.sqrt((p.X-gx)^2 + (p.Y-gy)^2 + (p.Z-gz)^2)
+	end
+	local dmean = dsum / #verts
+	local isStray: { [number]: boolean } = {}
+	local strayVerts = 0
+	for _, id in ipairs(verts) do
+		Y.tick()
+		local p = em:GetPosition(id)
+		if math.sqrt((p.X-gx)^2 + (p.Y-gy)^2 + (p.Z-gz)^2) > 8 * dmean then
+			isStray[id] = true
+			strayVerts += 1
+		end
+	end
+
 	local mnx, mxx = math.huge, -math.huge
 	local mny, mxy = math.huge, -math.huge
 	local mnz, mxz = math.huge, -math.huge
-	-- the FULL bbox too, stray cube included: that is what the part's Size covers,
-	-- so it is the only way to convert mesh units to studs
+	-- the FULL bbox too, strays included: that is what the part's Size covers, so
+	-- it is the only way to convert mesh units to studs
 	local amnx, amxx = math.huge, -math.huge
 	for _, id in ipairs(verts) do
 		Y.tick()
 		local p = em:GetPosition(id)
 		amnx = math.min(amnx, p.X); amxx = math.max(amxx, p.X)
-		if p.Y < 0 then                      -- excludes the stray cube ~500 above
+		if not isStray[id] then
 			mnx = math.min(mnx, p.X); mxx = math.max(mxx, p.X)
 			mny = math.min(mny, p.Y); mxy = math.max(mxy, p.Y)
 			mnz = math.min(mnz, p.Z); mxz = math.max(mxz, p.Z)
@@ -482,11 +529,11 @@ local function buildUVMap(meshId: string, W: number, H: number, Y)
 	for _, f in ipairs(faces) do
 		Y.tick()
 		local fv = em:GetFaceVertices(f)
-		local p1, p2, p3 = em:GetPosition(fv[1]), em:GetPosition(fv[2]), em:GetPosition(fv[3])
-		if p1.Y > 0 or p2.Y > 0 or p3.Y > 0 then
+		if isStray[fv[1]] or isStray[fv[2]] or isStray[fv[3]] then
 			skipped += 1
 			continue
 		end
+		local p1, p2, p3 = em:GetPosition(fv[1]), em:GetPosition(fv[2]), em:GetPosition(fv[3])
 		local fu = em:GetFaceUVs(f)
 		local a, b, c = em:GetUV(fu[1]), em:GetUV(fu[2]), em:GetUV(fu[3])
 		local u1, u2, u3 = a.X, b.X, c.X
@@ -570,7 +617,7 @@ local function buildUVMap(meshId: string, W: number, H: number, Y)
 	return {
 		POS = POS, MASK = MASK, covered = covered, seamTris = seamTris, skipped = skipped,
 		CX = CX, CY = CY, CZ = CZ, RAD = RAD, HEIGHT = mxy - mny,
-		FULL_W = amxx - amnx,
+		FULL_W = amxx - amnx, strayVerts = strayVerts,
 	}
 end
 
@@ -632,17 +679,26 @@ local function run()
 	local function log(...) table.insert(lines, string.format(...)) end
 	local t0 = os.clock()
 
-	local srcModel = workspace:FindFirstChild(P.SOURCE_MODEL)
-	assert(srcModel, string.format(
-		"[Skins] workspace.%s not found. These skins need the UNWRAPPED body mesh; "
-			.. "the lineup slimes have exactly ONE distinct UV coordinate and cannot "
-			.. "display any texture at all.", P.SOURCE_MODEL))
-	local src = srcModel:FindFirstChild(P.SOURCE_PART) :: BasePart
-	assert(src, "[Skins] " .. P.SOURCE_MODEL .. "." .. P.SOURCE_PART .. " not found")
+	local src: BasePart? = nil
+	for _, name in ipairs(P.SOURCE_MODELS) do
+		local m = workspace:FindFirstChild(name)
+		if m then
+			for _, d in ipairs(m:GetDescendants()) do
+				if d:IsA("MeshPart") then src = d :: BasePart break end
+			end
+			if src then break end
+		end
+	end
+	assert(src, string.format(
+		"[Skins] no MeshPart found under any of {%s}. These skins need the UNWRAPPED "
+			.. "body; the lineup slimes have exactly ONE distinct UV coordinate and "
+			.. "cannot display a texture at all.", table.concat(P.SOURCE_MODELS, ", ")))
+	local source = src :: BasePart
+	log("[Skins] source: %s", source:GetFullName())
 
 	local W = P.TEX
 	local Y = newYielder(P.YIELD_MS)
-	local M = buildUVMap((src :: any).MeshId, W, W, Y)
+	local M = buildUVMap((source :: any).MeshId, W, W, Y)
 	log("[Skins] UV map: %d texels covered (%.1f%% of sheet), %d seam tris, %d cube faces skipped",
 		M.covered, 100 * M.covered / (W * W), M.seamTris, M.skipped)
 
@@ -651,13 +707,21 @@ local function run()
 	local grown = dilate(POS, MASK, W, W, 3, Y)
 	log("[Skins] dilated %d texels past the island edge (bilinear guard)", grown)
 
-	-- Mesh units -> studs. The part's Size covers the FULL mesh bbox, which the
-	-- stray cube inflates, so the conversion has to come from that and not from
-	-- the body. Every pixel figure below depends on this being right; it was
-	-- getting this wrong that framed an earlier shot at a fifth of body size.
-	local studsPerMeshUnit = src.Size.X / M.FULL_W
+	-- SCALE THE BODY TO THE CALIBRATED WIDTH rather than trusting the import. The
+	-- old mesh arrived 14 studs across and the re-unwrapped one arrives 2.0, so a
+	-- clone at source scale would be a seventh of the size with the face parts --
+	-- which are fixed studs -- swamping it. Sizing here means the source part can
+	-- be any scale.
+	--
+	-- The part's Size covers the FULL mesh bbox including any strays, so the
+	-- conversion runs through that and not through the body.
+	local bodySizeX = P.BODY_WIDTH_STUDS * M.FULL_W / (2 * M.RAD)
+	local partScale = bodySizeX / source.Size.X
+	local studsPerMeshUnit = bodySizeX / M.FULL_W
 	local bodyRadiusStuds = M.RAD * studsPerMeshUnit
 	local bodyHeightStuds = M.HEIGHT * studsPerMeshUnit
+	log("[Skins] mesh: %d stray verts, bbox %.4f wide -> part scaled %.4fx so the body is %.2f studs",
+		M.strayVerts, M.FULL_W, partScale, 2 * bodyRadiusStuds)
 	-- height in the SAME units the field works in, i.e. body-radii, so a twist
 	-- given as degrees bottom-to-top converts to a slope per unit qy
 	local bodyHeightRadii = M.HEIGHT / M.RAD
@@ -854,7 +918,8 @@ local function run()
 			slime.Name = string.format("%s_%dstripe", hue.name, count)
 			slime.Parent = root
 
-			local body = src:Clone()
+			local body = source:Clone()
+			body.Size = source.Size * partScale
 			body.Name = "body"
 			body.Color = Color3.new(1, 1, 1)
 			body.Material = P.BODY_MATERIAL
