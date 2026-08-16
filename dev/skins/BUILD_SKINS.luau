@@ -2,9 +2,9 @@
 -- BUILD_SKINS.luau -- STANDALONE REBUILD SCRIPT FOR THE TWO-TONE SLIME SKINS.
 --
 -- Paste the whole file into the Studio command bar and it builds
--- workspace.SkinLineup from nothing: six slimes, one per hue, each white and
--- its hue in equal measure across one boundary curve, on a procedurally
--- generated EditableImage. No other file needs to be present.
+-- workspace.SkinLineup from nothing: six slimes, one per hue, each striped white
+-- and its hue pole to pole like a beach ball, on a procedurally generated
+-- EditableImage. No other file needs to be present.
 --
 -- NOT SHIPPING CODE and deliberately NOT under src/ (Rojo syncs that). Same
 -- standing as dev/tiermarks/BUILD_TIERMARKS.luau and dev/divine/BUILD_DIVINE.luau.
@@ -23,10 +23,11 @@
 -- the object and starts being PAINT ON it, and paint on a toy reads as cheap
 -- however cleanly it resolves.
 --
--- SO THE DESIGN IS THE BOUNDARY. With the split fixed at 50/50 there is nothing
--- left to vary except the curve where the two colours meet: where it sits and
--- what it does as it travels round the body. That is the entire creative
--- surface here, and every one of the six entries below is one curve.
+-- MERIDIAN, NOT LATITUDE. Every earlier pass divided the body HORIZONTALLY, by
+-- latitude, and every one produced a band -- a hat, a belt, a sash, a diagonal
+-- sash. Stripes running pole to pole divide it by LONGITUDE, and that single
+-- change is the difference between a marking and a beach ball. Six or eight
+-- stripes around the full circumference, alternating white and hue.
 --
 -- WHICH IS WHY COVERAGE CANNOT BE THE RARITY AXIS. An earlier pass escalated
 -- rarity as accent coverage -- 10/25/42/60% -- and that was wrong from the
@@ -35,13 +36,23 @@
 -- lesser colour read as paint. Rarity needs a different axis entirely. It is
 -- DELIBERATELY NOT SOLVED HERE, and nothing below encodes a tier.
 --
--- THE RESOLVE RULE STILL BINDS, it just has less to bite on. A feature is either
--- clearly visible at 40 studs or it is not present -- three cheap-looking
--- results in this project were all the same mistake, a feature that HALF
--- resolves: 1-texel stars that mipped to mush, 1 px halo gaps that merged, and
--- sub-stud motes that read as stray balls. At 50/50 both regions are half a body
--- and cannot be too small; the only thing that can is a wave's excursion, so
--- that is what gets measured and asserted against MIN_FEATURE_PX.
+-- THE RESOLVE RULE STILL BINDS, AND IT NOW HAS A DELIBERATE EXCEPTION. A feature
+-- is either clearly visible at 40 studs or it is not present -- three
+-- cheap-looking results in this project were the same mistake, a feature that
+-- HALF resolves: 1-texel stars that mipped to mush, 1 px halo gaps that merged,
+-- sub-stud motes that read as stray balls. Stripe width at the equator is what
+-- gets measured against MIN_FEATURE_PX, and it clears it by a wide margin: 73.7
+-- px at 6 stripes, 55.3 px at 8.
+--
+-- THE EXCEPTION IS THE CROWN, AND IT IS THE POINT RATHER THAN A FAILURE. Stripe
+-- width is proportional to the horizontal radius, so it falls to zero at the
+-- pole by construction. Measured, it drops under the 8 px floor only above
+-- r = 0.109 (6 stripes) or r = 0.145 (8), which is the top 1.1% / 2.0% of the
+-- surface -- a cap under 0.05 studs tall. A beach ball converges at its crown
+-- and reads as CORRECT there; that is what the object is. An earlier pass
+-- rejected longitude wedges for precisely this property and was wrong to. The
+-- rule was always about features that half-resolve where they are supposed to be
+-- legible, not about a convergence the design is built around.
 --
 -- 40 studs, FOV 70, a 563 px tall frame => 10.05 px per stud. The body is 14
 -- studs across, so it lands 141 px wide, and 8 px is 0.80 studs.
@@ -53,10 +64,16 @@
 -- boundary is NOT a sub-resolution feature and does not violate the 8 px rule:
 -- that rule is about how big a region is, not how sharp its border is.
 --
--- The balance search INTEGRATES that soft value rather than counting texels,
--- because a texel on the boundary is genuinely part white. Worth knowing if you
+-- The white fraction INTEGRATES that soft value rather than counting texels,
+-- because a texel on a boundary is genuinely part white. Worth knowing if you
 -- port this: 0 is truthy in Lua, so a boolean call site keeps compiling and
 -- silently counts every texel the moment fields start returning numbers.
+--
+-- NOTHING IS SEARCHED FOR ANY MORE. The latitude cuts had to have their offset
+-- solved until the two sides levelled out. cos(k*theta) is positive over exactly
+-- half of any full turn, at every latitude, so meridian stripes are 50/50 for
+-- free. Measured across the six on the real texel set: 49.5% to 51.6%, the
+-- spread being UV sampling density rather than the maths.
 --
 -- 512, WHICH IS A MEMORY DECISION AND NOT A QUALITY ONE. An early pass derived
 -- 256 from area -- island 32.8% of the sheet, half facing camera, 0.164*R^2 =
@@ -85,13 +102,12 @@
 -- 50/50 it is also unnecessary: the dark eye mesh reads on white, and the hue
 -- side is a saturated mid-tone.
 --
--- NO SPOTS, NO PATCHES, NO WEDGES -- and the reasons differ, which matters.
--- Wedges converge to a point at the pole, so their width goes to zero by
--- construction; any shape sized as a function of latitude half-resolves
--- somewhere. Spots and patches had no such flaw and passed the pixel rule at
--- 30.6 px, and were still cut, because on a rounded body a scatter of blobs
--- reads as STAINING however cleanly its edges land. Resolving is necessary and
--- not sufficient.
+-- NO SPOTS AND NO PATCHES. Both passed the pixel rule comfortably at 30.6 px and
+-- were still cut, because on a rounded body a scatter of blobs reads as STAINING
+-- however cleanly its edges land. Resolving is necessary and not sufficient --
+-- which is the same lesson as the crown above, pointing the other way: passing
+-- the measurement does not make a thing good, and failing it does not
+-- automatically make a thing bad.
 --
 -- THE TEXTURE PIPELINE IS BUILD_GALAXY's, INCLUDING ITS OWNERSHIP RULE. Per
 -- texel, recover the 3D point on the mesh and evaluate the field there -- 3D has
@@ -136,12 +152,9 @@ local P = {
 	MIN_FEATURE_PX = 8,              -- below this a feature half-resolves; hard assert
 
 	-- ---- the split ----
-	-- NOT a rarity axis. Both colours are the body; neither is applied to the
-	-- other. The search below solves each boundary's offset so the two sides come
-	-- out at this ratio, which is what stops either colour reading as paint.
-	BALANCE = 0.50,
-	COVERAGE_TOLERANCE = 0.004,      -- binary search stops inside this
-	COVERAGE_ITERS = 24,
+	-- NOT a rarity axis, and not searched for either: cos(k*theta) is positive
+	-- over exactly half of any full turn, so meridian stripes come out 50/50 by
+	-- construction at every latitude. Measured on the real texel set anyway.
 	COVERAGE_SAMPLE_STRIDE = 3,      -- every Nth covered texel during the search
 	CALIBRATE_TICK_EVERY = 512,      -- yield check inside the search loop
 	PAINT_TICK_ROWS = 6,             -- yield check every N rows of the paint loop
@@ -171,14 +184,24 @@ local P = {
 	-- could swallow the eye whites. At 50/50 the eyes read on either colour: the
 	-- dark eye mesh contrasts with white, and the hue side is a saturated mid-tone.
 
-	-- ---- the boundary, which IS the design ----
-	-- With the split fixed at 50/50 the only thing left to vary is the curve
-	-- itself: where it sits and what it does as it goes round. Amplitude is in
-	-- body-radii, so 0.16 is a peak-to-trough of 0.32 = 2.24 studs = 22.5 px at
-	-- 40 studs. A wave shallower than that is a wobble rather than a shape.
-	TILT_GENTLE_DEG = 22,
-	TILT_STEEP_DEG = 58,
-	WAVE_AMP = 0.16,
+	-- ---- the stripes ----
+	-- Count is the number of stripes around the FULL circumference, so half are
+	-- white. It must be EVEN: the field is cos(k*theta), which has 2k sign
+	-- regions, so count = 2k and an odd count is not expressible this way at all
+	-- while staying exactly half and half. 6 and 8 are the two the reference
+	-- suggests; both are shown so they can be compared side by side.
+	--
+	-- Phase rotates the pattern about the vertical axis. It matters more than it
+	-- sounds: with the face fixed, phase decides whether the face sits centred on
+	-- a stripe or straddles a boundary.
+	STRIPE_SPECS = {
+		{ count = 6, phaseDeg = 0 },
+		{ count = 8, phaseDeg = 0 },
+		{ count = 6, phaseDeg = 30 },
+		{ count = 8, phaseDeg = 22.5 },
+		{ count = 6, phaseDeg = 15 },
+		{ count = 8, phaseDeg = 11.25 },
+	},
 
 	-- ---- watchdog ----
 	YIELD_MS = 12,
@@ -262,109 +285,55 @@ end
 -- minStuds(k, radius) returns the shape's smallest dimension, which the build
 -- converts to pixels at 40 studs and asserts against MIN_FEATURE_PX.
 -- ===================================================================
-local function planeNormal(tiltDeg: number): Vector3
-	local t = math.rad(tiltDeg)
-	return Vector3.new(math.sin(t), math.cos(t), 0).Unit
-end
-local N_GENTLE = planeNormal(P.TILT_GENTLE_DEG)
-local N_STEEP = planeNormal(P.TILT_STEEP_DEG)
-
--- AZIMUTHAL HARMONICS WITHOUT atan2. cos(k*theta) has no seam as a function of
--- (x, z) -- it is a polynomial in x/r and z/r -- but atan2 does have a branch
--- cut, and computing the angle first would import a discontinuity the 3D
--- evaluation exists to avoid. Chebyshev on cos(theta) keeps it continuous.
+-- ===================================================================
+-- THE STRIPE FIELD.
 --
--- The result is damped by r so it vanishes at the poles, where theta is
--- undefined. Without that the wave would fight itself to a point at the top.
-local function harmonic(qx: number, qz: number, k: number): number
+-- MERIDIAN, NOT LATITUDE. Every earlier pass cut the body horizontally, by
+-- latitude, and the result was always a band -- a hat, a belt, a sash. Stripes
+-- running pole to pole divide it by LONGITUDE instead, and that is the whole
+-- difference. White where the field is positive.
+--
+-- SEAMLESS WITHOUT atan2. Stripes are inherently a function of theta and the
+-- obvious implementation reaches for atan2, which has a branch cut down the -x
+-- axis -- importing exactly the discontinuity that evaluating in 3D exists to
+-- avoid, and putting a visible join down one meridian. But cos(k*theta) needs no
+-- angle: it is the Chebyshev polynomial T_k evaluated at cos(theta) = x/r, which
+-- is an exact identity and a polynomial in x/r, so it is continuous everywhere
+-- theta is defined. cos(k*theta) has 2k sign regions, hence 2k stripes.
+--
+-- IT IS ALSO EXACTLY HALF AND HALF, for free and at every latitude: cos is
+-- positive over exactly half of any full turn. No balance search is needed here,
+-- unlike the latitude cuts, which had to be slid until they levelled out.
+--
+-- THE CONVERGENCE AT THE POLE IS WANTED. An earlier pass rejected longitude
+-- wedges for exactly the property being asked for here -- stripe width goes to
+-- zero at the pole -- and damped the harmonic by r to kill it. A beach ball
+-- converges at the crown and reads as correct, so there is NO damping of the
+-- pattern here.
+--
+-- THE ONE r THAT REMAINS IS NOT DAMPING, AND THE DISTINCTION IS THE SUBTLE PART.
+-- T_k is dimensionless, so a fixed smoothstep band around it would be a fixed
+-- band in ANGLE -- and an angular band is a spatial band that shrinks with r,
+-- which near the crown would leave the edges hard exactly where the stripes are
+-- finest. Scaling by r/k converts the field into a signed DISTANCE: near a zero
+-- crossing |dT/dtheta| = k and arc length is r*dtheta, so d(T*r/k)/ds = 1
+-- exactly. That makes the antialiasing the same physical width everywhere.
+-- Because r/k is strictly positive it cannot move a single boundary -- the sign
+-- is untouched, so the stripes still run to a point at the pole.
+-- ===================================================================
+local function stripeField(qx: number, qy: number, qz: number,
+	k: number, cs: number, sn: number): number
 	local r = math.sqrt(qx * qx + qz * qz)
-	if r < 1e-6 then return 0 end
-	local c = qx / r
-	local v
-	if k == 2 then
-		v = 2 * c * c - 1
-	elseif k == 3 then
-		v = 4 * c * c * c - 3 * c
-	else
-		v = c
+	if r < 1e-9 then return 0 end        -- the pole itself: one texel, either way
+	local c = (qx * cs + qz * sn) / r    -- cos(theta - phase)
+	-- T_k by the standard recurrence; T_k(cos t) == cos(k t)
+	local t0, t1 = 1.0, c
+	for _ = 2, k do
+		t0, t1 = t1, 2 * c * t1 - t0
 	end
-	return r * v
+	local t = (k == 0) and 1.0 or t1
+	return t * r / k
 end
-
--- Soft threshold: 1 well inside the shape, 0 well outside, smooth across a band
--- EDGE_SOFT wide. Everything below goes through this, so no boundary anywhere is
--- a hard texel step.
-local E = P.EDGE_SOFT
-local function inside(value: number, edge: number): number
-	-- accent where value < edge
-	return 1 - smoothstep(edge - E, edge + E, value)
-end
-local function above(value: number, edge: number): number
-	-- accent where value > edge
-	return smoothstep(edge - E, edge + E, value)
-end
-
--- ===================================================================
--- THE SIX BOUNDARIES.
---
--- Each is field(q, c) -> a signed number: white where it is positive, hue where
--- it is negative, and the sign change IS the design. c slides the curve up and
--- down the body and is the one knob the 50/50 search turns, so every entry only
--- has to describe the curve's SHAPE, not its position.
---
--- waveStuds reports the peak-to-trough excursion, which is the only thing here
--- that can be too small to read; a plane cut has none and reports the body.
--- ===================================================================
-local BOUNDARIES = {
-	{
-		name = "level",
-		-- a flat cut: the plainest possible two-tone, and the control for the rest
-		field = function(qx: number, qy: number, qz: number, c: number): number
-			return qy - c
-		end,
-		waveStuds = function(radius: number): number return radius end,
-	},
-	{
-		name = "tilt-gentle",
-		field = function(qx: number, qy: number, qz: number, c: number): number
-			return qx * N_GENTLE.X + qy * N_GENTLE.Y + qz * N_GENTLE.Z - c
-		end,
-		waveStuds = function(radius: number): number return radius end,
-	},
-	{
-		name = "tilt-steep",
-		-- close to a left/right division rather than a top/bottom one
-		field = function(qx: number, qy: number, qz: number, c: number): number
-			return qx * N_STEEP.X + qy * N_STEEP.Y + qz * N_STEEP.Z - c
-		end,
-		waveStuds = function(radius: number): number return radius end,
-	},
-	{
-		name = "wave2",
-		-- two humps: reads as a soft S sweeping round the body
-		field = function(qx: number, qy: number, qz: number, c: number): number
-			return qy - c - P.WAVE_AMP * harmonic(qx, qz, 2)
-		end,
-		waveStuds = function(radius: number): number return 2 * P.WAVE_AMP * radius end,
-	},
-	{
-		name = "wave3",
-		-- three humps: a scalloped crown
-		field = function(qx: number, qy: number, qz: number, c: number): number
-			return qy - c - P.WAVE_AMP * harmonic(qx, qz, 3)
-		end,
-		waveStuds = function(radius: number): number return 2 * P.WAVE_AMP * radius end,
-	},
-	{
-		name = "tilt-wave2",
-		-- a tilted cut that also undulates, so neither end of the curve is level
-		field = function(qx: number, qy: number, qz: number, c: number): number
-			return qx * N_GENTLE.X + qy * N_GENTLE.Y + qz * N_GENTLE.Z
-				- c - P.WAVE_AMP * harmonic(qx, qz, 2)
-		end,
-		waveStuds = function(radius: number): number return 2 * P.WAVE_AMP * radius end,
-	},
-}
 
 -- ===================================================================
 -- THE UV -> 3D MAP, rasterised from the mesh's own UV triangles.
@@ -603,42 +572,41 @@ local function run()
 	end
 	log("[Skins] coverage search samples %d of %d covered texels", #sample, M.covered)
 
-	-- White where the field is positive, softened across EDGE_SOFT so the boundary
-	-- is never a texel step.
-	local function whiteAt(b, qx: number, qy: number, qz: number, c: number): number
-		return smoothstep(-P.EDGE_SOFT, P.EDGE_SOFT, b.field(qx, qy, qz, c))
+	-- White where the field is positive, softened across EDGE_SOFT. Because the
+	-- field was scaled into a signed distance, this band is the same physical
+	-- width at every latitude -- including where the stripes are finest.
+	local function whiteAt(qx: number, qy: number, qz: number,
+		k: number, cs: number, sn: number): number
+		return smoothstep(-P.EDGE_SOFT, P.EDGE_SOFT, stripeField(qx, qy, qz, k, cs, sn))
 	end
 
-	-- ---- slide the boundary until the two sides balance ----
-	-- The offset runs over the body's own extent, not 0..2: these fields are
-	-- signed distances along an axis through a body whose qy only reaches ~0.68,
-	-- and a search range wider than the body wastes its first iterations outside
-	-- it. Monotone in c by construction -- raising the cut can only grow the side
-	-- below it -- which is what makes a bisection valid here.
-	--
-	-- Ticks INSIDE the sample loop, not just per iteration: 24 iterations over
-	-- ~39k samples is a million field evaluations, and ticking only at the
-	-- iteration boundary previously measured a 522 ms main-thread hold.
-	local function balance(b, target: number): (number, number)
-		local lo, hi = -1.2, 1.2
-		local got = 0
-		for _ = 1, P.COVERAGE_ITERS do
-			local mid = (lo + hi) / 2
-			local hit = 0
-			for si, q in ipairs(sample) do
-				if si % P.CALIBRATE_TICK_EVERY == 0 then Y.tick() end
-				hit += whiteAt(b, q[1], q[2], q[3], mid)
+	-- WHERE DO THE STRIPES STOP RESOLVING? Stripe width at horizontal radius r is
+	-- the circumference over the count, so it falls to the 8 px floor at a
+	-- specific r and is finer than that above it. Census the real texel set rather
+	-- than assume the body is a sphere.
+	local function convergence(count: number): (number, number, number)
+		local floorStuds = P.MIN_FEATURE_PX / pxPerStud
+		local rCrit = floorStuds * count / (2 * math.pi * bodyRadiusStuds)
+		local below, topY = 0, -math.huge
+		for _, q in ipairs(sample) do
+			local r = math.sqrt(q[1] * q[1] + q[3] * q[3])
+			if r < rCrit then
+				below += 1
+				if math.abs(q[2]) > topY then topY = math.abs(q[2]) end
 			end
-			got = hit / #sample
-			if math.abs(got - target) <= P.COVERAGE_TOLERANCE then
-				return mid, got
-			end
-			-- raising the cut shrinks the white side, so the sense is inverted
-			if got > target then lo = mid else hi = mid end
 		end
-		return (lo + hi) / 2, got
+		return rCrit, below / #sample, topY
 	end
 
+	-- ---- (no balance search: see below) ----
+	--[[ The latitude cuts needed their offset solved so the two sides came out
+	     equal. Meridian stripes do not: cos(k*theta) is positive over exactly
+	     half of any full turn, at EVERY latitude, so the split is 50/50 by
+	     construction. It is measured below anyway, because the texel-weighted
+	     fraction is not quite the surface fraction -- the UV island does not
+	     sample the body uniformly -- and a drift there would mean the map is
+	     wrong, not the maths.
+	--]]
 	-- ---- generate one slime per hue ----
 	for _, c in ipairs(workspace:GetChildren()) do
 		if c.Name == P.ROOT_NAME then c:Destroy() end
@@ -655,22 +623,36 @@ local function run()
 	local worstGap, worstGapHue = math.huge, "?"
 
 	do
-		local target = P.BALANCE
 		local balLo, balHi = math.huge, -math.huge
 
 		for hi_, hue in ipairs(HUES) do
 			Y.tick()
-			local shape = BOUNDARIES[((hi_ - 1) % #BOUNDARIES) + 1]
-			local k, measured = balance(shape, target)
+			local spec = P.STRIPE_SPECS[((hi_ - 1) % #P.STRIPE_SPECS) + 1]
+			local count = spec.count
+			assert(count % 2 == 0, "[Skins] stripe count must be even to split 50/50")
+			local k = count // 2
+			local ph = math.rad(spec.phaseDeg)
+			local cs, sn = math.cos(ph), math.sin(ph)
+
+			-- measure the split rather than assume it
+			local hit = 0
+			for si, q in ipairs(sample) do
+				if si % P.CALIBRATE_TICK_EVERY == 0 then Y.tick() end
+				hit += whiteAt(q[1], q[2], q[3], k, cs, sn)
+			end
+			local measured = hit / #sample
 			balLo = math.min(balLo, measured)
 			balHi = math.max(balHi, measured)
 
-			local featureStuds = shape.waveStuds(bodyRadiusStuds)
+			-- Stripe width at the equator: the body's circumference over the
+			-- count. This is the number the design lives or dies by.
+			local featureStuds = 2 * math.pi * bodyRadiusStuds / count
 			local featurePx = featureStuds * pxPerStud
 			if featurePx < worstFeaturePx then
 				worstFeaturePx = featurePx
-				worstFeatureWhat = shape.name
+				worstFeatureWhat = string.format("%d stripes", count)
 			end
+			local rCrit, fineFrac, fineTopY = convergence(count)
 
 			local base = hue.color
 			local accent, lumGap, rgbDist = accentFor(base)
@@ -692,7 +674,7 @@ local function run()
 						local qx = buffer.readf32(POS, o)
 						local qy = buffer.readf32(POS, o + 4)
 						local qz = buffer.readf32(POS, o + 8)
-						local a = whiteAt(shape, qx, qy, qz, k)
+						local a = whiteAt(qx, qy, qz, k, cs, sn)
 						buffer.writeu8(buf, off, math.floor(math.clamp(br + (ar - br) * a, 0, 1) * 255 + 0.5))
 						buffer.writeu8(buf, off + 1, math.floor(math.clamp(bg + (ag - bg) * a, 0, 1) * 255 + 0.5))
 						buffer.writeu8(buf, off + 2, math.floor(math.clamp(bb + (ab - bb) * a, 0, 1) * 255 + 0.5))
@@ -717,7 +699,7 @@ local function run()
 				* CFrame.Angles(0, math.rad(P.BODY_YAW_DEG), 0)
 
 			local slime = Instance.new("Model")
-			slime.Name = string.format("%s_%s", hue.name, shape.name)
+			slime.Name = string.format("%s_%dstripe", hue.name, count)
 			slime.Parent = root
 
 			local body = src:Clone()
@@ -752,18 +734,21 @@ local function run()
 			slime:SetAttribute("BodyCentre", Vector3.new(at.X, at.Y + bodyHeightStuds / 2, at.Z))
 			slime:SetAttribute("Tier", "Balanced")
 			slime:SetAttribute("Hue", hue.name)
-			slime:SetAttribute("Shape", shape.name)
+			slime:SetAttribute("Shape", string.format("%d-stripe", count))
+			slime:SetAttribute("StripeCount", count)
+			slime:SetAttribute("PhaseDeg", spec.phaseDeg)
 			slime:SetAttribute("WhiteFraction", measured)
-			slime:SetAttribute("BoundaryOffset", k)
 
 			table.insert(rows, string.format(
-				"[Skins]   %-7s %-11s offset %+.4f  white %.1f%%  wave %.1f px",
-				hue.name, shape.name, k, measured * 100, featurePx))
+				"[Skins]   %-7s %d stripes phase %5.1f deg | white %.1f%% | equator %.2f studs = %.1f px"
+					.. " | under floor above r=%.3f: %.2f%% of surface, top %.3f",
+				hue.name, count, spec.phaseDeg, measured * 100, featureStuds, featurePx,
+				rCrit, fineFrac * 100, fineTopY))
 		end
 
 		table.insert(rows, string.format(
-			"[Skins] balance target %.0f%% | measured %.1f-%.1f%% across the six",
-			target * 100, balLo * 100, balHi * 100))
+			"[Skins] split is 50/50 by construction | measured %.1f-%.1f%% across the six",
+			balLo * 100, balHi * 100))
 	end
 
 	for _, r in ipairs(rows) do table.insert(lines, r) end
