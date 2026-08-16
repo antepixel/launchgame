@@ -157,6 +157,23 @@ print("\n=== 3b. the overlap counter reads clean on a non-overlapping unwrap ===
 check("no disagreeing double-claims", M.conflicts == 0,
 	string.format("%d conflicts, worst %.4f body-radii", M.conflicts, M.worstConflict))
 
+print("\n=== 3c. texels are owned by a face that actually contains them ===")
+-- The barycentric test admits texels at -0.002, so adjacent triangles bleed a
+-- texel into each other's territory. Under last-writer-wins whichever rasterised
+-- later kept the texel even when it only grazed it; the interiority rule hands it
+-- back to the face that genuinely contains it.
+--
+-- NOT ZERO, and it should not be. Texels right on the island's outer rim are
+-- reached ONLY by bleed -- no face contains them -- and that is deliberate, it is
+-- what stops the boundary cracking under bilinear filtering. So the invariant is
+-- "grazed ownership is confined to a thin rim", not "grazed ownership is gone".
+-- A regression in the rule would put grazed texels through the island interior
+-- and this fraction would jump by orders of magnitude.
+local grazedPct = 100 * M.grazed / M.covered
+check("grazed ownership is rim-only", grazedPct < 0.05,
+	string.format("%d texels = %.4f%% of island (island perimeter is ~%d texels)",
+		M.grazed, grazedPct, math.floor(2 * (W + (VMAX - VMIN) * H))))
+
 -- ---- replicate the script's own continuity metrics ----
 local POS, MASK = M.POS, M.MASK
 local function getp(ix, iy)

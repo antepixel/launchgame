@@ -108,6 +108,11 @@
 -- fix (NOT applied here -- deliberately left as-is) is to make Epic a genuine
 -- half-and-half split with a hard straight boundary instead of a splash.
 --
+-- IF THE STUDIO BRIDGE WILL NOT ANSWER, read dev/README.md BEFORE touching the
+-- plugin. "Studio plugin connection timeout" usually does NOT mean the plugin is
+-- dead -- with several sessions open there are several MCP servers, and yours may
+-- simply not be the one Studio attached to.
+--
 -- REVERSAL: workspace.TierMarks:Destroy(). No body property is ever written --
 -- not Material, not Color, not Reflectance. The marks are additive only.
 -- ===========================================================================

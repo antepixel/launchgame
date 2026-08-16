@@ -91,29 +91,46 @@
 -- untriggered.
 --
 -- VERIFIED IN STUDIO by destroy-and-rebuild against the real slime_uv asset.
--- Build completed in 16.6 s, of which paint is 15.6 s. Measured on that run:
+-- Build completed in 16.6 s, of which paint is 15.5 s. Measured on that run:
 --   coverage    343973 texels, 32.8% of sheet, 2 seam triangles, 12 cube faces
---   seam gap    1.07 texels        pole spread  0.0580 body-radii
---   dark 62.0%  lit 38.0%          star-bright  0.85%
---   worst hold  24.1 ms, in 'paint' (budget 12 ms -- about 1.5 frames)
+--   seam gap    1.07 texels        pole spread  0.0762 body-radii
+--   dark 63.1%  lit 36.9%          star-bright  0.87%
+--   grazed      7 texels (0.002%)  worst hold   18.7 ms in 'paint' (budget 12)
 -- A straight-down screenshot at the pole shows smooth cloud and round discrete
 -- stars with NO radiating streaks, so the 3D approach holds on the real asset,
 -- not just on the synthetic sphere in the offline suite.
 --
--- THE OVERLAP IS REAL, AND IT IS ON THE UNDERSIDE. 16501 texels (4.80% of the
--- island) are claimed by two faces that disagree, worst case 0.818 body-radii.
--- It is NOT mainly the u overshoot -- only 18.9% of conflicts come from faces
--- with u > 1.0, which are just 129 faces / 1.00% of UV area. 93% of them sit in
--- rows 640..703, the bottom band of the island: the unwrap is not injective
--- there, so the body's underside shares texels with the lower outer wall and
--- last-writer-wins decides. Visually the outer surface is clean and the concave
--- underside is smeared and striated.
+-- THE OVERLAP IS REAL AND IT IS RASTERISER BLEED, not two surfaces colliding.
+-- 16801 texels (4.88% of the island) are claimed by two faces that disagree,
+-- worst 0.818 body-radii, 93% of them in rows 640..703 -- the island's bottom
+-- band, which is the body's underside. The tempting reading is that the underside
+-- and the lower outer wall fight over shared texels. MEASURED, they do not: the
+-- contested pairs sit 0.05-0.07 body-radii apart, i.e. adjacent bits of the SAME
+-- surface, and the u overshoot supplies only 18.9% of them (129 faces, 1.00% of
+-- UV area). What was actually happening is that the -0.002 barycentric tolerance
+-- lets a face paint a texel past its own edge, and under last-writer-wins a face
+-- that merely GRAZED a texel could take it from the face that contained it.
 --
--- WHY THAT MIGHT STILL MATTER HERE: a slime at rest hides its underside on the
--- ground, but this is a launch game and slimes spend real time airborne, where
--- the underside is exactly what a player below is looking at. If that shot ever
--- matters, resolve conflicts by preferring the face whose normal points away
--- from the body centre instead of whichever rasterises last.
+-- FIXED by deciding ownership on containment class, outwardness breaking ties
+-- (see buildUVMap). Grazed ownership went from 2075 texels to 7. The underside
+-- reads as continuous cloud with visible stars instead of a smeared vortex, and
+-- the outer surface is unchanged -- coverage and seam gap identical to the digit,
+-- and the pole shot is indistinguishable from the pre-fix one.
+--
+-- WHY THE UNDERSIDE WAS WORTH FIXING AT ALL: a slime at rest hides it on the
+-- ground, so a base-builder could ignore this entirely. This is a launch game --
+-- slimes are airborne for most of the reward loop and a player below is looking
+-- straight at rows 640..703.
+--
+-- WHAT REMAINS: 167 neighbour-jump texels along the extreme bottom rim, visible
+-- as fine striation right at the silhouette edge. That is UV density, not
+-- ownership -- the bottom band carries a stretch factor of 43 against ~29
+-- elsewhere -- and it needs a better unwrap, not a better tie-break.
+--
+-- IF THE STUDIO BRIDGE WILL NOT ANSWER, read dev/README.md BEFORE touching the
+-- plugin. "Studio plugin connection timeout" usually does NOT mean the plugin is
+-- dead -- with several sessions open there are several MCP servers, and yours may
+-- simply not be the one Studio attached to.
 --
 -- REVERSAL: workspace.GalaxySkin:Destroy().
 -- ===========================================================================
@@ -483,16 +500,46 @@ local function buildUVMap(meshId: string, W: number, H: number, Y)
 	local MASK = buffer.create(W * H)
 	local covered, seamTris, skipped = 0, 0, 0
 
-	-- OVERLAP WATCH. The position write below is unconditional, so when two faces
-	-- claim one texel the last one wins. Adjacent faces sharing an edge texel are
-	-- harmless (they agree to within rounding). What would NOT be harmless is the
-	-- u overshoot past 1.0: those UVs wrap via px % W onto texels another face
-	-- already owns, and the loser's band of body would then be painted with colour
-	-- sampled from a different part of the galaxy. Measure it rather than assume.
-	-- A texel step is ~0.006 body-radii, so 0.05 is ~8 texels -- far outside any
-	-- edge-sharing disagreement, squarely a real collision.
+	-- OWNERSHIP. When two faces claim one texel, the winner is chosen by geometry
+	-- rather than by which happened to rasterise last.
+	--
+	-- PRIMARY RULE: CONTAINMENT CLASS. The barycentric test below admits a texel
+	-- at -0.002, so every triangle paints roughly a texel past its true edge. That
+	-- bleed is wanted at the island rim (it stops the boundary cracking under
+	-- bilinear filtering) but it means a face that merely GRAZES a texel could
+	-- overwrite the face the texel genuinely belongs to. A grazing face has a
+	-- negative minimum barycentric coordinate and a containing face does not, so
+	-- the sign of min(l1,l2,l3) separates them exactly. Containing beats grazing.
+	--
+	-- This is what the underside conflicts turned out to be: measured pairs sat
+	-- 0.05-0.07 body-radii apart, i.e. adjacent bits of the SAME surface bleeding
+	-- into each other -- not the underside colliding with the outer wall, and not
+	-- the u overshoot, which supplies only 18.9% of contested texels.
+	--
+	-- ONLY THE SIGN, NEVER THE MAGNITUDE. Ranking by how interior a texel is
+	-- looks like a strictly better version of the same idea and is a disaster:
+	-- among faces that ALL legitimately contain a texel it reorders the winner
+	-- texel by texel, destroying the spatial coherence that makes the result read
+	-- as a smooth surface. Measured over the four candidate policies, ranking by
+	-- magnitude cut grazed ownership to 57 but took neighbour jumps from 111 to
+	-- 4044 -- a visible fan of radial streaks on the upper dome. Class-only gets
+	-- grazed down to 7 for 171 jumps. Do not "improve" this into a comparison.
+	--
+	-- TIE-BREAK: OUTWARDNESS -- within one class, prefer the face whose normal
+	-- points away from the body centre, so a surface a player can see wins over
+	-- one tucked underneath. It is a genuine if small improvement: dropping it and
+	-- keeping the incumbent instead scores 194 jumps against this rule's 171.
+	--
+	-- It cannot do more than that here, and it is worth knowing why. This mesh is
+	-- closed and consistently wound -- all 15180 body faces have POSITIVE
+	-- outwardness, mean +0.948, range ~0.85..0.93 -- so outwardness never
+	-- separates "underside" from "outer wall"; on its own it decides only 120
+	-- texels. Containment is what does the work. If a future asset has genuinely
+	-- overlapping charts, this is the clause that will matter.
 	local CONFLICT_EPS = 0.05
 	local conflicts, worstConflict = 0, 0
+	-- per texel: [0] = interiority of current owner, [4] = its outwardness
+	local PRIO = buffer.create(W * H * 8)
 
 	Y.mark("uvmap:faces")
 	for _, f in ipairs(faces) do
@@ -507,6 +554,24 @@ local function buildUVMap(meshId: string, W: number, H: number, Y)
 		local a, b, c = em:GetUV(fu[1]), em:GetUV(fu[2]), em:GetUV(fu[3])
 		local u1, u2, u3 = a.X, b.X, c.X
 		local v1, v2, v3 = a.Y, b.Y, c.Y
+
+		-- outwardness: how far this face's normal agrees with the direction from
+		-- the body centre out to it. Computed once per face, used only to break
+		-- interiority ties (see the OWNERSHIP note above).
+		local e1x, e1y, e1z = p2.X - p1.X, p2.Y - p1.Y, p2.Z - p1.Z
+		local e2x, e2y, e2z = p3.X - p1.X, p3.Y - p1.Y, p3.Z - p1.Z
+		local fnx = e1y * e2z - e1z * e2y
+		local fny = e1z * e2x - e1x * e2z
+		local fnz = e1x * e2y - e1y * e2x
+		local fnl = math.sqrt(fnx * fnx + fny * fny + fnz * fnz)
+		local rx = (p1.X + p2.X + p3.X) / 3 - CX
+		local ry = (p1.Y + p2.Y + p3.Y) / 3 - CY
+		local rz = (p1.Z + p2.Z + p3.Z) / 3 - CZ
+		local rl = math.sqrt(rx * rx + ry * ry + rz * rz)
+		local outward = 0
+		if fnl > 1e-12 and rl > 1e-12 then
+			outward = (fnx * rx + fny * ry + fnz * rz) / (fnl * rl)
+		end
 
 		-- seam-straddling triangle: lift the low corners, wrap the index later
 		local umin = math.min(u1, u2, u3)
@@ -539,15 +604,20 @@ local function buildUVMap(meshId: string, W: number, H: number, Y)
 				if l1 >= -0.002 and l2 >= -0.002 and l3 >= -0.002 then
 					local idx = py * W + (px % W)
 					local first = buffer.readu8(MASK, idx) == 0
-					if first then
-						buffer.writeu8(MASK, idx, 1)
-						covered += 1
-					end
-					local o = idx * 12
+					local o, po = idx * 12, idx * 8
 					local nx = (l1 * p1.X + l2 * p2.X + l3 * p3.X - CX) / RAD
 					local ny = (l1 * p1.Y + l2 * p2.Y + l3 * p3.Y - CY) / RAD
 					local nz = (l1 * p1.Z + l2 * p2.Z + l3 * p3.Z - CZ) / RAD
-					if not first then
+					local interior = math.min(l1, l2, l3)
+
+					local wins
+					if first then
+						buffer.writeu8(MASK, idx, 1)
+						covered += 1
+						wins = true
+					else
+						-- count the contest regardless of who wins, so the figure
+						-- stays comparable across ownership policies
 						local dx = nx - buffer.readf32(POS, o)
 						local dy = ny - buffer.readf32(POS, o + 4)
 						local dz = nz - buffer.readf32(POS, o + 8)
@@ -556,11 +626,46 @@ local function buildUVMap(meshId: string, W: number, H: number, Y)
 							conflicts += 1
 							if d > worstConflict then worstConflict = d end
 						end
+						local heldInt = buffer.readf32(PRIO, po)
+						local heldOut = buffer.readf32(PRIO, po + 4)
+						-- CLASS FIRST, and only class. A face either contains the
+						-- texel or merely grazes it; containing always beats
+						-- grazing. Within one class, outwardness decides.
+						local iContains = interior >= 0
+						local hContains = heldInt >= 0
+						if iContains ~= hContains then
+							wins = iContains
+						else
+							wins = outward > heldOut
+						end
 					end
-					buffer.writef32(POS, o, nx)
-					buffer.writef32(POS, o + 4, ny)
-					buffer.writef32(POS, o + 8, nz)
+
+					if wins then
+						buffer.writef32(POS, o, nx)
+						buffer.writef32(POS, o + 4, ny)
+						buffer.writef32(POS, o + 8, nz)
+						buffer.writef32(PRIO, po, interior)
+						buffer.writef32(PRIO, po + 4, outward)
+					end
 				end
+			end
+		end
+	end
+
+	-- THE NUMBER THAT SHOWS THE OWNERSHIP RULE WORKING. 'conflicts' counts texels
+	-- two faces fought over, which is a property of the UV layout and so does not
+	-- move when the tie-break changes. What DOES move is how many texels end up
+	-- held by a face that only grazes them (negative interiority) -- under
+	-- last-writer-wins that was whatever face order happened to leave behind.
+	Y.mark("uvmap:audit")
+	local grazed = 0
+	for y = 0, H - 1 do
+		Y.tick()
+		local row = y * W
+		for x = 0, W - 1 do
+			local idx = row + x
+			if buffer.readu8(MASK, idx) == 1 and buffer.readf32(PRIO, idx * 8) < 0 then
+				grazed += 1
 			end
 		end
 	end
@@ -568,7 +673,7 @@ local function buildUVMap(meshId: string, W: number, H: number, Y)
 	Y.close()
 	return {
 		POS = POS, MASK = MASK, covered = covered, seamTris = seamTris, skipped = skipped,
-		conflicts = conflicts, worstConflict = worstConflict,
+		conflicts = conflicts, worstConflict = worstConflict, grazed = grazed,
 		CX = CX, CY = CY, CZ = CZ, RAD = RAD,
 	}
 end
@@ -631,6 +736,8 @@ local function run()
 		M.covered, 100 * M.covered / (W * H), M.seamTris, M.skipped)
 	log("[Galaxy] OVERLAP: %d texels claimed by two faces that disagree (%.2f%% of the island), worst %.3f body-radii",
 		M.conflicts, 100 * M.conflicts / math.max(1, M.covered), M.worstConflict)
+	log("[Galaxy] OWNERSHIP: %d texels (%.3f%%) held by a face that only grazes them",
+		M.grazed, 100 * M.grazed / math.max(1, M.covered))
 
 	-- prove the two properties the whole approach rests on
 	Y.mark("verify")

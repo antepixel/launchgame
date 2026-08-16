@@ -69,6 +69,11 @@
 -- last write wins with an identical value -- but it is an editing artifact. It
 -- is reproduced exactly because this file is a save, not a cleanup.
 --
+-- IF THE STUDIO BRIDGE WILL NOT ANSWER, read dev/README.md BEFORE touching the
+-- plugin. "Studio plugin connection timeout" usually does NOT mean the plugin is
+-- dead -- with several sessions open there are several MCP servers, and yours may
+-- simply not be the one Studio attached to.
+--
 -- REVERSAL: workspace.DivinePrototype:Destroy(). The body's pre-treatment
 -- colour and material are recorded on L1_Body as OriginalColor / OriginalMaterial
 -- (Color3 70,200,80 and Plastic -- w was a green slime before the treatment).
