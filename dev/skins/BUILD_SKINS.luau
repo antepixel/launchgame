@@ -43,11 +43,19 @@
 -- the ladder is exact on the actual mesh rather than on an idealised sphere.
 --
 -- SHAPE VARIES WITHIN A TIER, COVERAGE VARIES ACROSS TIERS. These two axes are
--- orthogonal on purpose. Six shapes -- belt, cap, foot, split, spots, patches --
--- appear once per tier, so within-tier variety is a genuinely different pattern
--- rather than only a different hue, while the rarity read stays clean because
--- every shape in a tier carries the same coverage. The shape assignment rotates
--- by tier, so a given hue wears a different pattern at each rarity.
+-- orthogonal on purpose. Six placements -- belt-high, belt-low, cap, foot,
+-- split-shallow, split-steep -- appear once per tier, so within-tier variety is
+-- a genuinely different pattern rather than only a different hue, while the
+-- rarity read stays clean because every shape in a tier carries the same
+-- coverage. The assignment rotates by tier, so a hue wears a different pattern
+-- at each rarity.
+--
+-- RESOLVING IS NECESSARY AND NOT SUFFICIENT -- spots and patches are gone. Both
+-- passed the pixel rule comfortably (30.6 px features) and both still looked
+-- cheap, because on a rounded body a scatter of blobs reads as STAINING however
+-- cleanly its edges land. What survives is the family that follows the body's
+-- own form: bands and divisions. Variety then comes from where the band sits and
+-- how the plane is angled, not from adding more kinds of thing.
 --
 -- NO WEDGES, AND THE REASON GENERALISES. Longitude wedges were the obvious
 -- seventh shape and they are a trap: they converge to a point at the pole, so
@@ -55,28 +63,40 @@
 -- a function of latitude will half-resolve somewhere. Every shape kept here has
 -- a width that is bounded away from zero over the whole surface.
 --
--- ACCENT DIRECTION IS ADAPTIVE, AND THAT IS WHAT MAKES IT WORK ON ALL SIX HUES.
--- The palette is bright: base luminance runs 0.37 (red) to 0.82 (yellow). A
--- fixed light accent dies on yellow; a fixed dark accent is weakest on red. So
--- the accent goes DARK on bright bases and LIGHT on dark ones, whichever
--- direction has headroom. Measured worst-case base/accent luminance gap goes
--- from 0.239 with a fixed dark accent to 0.362 adaptive -- a 52% improvement on
--- the worst hue, which is the only hue that matters.
+-- THE ACCENT IS ONE CREAM, AND IT IS A COLOUR RATHER THAN AN ABSENCE OF ONE.
+-- Two failed versions got here. A darker shade of the base hue reads as SHADING,
+-- because a curved lit body already spans that luminance range from highlight to
+-- flank. Near-black and near-white fix that and read as DIRT -- both are
+-- absences of colour, so on a saturated toy body they look like a stain or a
+-- blown highlight rather than a second material. A warm cream is neither: it
+-- sits in the same palette as the bodies, and lighting still cannot produce
+-- cream on green, so the constraint that killed version one is still satisfied.
 --
--- 256 x 256, WHICH IS THE POINT RATHER THAN A COMPROMISE. At 40 studs the front
--- of the body covers about 10,300 px. The UV island is 32.8% of the sheet and
--- roughly half of it faces the camera, so 0.164 * R^2 = 10,300 gives R = 250.
--- 256 is 1:1 at the only distance that counts. The galaxy skin's 1024 bought
--- four times the linear detail in a design whose rule forbids fine detail, at
--- sixteen times the memory.
+-- ONE CONTRAST NUMBER IS NOT ENOUGH. Luminance gap alone rejects cream on
+-- yellow -- only 0.13 -- and cream on yellow reads perfectly well, because the
+-- separation there is chroma, not brightness. Both luminance gap and RGB
+-- distance are measured and reported; the worst hue is chosen on RGB distance.
 --
--- MEMORY, AND WHY THE TEXTURES ARE NOT SHARED. 256 x 256 RGBA is 256 KB. 24
--- skins is 6.0 MB; all 65 eventually is 16.3 MB. Sharing one texture per tier
--- and tinting per hue would cut that to 1.0 MB now and 2.8 MB at 65 -- but it
--- forces all six slimes in a tier to wear the SAME shape, which throws away the
--- within-tier variety that is the whole point of having six of them. The
--- resolution drop already solved the memory problem the sharing was meant to
--- solve -- 16 MB at full roster is not worth trading the variety for.
+-- EVERY BOUNDARY IS ANTIALIASED, AND THAT IS THE REAL FIX FOR THE BLOCKY LOOK.
+-- A hard threshold stair-steps at ANY resolution -- 256 simply made it obvious.
+-- Shapes return a 0..1 coverage value through a smoothstep band EDGE_SOFT wide,
+-- not a boolean. A soft boundary is NOT a sub-resolution feature and does not
+-- violate the 8 px rule: that rule is about how big a shape is, not how sharp
+-- its border is. Coverage therefore INTEGRATES the soft value rather than
+-- counting texels, which is what keeps the tier percentages honest.
+--
+-- 1024 x 1024, BECAUSE THE 256 DERIVATION ANSWERED THE WRONG QUESTION. That
+-- arithmetic -- island 32.8% of the sheet, half of it facing camera, 0.164*R^2 =
+-- 10,300 px, so R = 250 -- is correct for AREA and irrelevant for EDGES. Putting
+-- one texel per pixel places the stair steps at exactly the size the eye
+-- resolves. Edges want headroom over the sampling rate, not parity with it.
+--
+-- MEMORY IS THE COST OF THAT, AND IT IS NOT SMALL. 1024 RGBA is 4 MB per skin:
+-- 24 MB for one tier, 96 MB for 24 skins, 260 MB at the full 65. That last
+-- number is past what a Roblox place should spend on slime skins. 512 halves the
+-- linear resolution for a quarter of the memory -- 1 MB per skin, 65 MB at 65 --
+-- and with antialiasing doing the real work on edges, 512 is the likely shipping
+-- value. TEX is the only line that needs changing.
 --
 -- THE FACE IS MASKED OUT OF THE PATTERN. The eyes and blush are separate
 -- MeshParts sitting proud of the body, and they read best against a saturated
@@ -103,8 +123,15 @@ local AssetService = game:GetService("AssetService")
 -- ===================================================================
 local P = {
 	-- ---- output ----
-	TEX = 256,
+	-- 1024, not 256. The 256 derivation was right about AREA -- one texel per
+	-- pixel at 40 studs -- and wrong about EDGES. A boundary stair-steps wherever
+	-- it is visible at all, and matching texel size to pixel size puts the steps
+	-- exactly at the size the eye picks up. Edges need headroom over the sampling
+	-- rate, not parity with it.
+	TEX = 1024,
 	ROOT_NAME = "SkinLineup",
+	-- nil builds all four tiers; a tier name builds only that one
+	ONLY_TIER = "Rare",
 	SOURCE_MODEL = "slime_uv",       -- the UNWRAPPED body; lineup meshes have no UVs
 	SOURCE_PART = "default",
 	-- Plastic, NOT SmoothPlastic. SmoothPlastic's specular lobe puts a hard white
@@ -133,17 +160,32 @@ local P = {
 	PAINT_TICK_ROWS = 6,             -- yield check every N rows of the paint loop
 
 	-- ---- accent derivation ----
-	-- THE ACCENT MUST NOT LOOK LIKE SHADING. A merely darker version of the base
-	-- hue fails at 40 studs even at a luminance gap of 0.36, because a curved lit
-	-- body ALREADY spans that much from its highlight to its shaded flank -- the
-	-- pattern reads as form, not as marking. The fix is to make the accent
-	-- extreme: near-black or near-white, which lighting never produces on a
-	-- saturated mid-tone. Measured worst-hue gap goes 0.362 -> 0.475.
-	ACCENT_SPLIT_LUM = 0.58,         -- above this the base is "bright" -> dark accent
-	ACCENT_DARK_V = 0.18,
-	ACCENT_DARK_S = 0.85,
-	ACCENT_LIGHT_V = 1.00,
-	ACCENT_LIGHT_S = 0.10,
+	-- ONE CREAM, FOR EVERY HUE.
+	--
+	-- The accent must not look like SHADING: a merely darker version of the base
+	-- fails at 40 studs even at a 0.36 luminance gap, because a curved lit body
+	-- already spans that much from highlight to shaded flank, so the pattern reads
+	-- as form. Cream satisfies that -- lighting cannot produce cream on green.
+	--
+	-- But it must not look like DIRT either, which is where near-black and
+	-- near-white landed. Both are absences of colour; on a saturated toy body they
+	-- read as a stain or a blown-out highlight rather than as a second material.
+	-- A warm cream is a colour, and it sits in the same palette as the bodies.
+	--
+	-- Pulled 10% toward the base hue so each slime's marking belongs to that
+	-- slime rather than looking pasted on from outside the palette.
+	ACCENT_CREAM = Color3.fromRGB(255, 246, 226),
+	ACCENT_HUE_MIX = 0.10,
+
+	-- ---- edge antialiasing ----
+	-- Half-width of the accent boundary, in body-radii. A hard threshold gives a
+	-- stair-stepped edge at ANY resolution; this is the actual fix, and 1024 is
+	-- what gives it room to work. ~0.012 is about two texels at 1024, where the
+	-- island's texel step measures 0.006 body-radii.
+	--
+	-- A soft boundary is NOT a sub-resolution feature and does not violate the
+	-- 8 px rule: the rule is about how big a SHAPE is, not how sharp its border.
+	EDGE_SOFT = 0.012,
 
 	-- ---- face keep-clear ----
 	-- Sized to the face PARTS and no larger. The eyes span about 25 degrees of arc
@@ -155,24 +197,18 @@ local P = {
 	FACE_CLEAR_DEG = 38,
 	FACE_EDGE_DEG = 12,              -- soft falloff so the mask is not a visible disc
 
-	-- ---- shape-specific constants ----
-	-- The belt rides HIGH, as a crown band, because the face sits on the equator
+	-- ---- shape placement ----
+	-- The high belt rides as a crown band because the face sits on the equator
 	-- (qy ~ 0.05) and a belt there lands squarely under the face mask -- at 10%
-	-- coverage that left the Common slime with two dark slivers at its edges and
-	-- nothing in front. qy 0.34 clears the eyes and reads from the front.
-	BELT_CENTRE_Y = 0.34,
-	SPLIT_TILT_DEG = 24,
-	SPOT_CELL = 0.62,                -- 3D lattice pitch in body-radii; big cells, big spots
-	SPOT_PROB = 0.55,
-	PATCH_SCALE = 1.15,              -- low frequency: blobs, not speckle
-	PATCH_OCTAVES = 2,
+	-- coverage that left the Common slime with two slivers at its edges and
+	-- nothing in front. The low belt sits under the face for the same reason.
+	BELT_HIGH_Y = 0.34,
+	BELT_LOW_Y = -0.30,
+	SPLIT_SHALLOW_DEG = 20,          -- gentle diagonal
+	SPLIT_STEEP_DEG = 55,            -- steep diagonal, nearly a side division
 
 	-- ---- watchdog ----
 	YIELD_MS = 12,
-
-	-- ---- seeds ----
-	SEED_SPOT = 4021,
-	SEED_PATCH = 8117,
 }
 
 -- The six-hue cycle, read off the existing lineup so these match the game.
@@ -234,62 +270,6 @@ local function newYielder(budgetMs: number)
 	}
 end
 
--- ===================================================================
--- NOISE. Integer hash, no trig, every multiply under 2^53 so the result is
--- exact and the skins are reproducible bit-for-bit.
--- ===================================================================
-local function ihash(x: number, y: number, z: number, s: number): number
-	local h = bit32.bxor(
-		(x * 374761393) % 4294967296,
-		(y * 668265263) % 4294967296,
-		(z * 1103515245) % 4294967296,
-		(s * 2654435761) % 4294967296
-	)
-	h = bit32.bxor(h, bit32.rshift(h, 15))
-	h = (h * 40503) % 4294967296
-	h = bit32.bxor(h, bit32.rshift(h, 13))
-	h = (h * 40503) % 4294967296
-	return bit32.bxor(h, bit32.rshift(h, 16))
-end
-
-local function hnorm(x: number, y: number, z: number, s: number): number
-	return ihash(x, y, z, s) / 4294967296
-end
-
-local function vnoise3(x: number, y: number, z: number, s: number): number
-	local ix, iy, iz = math.floor(x), math.floor(y), math.floor(z)
-	local fx, fy, fz = x - ix, y - iy, z - iz
-	local ux = fx * fx * (3 - 2 * fx)
-	local uy = fy * fy * (3 - 2 * fy)
-	local uz = fz * fz * (3 - 2 * fz)
-	local c000 = hnorm(ix, iy, iz, s)
-	local c100 = hnorm(ix + 1, iy, iz, s)
-	local c010 = hnorm(ix, iy + 1, iz, s)
-	local c110 = hnorm(ix + 1, iy + 1, iz, s)
-	local c001 = hnorm(ix, iy, iz + 1, s)
-	local c101 = hnorm(ix + 1, iy, iz + 1, s)
-	local c011 = hnorm(ix, iy + 1, iz + 1, s)
-	local c111 = hnorm(ix + 1, iy + 1, iz + 1, s)
-	local x00 = c000 + (c100 - c000) * ux
-	local x10 = c010 + (c110 - c010) * ux
-	local x01 = c001 + (c101 - c001) * ux
-	local x11 = c011 + (c111 - c011) * ux
-	local y0 = x00 + (x10 - x00) * uy
-	local y1 = x01 + (x11 - x01) * uy
-	return y0 + (y1 - y0) * uz
-end
-
-local function fbm3(x: number, y: number, z: number, oct: number, s: number): number
-	local sum, amp, norm, f = 0, 1, 0, 1
-	for _ = 1, oct do
-		sum += amp * vnoise3(x * f, y * f, z * f, s)
-		norm += amp
-		amp *= 0.5
-		f *= 2
-	end
-	return sum / norm
-end
-
 local function smoothstep(e0: number, e1: number, x: number): number
 	local u = math.clamp((x - e0) / (e1 - e0), 0, 1)
 	return u * u * (3 - 2 * u)
@@ -310,26 +290,55 @@ end
 -- minStuds(k, radius) returns the shape's smallest dimension, which the build
 -- converts to pixels at 40 studs and asserts against MIN_FEATURE_PX.
 -- ===================================================================
-local SPLIT_N = (function()
-	local t = math.rad(P.SPLIT_TILT_DEG)
+local function planeNormal(tiltDeg: number): Vector3
+	local t = math.rad(tiltDeg)
 	return Vector3.new(math.sin(t), math.cos(t), 0).Unit
-end)()
+end
+local N_SHALLOW = planeNormal(P.SPLIT_SHALLOW_DEG)
+local N_STEEP = planeNormal(P.SPLIT_STEEP_DEG)
 
+-- Soft threshold: 1 well inside the shape, 0 well outside, smooth across a band
+-- EDGE_SOFT wide. Everything below goes through this, so no boundary anywhere is
+-- a hard texel step.
+local E = P.EDGE_SOFT
+local function inside(value: number, edge: number): number
+	-- accent where value < edge
+	return 1 - smoothstep(edge - E, edge + E, value)
+end
+local function above(value: number, edge: number): number
+	-- accent where value > edge
+	return smoothstep(edge - E, edge + E, value)
+end
+
+-- SPOTS AND PATCHES ARE GONE. Both resolved perfectly well by the pixel rule and
+-- both still looked cheap: on a rounded body a scatter of blobs reads as
+-- staining rather than as a marking, however cleanly its edges land. Resolving
+-- is necessary and not sufficient. What survives is the family that follows the
+-- body's own form -- bands and divisions -- and within-tier variety now comes
+-- from WHERE the band sits and HOW the plane is angled, not from adding kinds.
 local SHAPES = {
 	{
-		name = "belt",
-		-- a band around the middle; the classic and the most legible
-		accent = function(qx: number, qy: number, qz: number, k: number): boolean
-			return math.abs(qy - P.BELT_CENTRE_Y) < k
+		name = "belt-high",
+		accent = function(qx: number, qy: number, qz: number, k: number): number
+			return inside(math.abs(qy - P.BELT_HIGH_Y), k)
 		end,
 		minStuds = function(k: number, radius: number): number
 			return 2 * k * radius              -- the band's height
 		end,
 	},
 	{
+		name = "belt-low",
+		accent = function(qx: number, qy: number, qz: number, k: number): number
+			return inside(math.abs(qy - P.BELT_LOW_Y), k)
+		end,
+		minStuds = function(k: number, radius: number): number
+			return 2 * k * radius
+		end,
+	},
+	{
 		name = "cap",
-		accent = function(qx: number, qy: number, qz: number, k: number): boolean
-			return qy > 1 - k
+		accent = function(qx: number, qy: number, qz: number, k: number): number
+			return above(qy, 1 - k)
 		end,
 		minStuds = function(k: number, radius: number): number
 			return k * radius                  -- how far down the cap reaches
@@ -337,69 +346,29 @@ local SHAPES = {
 	},
 	{
 		name = "foot",
-		accent = function(qx: number, qy: number, qz: number, k: number): boolean
-			return qy < k - 1
+		accent = function(qx: number, qy: number, qz: number, k: number): number
+			return inside(qy, k - 1)
 		end,
 		minStuds = function(k: number, radius: number): number
 			return k * radius
 		end,
 	},
 	{
-		name = "split",
-		-- one tilted plane, two halves; nothing here can be small
-		accent = function(qx: number, qy: number, qz: number, k: number): boolean
-			return qx * SPLIT_N.X + qy * SPLIT_N.Y + qz * SPLIT_N.Z > 1 - 2 * k
+		name = "split-shallow",
+		accent = function(qx: number, qy: number, qz: number, k: number): number
+			return above(qx * N_SHALLOW.X + qy * N_SHALLOW.Y + qz * N_SHALLOW.Z, 1 - 2 * k)
 		end,
 		minStuds = function(k: number, radius: number): number
 			return math.min(k, 1 - k) * 2 * radius
 		end,
 	},
 	{
-		name = "spots",
-		-- a few big round spots on a coarse 3D lattice. Round ON THE BODY,
-		-- because the spot is a sphere in 3D and the surface cuts it in a circle
-		-- whatever the UV mapping does.
-		accent = function(qx: number, qy: number, qz: number, k: number): boolean
-			local cell = P.SPOT_CELL
-			local cx0, cy0, cz0 = math.floor(qx / cell), math.floor(qy / cell), math.floor(qz / cell)
-			for dz = -1, 1 do
-				for dy = -1, 1 do
-					for dx = -1, 1 do
-						local cx, cy, cz = cx0 + dx, cy0 + dy, cz0 + dz
-						local h = ihash(cx, cy, cz, P.SEED_SPOT)
-						if (h % 4096) / 4096 < P.SPOT_PROB then
-							local jx = bit32.band(h, 1023) / 1024
-							local jy = bit32.band(bit32.rshift(h, 10), 1023) / 1024
-							local jz = bit32.band(bit32.rshift(h, 20), 1023) / 1024
-							local px = (cx + jx) * cell
-							local py = (cy + jy) * cell
-							local pz = (cz + jz) * cell
-							local ddx, ddy, ddz = qx - px, qy - py, qz - pz
-							if ddx * ddx + ddy * ddy + ddz * ddz < k * k then
-								return true
-							end
-						end
-					end
-				end
-			end
-			return false
+		name = "split-steep",
+		accent = function(qx: number, qy: number, qz: number, k: number): number
+			return above(qx * N_STEEP.X + qy * N_STEEP.Y + qz * N_STEEP.Z, 1 - 2 * k)
 		end,
 		minStuds = function(k: number, radius: number): number
-			return 2 * k * radius              -- spot diameter
-		end,
-	},
-	{
-		name = "patches",
-		-- organic blobs from low-frequency 3D noise. PATCH_SCALE is deliberately
-		-- near 1 -- one or two features across the whole body, not a field.
-		accent = function(qx: number, qy: number, qz: number, k: number): boolean
-			local s = P.PATCH_SCALE
-			return fbm3(qx * s, qy * s, qz * s, P.PATCH_OCTAVES, P.SEED_PATCH) > 1 - k
-		end,
-		minStuds = function(k: number, radius: number): number
-			-- characteristic blob size is set by the noise wavelength, not by k;
-			-- one period of the base octave across the body
-			return (0.5 / P.PATCH_SCALE) * radius
+			return math.min(k, 1 - k) * 2 * radius
 		end,
 	},
 }
@@ -572,17 +541,15 @@ end
 -- ===================================================================
 -- COLOUR: base and the adaptive accent.
 -- ===================================================================
-local function accentFor(base: Color3): (Color3, number)
-	local h, s, v = Color3.toHSV(base)
-	local lum = luminance(base)
-	local acc
-	if lum > P.ACCENT_SPLIT_LUM then
-		acc = Color3.fromHSV(h, math.min(1, s * P.ACCENT_DARK_S), v * P.ACCENT_DARK_V)
-	else
-		acc = Color3.fromHSV(h, math.clamp(s * P.ACCENT_LIGHT_S, 0, 1),
-			math.min(1, v * P.ACCENT_LIGHT_V + 0.10))
-	end
-	return acc, math.abs(luminance(acc) - lum)
+-- Returns the accent, plus TWO contrast numbers because one is not enough.
+-- Luminance gap alone rejects cream-on-yellow, which in fact reads perfectly
+-- well -- the separation there is chroma, not brightness. RGB distance catches
+-- what luminance misses, so both are measured and both are reported.
+local function accentFor(base: Color3): (Color3, number, number)
+	local acc = P.ACCENT_CREAM:Lerp(base, P.ACCENT_HUE_MIX)
+	local lumGap = math.abs(luminance(acc) - luminance(base))
+	local dr, dg, db = acc.R - base.R, acc.G - base.G, acc.B - base.B
+	return acc, lumGap, math.sqrt(dr * dr + dg * dg + db * db)
 end
 
 -- ===================================================================
@@ -666,12 +633,13 @@ local function run()
 		local got = 0
 		for _ = 1, P.COVERAGE_ITERS do
 			local mid = (lo + hi) / 2
+			-- Coverage INTEGRATES the soft accent value rather than counting a
+			-- boolean. With antialiased edges a texel can be half accent, and
+			-- summing the fractions is what keeps the tier percentages honest.
 			local hit = 0
 			for si, q in ipairs(sample) do
 				if si % P.CALIBRATE_TICK_EVERY == 0 then Y.tick() end
-				if shape.accent(q[1], q[2], q[3], mid) and faceOpen(q[1], q[2], q[3]) > 0.5 then
-					hit += 1
-				end
+				hit += shape.accent(q[1], q[2], q[3], mid) * faceOpen(q[1], q[2], q[3])
 			end
 			got = hit / #sample
 			if math.abs(got - target) <= P.COVERAGE_TOLERANCE then
@@ -698,6 +666,7 @@ local function run()
 	local texCount = 0
 
 	for ti, tierName in ipairs(TIERS) do
+		if P.ONLY_TIER and tierName ~= P.ONLY_TIER then continue end
 		local target = P.TIER_COVERAGE[ti]
 		local tierWorstGap, tierWorstHue = math.huge, "?"
 		local tierMinPx, tierMinWhat = math.huge, "?"
@@ -723,10 +692,10 @@ local function run()
 			end
 
 			local base = hue.color
-			local accent, gap = accentFor(base)
-			if gap < tierWorstGap then
-				tierWorstGap = gap
-				tierWorstHue = hue.name
+			local accent, lumGap, rgbDist = accentFor(base)
+			if rgbDist < tierWorstGap then
+				tierWorstGap = rgbDist
+				tierWorstHue = string.format("%s (rgb %.3f, lum %.3f)", hue.name, rgbDist, lumGap)
 			end
 
 			-- paint
@@ -742,10 +711,7 @@ local function run()
 						local qx = buffer.readf32(POS, o)
 						local qy = buffer.readf32(POS, o + 4)
 						local qz = buffer.readf32(POS, o + 8)
-						local a = 0
-						if shape.accent(qx, qy, qz, k) then
-							a = faceOpen(qx, qy, qz)
-						end
+						local a = shape.accent(qx, qy, qz, k) * faceOpen(qx, qy, qz)
 						buffer.writeu8(buf, off, math.floor(math.clamp(br + (ar - br) * a, 0, 1) * 255 + 0.5))
 						buffer.writeu8(buf, off + 1, math.floor(math.clamp(bg + (ag - bg) * a, 0, 1) * 255 + 0.5))
 						buffer.writeu8(buf, off + 2, math.floor(math.clamp(bb + (ab - bb) * a, 0, 1) * 255 + 0.5))
@@ -813,9 +779,9 @@ local function run()
 
 		worstGapByTier[ti] = { hue = tierWorstHue, gap = tierWorstGap }
 		table.insert(rows, string.format(
-			"[Skins] %-9s target %2.0f%% | measured %.1f-%.1f%% | smallest feature %.1f px (%s) | worst hue %s (lum gap %.3f)",
+			"[Skins] %-9s target %2.0f%% | measured %.1f-%.1f%% | smallest feature %.1f px (%s) | worst hue %s",
 			tierName, target * 100, covLo * 100, covHi * 100, tierMinPx, tierMinWhat,
-			tierWorstHue, tierWorstGap))
+			tierWorstHue))
 	end
 
 	for _, r in ipairs(rows) do table.insert(lines, r) end
