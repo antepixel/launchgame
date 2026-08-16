@@ -112,11 +112,9 @@ local AssetService = game:GetService("AssetService")
 -- ===================================================================
 local P = {
 	-- ---- output ----
-	-- 1024, not 256. The 256 derivation was right about AREA -- one texel per
-	-- pixel at 40 studs -- and wrong about EDGES. A boundary stair-steps wherever
-	-- it is visible at all, and matching texel size to pixel size puts the steps
-	-- exactly at the size the eye picks up. Edges need headroom over the sampling
-	-- rate, not parity with it.
+	-- 512: enough headroom over the sampling rate for the boundary, at a quarter
+	-- of 1024's memory. See the header -- the old 256 matched texel size to pixel
+	-- size, which puts the stair steps at exactly the size the eye resolves.
 	TEX = 512,
 	ROOT_NAME = "SkinLineup",
 	SOURCE_MODEL = "slime_uv",       -- the UNWRAPPED body; lineup meshes have no UVs
