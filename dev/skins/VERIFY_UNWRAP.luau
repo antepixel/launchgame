@@ -58,7 +58,11 @@ local P = {
 	-- is the body. Importers nest the mesh differently every time -- the current
 	-- one arrives as AuxScene/slime_body_export/slime_body_Node/slime_body -- so
 	-- searching beats naming a fixed child.
-	SOURCE_MODELS = { "AuxScene", "slime_uv" },
+	-- Searched in order, in ReplicatedStorage.Assets first and then Workspace.
+	-- "Slime" is the SHIPPING PREFAB and now the canonical home of the
+	-- unwrapped body -- the other two were import scratch in Workspace and are
+	-- kept only so an older session still resolves.
+	SOURCE_MODELS = { "Slime", "AuxScene", "slime_uv" },
 	TEX = 512,                   -- the resolution the skins actually ship at
 	CONFLICT_EPS = 0.05,         -- body-radii; ~8 texels, far outside edge rounding
 	CONFLICT_EPS_TIGHT = 0.02,   -- reported alongside, for comparing with other tools
@@ -91,12 +95,21 @@ local function run()
 
 	local model, src
 	for _, name in ipairs(P.SOURCE_MODELS) do
-		local m = workspace:FindFirstChild(name)
+		local assets = game:GetService("ReplicatedStorage"):FindFirstChild("Assets")
+		local m = (assets and assets:FindFirstChild(name)) or workspace:FindFirstChild(name)
 		if m then
+			-- THE BIGGEST MeshPart, not the first. The shipping prefab holds four --
+			-- eye_dark, eye_white, blush and the body -- in creation order, so "first"
+			-- picks an EYE, which carries no unwrap and would fail every check here
+			-- while looking like a broken body mesh. Volume separates them cleanly.
+			local best, bestVol = nil, -1
 			for _, d in ipairs(m:GetDescendants()) do
-				if d:IsA("MeshPart") then model, src = m, d :: BasePart break end
+				if d:IsA("MeshPart") then
+					local v = d.Size.X * d.Size.Y * d.Size.Z
+					if v > bestVol then best, bestVol = d :: BasePart, v end
+				end
 			end
-			if src then break end
+			if best then model, src = m, best break end
 		end
 	end
 	assert(src, "[Verify] no MeshPart found under any of: " .. table.concat(P.SOURCE_MODELS, ", "))

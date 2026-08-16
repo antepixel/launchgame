@@ -145,8 +145,11 @@ local P = {
 	TEX_W = 1024,
 	TEX_H = 1024,
 	ROOT_NAME = "GalaxySkin",
-	SOURCE_MODEL = "slime_uv",     -- the UNWRAPPED body; the lineup mesh has no usable UVs
-	SOURCE_PART = "default",
+	-- Searched in ReplicatedStorage.Assets first, then Workspace, taking the
+	-- LARGEST MeshPart beneath the match -- the prefab holds four and the first in
+	-- creation order is an eye. "Slime" is the shipping prefab and the canonical
+	-- home of the unwrapped body; the others were import scratch and are gone.
+	SOURCE_MODELS = { "Slime", "AuxScene", "slime_uv" },
 	BUILD_POS = Vector3.new(0, 40, 0),
 	-- The face sits at body azimuth -141.5 deg. This yaw turns it toward a camera
 	-- standing at world azimuth +37.9, which is the framing the report shots use.
@@ -480,14 +483,41 @@ local function buildUVMap(meshId: string, W: number, H: number, Y)
 	local verts, faces = em:GetVertices(), em:GetFaces()
 	Y.mark("uvmap:verts")   -- the Async above yields; do not charge it as a stall
 
-	-- body bbox, excluding the stray cube (which sits above Y = 0)
+	-- STRAY GEOMETRY IS EXCLUDED BY DISTANCE FROM THE CENTROID, not by a Y test.
+	-- This read `if p.Y < 0`, which worked only because every vertex of the ORIGINAL
+	-- mesh happened to sit below zero -- the stray cube dragged the bbox centre up.
+	-- The re-unwrapped body straddles zero, so that test would have silently kept
+	-- only the half below the equator and textured a hemisphere.
+	local sx, sy, sz = 0, 0, 0
+	for _, id in ipairs(verts) do
+		Y.tick()
+		local p = em:GetPosition(id)
+		sx += p.X; sy += p.Y; sz += p.Z
+	end
+	local gx, gy, gz = sx / #verts, sy / #verts, sz / #verts
+	local dsum = 0
+	for _, id in ipairs(verts) do
+		Y.tick()
+		local p = em:GetPosition(id)
+		dsum += math.sqrt((p.X-gx)^2 + (p.Y-gy)^2 + (p.Z-gz)^2)
+	end
+	local dmean = dsum / #verts
+	local isStray: { [number]: boolean } = {}
+	for _, id in ipairs(verts) do
+		Y.tick()
+		local p = em:GetPosition(id)
+		if math.sqrt((p.X-gx)^2 + (p.Y-gy)^2 + (p.Z-gz)^2) > 8 * dmean then
+			isStray[id] = true
+		end
+	end
+
 	local mnx, mxx = math.huge, -math.huge
 	local mny, mxy = math.huge, -math.huge
 	local mnz, mxz = math.huge, -math.huge
 	for _, id in ipairs(verts) do
-		Y.tick()   -- ~45k GetPosition calls is itself past the watchdog on a cold cache
+		Y.tick()
 		local p = em:GetPosition(id)
-		if p.Y < 0 then
+		if not isStray[id] then
 			mnx = math.min(mnx, p.X); mxx = math.max(mxx, p.X)
 			mny = math.min(mny, p.Y); mxy = math.max(mxy, p.Y)
 			mnz = math.min(mnz, p.Z); mxz = math.max(mxz, p.Z)
@@ -547,7 +577,7 @@ local function buildUVMap(meshId: string, W: number, H: number, Y)
 		local fv = em:GetFaceVertices(f)
 		local fu = em:GetFaceUVs(f)
 		local p1, p2, p3 = em:GetPosition(fv[1]), em:GetPosition(fv[2]), em:GetPosition(fv[3])
-		if p1.Y > 0 or p2.Y > 0 or p3.Y > 0 then
+		if isStray[fv[1]] or isStray[fv[2]] or isStray[fv[3]] then
 			skipped += 1
 			continue
 		end
@@ -722,16 +752,33 @@ local function run()
 	local function log(...) table.insert(lines, string.format(...)) end
 	local t0 = os.clock()
 
-	local srcModel = workspace:FindFirstChild(P.SOURCE_MODEL)
-	assert(srcModel, string.format(
-		"[Galaxy] workspace.%s not found. This skin needs the UNWRAPPED body mesh; "
-			.. "the lineup slimes have no usable UV unwrap.", P.SOURCE_MODEL))
-	local src = srcModel:FindFirstChild(P.SOURCE_PART) :: BasePart
-	assert(src, "[Galaxy] " .. P.SOURCE_MODEL .. "." .. P.SOURCE_PART .. " not found")
+	local src: BasePart? = nil
+	for _, name in ipairs(P.SOURCE_MODELS) do
+		local assets = game:GetService("ReplicatedStorage"):FindFirstChild("Assets")
+		local m = (assets and assets:FindFirstChild(name)) or workspace:FindFirstChild(name)
+		if m then
+			-- largest MeshPart, not the first: the prefab holds four and the first in
+			-- creation order is an eye, which carries no unwrap
+			local best, bestVol = nil, -1
+			for _, d in ipairs(m:GetDescendants()) do
+				if d:IsA("MeshPart") then
+					local v = d.Size.X * d.Size.Y * d.Size.Z
+					if v > bestVol then best, bestVol = d :: BasePart, v end
+				end
+			end
+			if best then src = best break end
+		end
+	end
+	assert(src, string.format(
+		"[Galaxy] no MeshPart found under any of {%s}. This skin needs the UNWRAPPED "
+			.. "body; the lineup slimes have no usable UV unwrap.",
+		table.concat(P.SOURCE_MODELS, ", ")))
+	local source = src :: BasePart
+	log("[Galaxy] source: %s", source:GetFullName())
 
 	local W, H = P.TEX_W, P.TEX_H
 	local Y = newYielder(P.YIELD_MS)
-	local M = buildUVMap((src :: any).MeshId, W, H, Y)
+	local M = buildUVMap((source :: any).MeshId, W, H, Y)
 	log("[Galaxy] UV map: %d texels covered (%.1f%% of sheet), %d seam triangles fixed, %d cube faces skipped",
 		M.covered, 100 * M.covered / (W * H), M.seamTris, M.skipped)
 	log("[Galaxy] OVERLAP: %d texels claimed by two faces that disagree (%.2f%% of the island), worst %.3f body-radii",
@@ -880,7 +927,7 @@ local function run()
 	local localOff = Vector3.new(M.CX, M.CY, M.CZ)
 	local bodyCF = CFrame.new(P.BUILD_POS) * CFrame.Angles(0, math.rad(P.BODY_YAW_DEG), 0)
 
-	local body = src:Clone()
+	local body = source:Clone()
 	body.Name = "body"
 	body.Color = Color3.new(1, 1, 1)
 	body.Material = P.BODY_MATERIAL

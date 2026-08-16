@@ -154,7 +154,11 @@ local P = {
 	-- and cannot display a texture at all. First name that resolves wins, and the
 	-- first MeshPart ANYWHERE beneath it is the body -- importers nest it
 	-- differently every time.
-	SOURCE_MODELS = { "AuxScene", "slime_uv" },
+	-- Searched in order, in ReplicatedStorage.Assets first and then Workspace.
+	-- "Slime" is the SHIPPING PREFAB and now the canonical home of the
+	-- unwrapped body -- the other two were import scratch in Workspace and are
+	-- kept only so an older session still resolves.
+	SOURCE_MODELS = { "Slime", "AuxScene", "slime_uv" },
 
 	-- Everything is calibrated to the lineup's body width: 40 studs, 10.05 px per
 	-- stud, a 141 px body. The source part arrives at whatever scale the exporter
@@ -680,12 +684,23 @@ local function run()
 
 	local src: BasePart? = nil
 	for _, name in ipairs(P.SOURCE_MODELS) do
-		local m = workspace:FindFirstChild(name)
+		local assets = game:GetService("ReplicatedStorage"):FindFirstChild("Assets")
+		local m = (assets and assets:FindFirstChild(name)) or workspace:FindFirstChild(name)
 		if m then
+			-- THE BIGGEST MeshPart, not the first. The shipping prefab holds four --
+			-- eye_dark, eye_white, blush and the body -- and GetDescendants returns
+			-- them in creation order, so "first" picked an EYE. Eyes carry no unwrap,
+			-- so it rasterised to nothing; the coverage guard below caught it, which
+			-- is what that guard exists for. Volume separates them unambiguously:
+			-- the body is orders of magnitude larger than any face part.
+			local best, bestVol = nil, -1
 			for _, d in ipairs(m:GetDescendants()) do
-				if d:IsA("MeshPart") then src = d :: BasePart break end
+				if d:IsA("MeshPart") then
+					local v = d.Size.X * d.Size.Y * d.Size.Z
+					if v > bestVol then best, bestVol = d :: BasePart, v end
+				end
 			end
-			if src then break end
+			if best then src = best break end
 		end
 	end
 	assert(src, string.format(
@@ -698,8 +713,21 @@ local function run()
 	local W = P.TEX
 	local Y = newYielder(P.YIELD_MS)
 	local M = buildUVMap((source :: any).MeshId, W, W, Y)
-	log("[Skins] UV map: %d texels covered (%.1f%% of sheet), %d seam tris, %d cube faces skipped",
+	log("[Skins] UV map: %d texels covered (%.1f%% of sheet), %d seam tris, %d stray faces skipped",
 		M.covered, 100 * M.covered / (W * W), M.seamTris, M.skipped)
+
+	-- THE SOURCE MUST ACTUALLY HAVE AN UNWRAP, and this is checked because the
+	-- failure is silent otherwise. The lineup body mesh has exactly ONE distinct UV
+	-- coordinate -- every vertex maps to the same point -- so it rasterises to
+	-- almost nothing and paints a body of flat average colour with no error raised
+	-- anywhere. Now that the source can resolve to the shipping prefab, an
+	-- un-swapped or reverted MeshId would land here rather than at a look-wrong
+	-- report three steps later.
+	local coverage = M.covered / (W * W)
+	assert(coverage > 0.10, string.format(
+		"[Skins] the source mesh covers only %.2f%% of the sheet -- it has no usable UV "
+			.. "unwrap. The lineup body has ONE distinct UV coordinate and cannot carry a "
+			.. "texture; check the MeshId is the re-unwrapped body.", coverage * 100))
 
 	local POS, MASK = M.POS, M.MASK
 
