@@ -192,6 +192,12 @@ local P = {
 	-- THE TERMINATOR RULE, measured -- see the section of that name above.
 	-- A warning, never an assert: a high score is a reason to look, not proof
 	-- of a bad marking.
+	-- A RAMP HAS NO EDGE, so "how wide is the smallest feature" has to be asked
+	-- of what is VISIBLE rather than of the mask. A texel counts as visible when
+	-- its painted colour differs from the body by more than this, in Color3
+	-- units. See THE RAMP AND THE MEASUREMENTS in the header.
+	VIS_THRESHOLD = 0.12,
+
 	SHADOW_BINS = 256,
 	SHADOW_WARN = 0.80,
 	-- A marking wants to STRADDLE the light, so the flag is two-sided: well
@@ -301,6 +307,26 @@ local function contrast(base: Color3, acc: Color3): (number, number)
 	return math.abs(luminance(acc) - luminance(base)), math.sqrt(dr*dr + dg*dg + db*db)
 end
 
+-- Colour at a point on a stop list, stops sorted by position.
+local function rampAt(stops, h: number): (number, number, number)
+	if h <= stops[1][1] then
+		local c = stops[1][2]
+		return c.R, c.G, c.B
+	end
+	for i = 1, #stops - 1 do
+		local a, b = stops[i], stops[i + 1]
+		if h <= b[1] then
+			local u = (h - a[1]) / math.max(b[1] - a[1], 1e-9)
+			local ca, cb = a[2], b[2]
+			return ca.R + (cb.R - ca.R) * u,
+				ca.G + (cb.G - ca.G) * u,
+				ca.B + (cb.B - ca.B) * u
+		end
+	end
+	local c = stops[#stops][2]
+	return c.R, c.G, c.B
+end
+
 local function smoothstep(e0: number, e1: number, x: number): number
 	local u = math.clamp((x - e0) / (e1 - e0), 0, 1)
 	return u * u * (3 - 2 * u)
@@ -339,6 +365,12 @@ end
 -- TWO OPTIONAL FIELDS, both there so a shape can be A/B'd against ITSELF with
 -- everything else held fixed -- which is the only way the comparison means
 -- anything, exactly as the shared white fraction is:
+--     heat  = function returning 0..1, and `stops`, a colour ramp over it.
+--             Together these replace `white`/`core` entirely: see THE RAMP AND
+--             THE MEASUREMENTS in the header before using them.
+--     target = number  coverage for THIS variant. 28% is a rule about white
+--             diluting a hue; a variant whose accent IS the hue is not bound
+--             by it.
 --     white = Color3   the accent for this variant only (default COLOUR_WHITE)
 --     soft  = number   boundary half-width for this variant (default EDGE_SOFT)
 -- Both were added after an A/B that found neither of them is what makes
@@ -500,6 +532,50 @@ end
 
 
 
+-- =================== THE RAMP, AND WHAT IT DOES TO THE NUMBERS ===========
+--
+-- A variant may supply `heat(q..., k) -> 0..1` and `stops`, a list of
+-- {position, Color3}. Inside the mask the colour is the ramp evaluated at heat
+-- rather than a single accent, which is what lets a shape carry a DIRECTION:
+-- a flame tongue can be white-hot at its root and fade to the body colour at
+-- its tip, and the eye reads that as upward. No threshold can express it.
+--
+-- THE HONEST PART. Every measurement in this file is defined on a MASK -- a
+-- region with a boundary -- and a ramp is not a mask. Rather than keep printing
+-- numbers that have quietly stopped meaning what they say:
+--
+--   COVERAGE still computes, and still positions the flame, BUT IT NO LONGER
+--   MEANS "how much of the body looks different". Where heat is near zero the
+--   ramp equals the body colour, so part of the mask is invisible by design.
+--   Read it as "how much of the body the field covers", never as how much shows.
+--
+--   FEATURE SIZE ON THE MASK BECOMES MEANINGLESS, and this is the dangerous
+--   one, because it keeps producing a healthy-looking number. It measures a
+--   contour that is mostly INVISIBLE -- the tips fade out, so the mask edge is
+--   not an edge. For ramp variants the floor is enforced on VISIBLE size
+--   instead: 2A/P over the texels whose painted colour differs from the body by
+--   more than VIS_THRESHOLD. That is the number that has to clear 8 px, and it
+--   is the one the build reports and asserts on.
+--
+--   J AND lit ARE NOT REPORTED FOR RAMPS. Both are defined on white-versus-not,
+--   and both answer "could lighting have produced this?" -- a question fire
+--   answers YES to by construction, because fire is a height field. The number
+--   would be high and would mean nothing. Worse, it would mean the OPPOSITE of
+--   what it means elsewhere: fire is brightest at the BASE, where the light is
+--   dimmest, so it contradicts the shading rather than mimicking it. A metric
+--   that inverts its meaning on a class of inputs must be switched off for that
+--   class, not explained away in a comment next to a number.
+--
+--   CONTRAST becomes per-stop. One base-against-accent pair is now several, and
+--   the pair that matters is the body against the HOTTEST stop.
+--
+-- This is the third time a number here has kept reporting after its meaning
+-- lapsed -- after the pole pixel count that could not see the fix it was
+-- measuring, and the IoU that ranked an adjacency it was not measuring. The
+-- pattern is the same every time: the number stays computable after the thing
+-- it described stops existing.
+-- ===========================================================================
+
 -- ========================= FIRE: TWO ATTEMPTS, NEITHER LANDS =============
 --
 -- Legendary is meant to stop being a shape and become an IMAGE, and fire is the
@@ -633,54 +709,107 @@ end
 --   is the one place where the existing two-accent machinery happens to model
 --   the physics rather than merely allow it.
 -- ===================================================================
-local function flameG(qx: number, qy: number, qz: number,
+-- FEW BOLD TONGUES, NOT MANY FINE ONES. 40 studs decides this: embers and
+-- fine tips land under the 8 px floor, and a feature that half-resolves is the
+-- failure this project keeps rediscovering. So the noise runs at ONE octave and
+-- a low scale -- big, confident shapes -- and the detail budget is spent on the
+-- colour ramp instead, which costs no resolution at all.
+local function flameHeight(qx: number, qy: number, qz: number,
 	scale: number, vstretch: number, amp: number, seed: number): number
 	local t = (qy - PROFILE_Y0) / math.max(PROFILE_Y1 - PROFILE_Y0, 1e-9)
-	-- ADVECTION: the sample point drifts downward as t rises, so a tongue leans
-	-- and narrows on its way up instead of standing as a vertical stripe.
-	local n = fbm3(qx * scale, qy * scale / vstretch - t * 1.6, qz * scale, 2, seed)
-	-- RIDGED: |2n-1| folded gives SHARP PEAKS where plain fbm gives smooth
-	-- humps. Flames are peaks. This is the whole difference between the first
-	-- attempt, which read as a pale wash with a wavy top, and a tongue.
-	local ridge = 1 - math.abs(2 * n - 1)
-	ridge = ridge * ridge          -- sharpen further: narrow tips, wide roots
-	return t - amp * ridge
+	-- ADVECTION: the sample drifts as t rises, so a tongue leans and narrows
+	-- on the way up instead of standing as a vertical stripe.
+	local n = fbm3(qx * scale, qy * scale / vstretch - t * 1.1, qz * scale, 1, seed)
+	-- SPIKE WHERE THE NOISE IS EXTREME, NOT WHERE IT IS AVERAGE. The usual
+	-- ridged form 1 - |2n-1| peaks at n = 0.5, which for value noise is the
+	-- COMMONEST value -- so it produces broad plateaus separated by thin
+	-- valleys, i.e. a flat band, which is exactly what the first two ramp
+	-- builds rendered. |2n-1| is near zero for most of the body and reaches 1
+	-- only rarely, so squaring it leaves a few tall tongues over a quiet base.
+	local d = math.abs(2 * n - 1)
+	return amp * d * d
+end
+
+local function flameT(qy: number): number
+	return (qy - PROFILE_Y0) / math.max(PROFILE_Y1 - PROFILE_Y0, 1e-9)
 end
 
 local VARIANTS = {
+	-- ---- Legendary: fire, as a ramp -------------------------------------
+	-- The tip stop IS the body colour, so a tongue fades out instead of ending
+	-- at an edge. That is what removes the hard tip the drip version had, and
+	-- it is also why the mask's feature size stopped meaning anything: the top
+	-- of the mask is invisible on purpose.
+	--
+	-- The stops are a FUNCTION of the base, so the flames carry whatever hue
+	-- the slime is. A blue slime burns blue. This is the measured answer --
+	-- fire in the hue family preserved hue better than the white dot field
+	-- below it did, 82.5% against 66.6% blue-dominant.
+	-- THE FIELD IS A RATIO, NOT A DIFFERENCE, and this is the load-bearing bit.
+	-- Written as t - H the calibration adds a constant to every column, so once
+	-- k is large enough to hit the target coverage every tongue has nearly the
+	-- same total height and `heat` collapses into a flat horizontal gradient --
+	-- the ramp present in the code and invisible on the body, which is exactly
+	-- what the first ramp build produced. Written as t / H the same k SCALES
+	-- each tongue instead, so tongue-to-tongue variation survives calibration
+	-- and heat stays normalised per tongue.
 	{
-		-- HUE ON TOP, FIRE BELOW. The most conservative answer to "does it still
-		-- read as a blue slime": most of the body is untouched hue and the fire
-		-- is a band with a flame-shaped upper edge.
-		name = "fire-lick2",
-		note = "flames to 40%% of height, body keeps its hue above",
-		target = 0.40,
-		white = Color3.fromRGB(150, 200, 255),
-		core = { color = Color3.fromRGB(255, 255, 255), fraction = 0.35 },
-		g = function(qx, qy, qz, f, s, y) return flameG(qx, qy, qz, 3.0, 3.0, 1.15, 17) end,
+		name = "fire-tongues",
+		note = "bold tongues, white-hot roots fading to the hue at the tips",
+		target = 0.45,
+		g = function(qx, qy, qz, f, s, y)
+			return flameT(qy) / math.max(flameHeight(qx, qy, qz, 1.20, 4.0, 1.60, 17), 1e-3)
+		end,
+		heat = function(qx, qy, qz, f, s, y, k)
+			local h = k * flameHeight(qx, qy, qz, 1.20, 4.0, 1.60, 17)
+			return h > 1e-6 and math.clamp(1 - flameT(qy) / h, 0, 1) or 0
+		end,
+		stops = function(base)
+			local function toward(u)
+				return Color3.new(base.R + (1 - base.R) * u,
+					base.G + (1 - base.G) * u, base.B + (1 - base.B) * u)
+			end
+			return { { 0.00, base }, { 0.35, toward(0.50) }, { 1.00, Color3.new(1, 1, 1) } }
+		end,
 	},
 	{
-		-- THE HUE IS IN THE FLAMES. Same colours, far more of them: only the
-		-- crown is left unburnt, so the hue is carried by the fire itself
-		-- rather than by the untouched body.
-		name = "fire-engulf2",
-		note = "flames to 70%% of height, only the crown unburnt",
-		target = 0.62,
-		white = Color3.fromRGB(150, 200, 255),
-		core = { color = Color3.fromRGB(255, 255, 255), fraction = 0.35 },
-		g = function(qx, qy, qz, f, s, y) return flameG(qx, qy, qz, 3.0, 3.0, 1.15, 17) end,
+		name = "fire-few",
+		note = "fewer, broader tongues -- the lowest frequency that still reads as flame",
+		target = 0.45,
+		g = function(qx, qy, qz, f, s, y)
+			return flameT(qy) / math.max(flameHeight(qx, qy, qz, 0.80, 4.0, 1.80, 17), 1e-3)
+		end,
+		heat = function(qx, qy, qz, f, s, y, k)
+			local h = k * flameHeight(qx, qy, qz, 0.80, 4.0, 1.80, 17)
+			return h > 1e-6 and math.clamp(1 - flameT(qy) / h, 0, 1) or 0
+		end,
+		stops = function(base)
+			local function toward(u)
+				return Color3.new(base.R + (1 - base.R) * u,
+					base.G + (1 - base.G) * u, base.B + (1 - base.B) * u)
+			end
+			return { { 0.00, base }, { 0.35, toward(0.50) }, { 1.00, Color3.new(1, 1, 1) } }
+		end,
 	},
 	{
-		-- BODY DARK, FLAMES CARRY THE HUE. This is the option that risks
-		-- galaxy's exact failure -- a near-black base that mips to a dark blob
-		-- at distance -- so it is here to be TESTED rather than assumed bad.
-		name = "fire-ember2",
-		deep = 0.30,
-		note = "deep body, flames carry the hue to a pale core",
-		target = 0.65,
-		white = Color3.fromRGB(60, 120, 240),
-		core = { color = Color3.fromRGB(200, 230, 255), fraction = 0.30 },
-		g = function(qx, qy, qz, f, s, y) return flameG(qx, qy, qz, 3.0, 3.0, 1.15, 17) end,
+		name = "fire-hot",
+		note = "same tongues, white carried further up each one",
+		target = 0.45,
+		g = function(qx, qy, qz, f, s, y)
+			return flameT(qy) / math.max(flameHeight(qx, qy, qz, 1.20, 4.0, 1.60, 17), 1e-3)
+		end,
+		heat = function(qx, qy, qz, f, s, y, k)
+			local h = k * flameHeight(qx, qy, qz, 1.20, 4.0, 1.60, 17)
+			return h > 1e-6 and math.clamp(1 - flameT(qy) / h, 0, 1) or 0
+		end,
+		stops = function(base)
+			local function toward(u)
+				return Color3.new(base.R + (1 - base.R) * u,
+					base.G + (1 - base.G) * u, base.B + (1 - base.B) * u)
+			end
+			return { { 0.00, base }, { 0.30, toward(0.60) }, { 0.62, Color3.new(1, 1, 1) },
+				{ 1.00, Color3.new(1, 1, 1) } }
+		end,
 	},
 	{
 		-- Common. Calibration is skipped for it -- there is no boundary to
@@ -1275,7 +1404,11 @@ local function run()
 			k, measured, shadow, lit, coreK = c[1], c[2], c[3], c[4], c[5]
 		else
 			k, measured = calibrate(v, v.target or P.WHITE_TARGET)
-			shadow, lit = lightFit(v, k)
+			if v.stops then
+				shadow, lit = 0, 0        -- see THE RAMP: not applicable, so not computed
+			else
+				shadow, lit = lightFit(v, k)
+			end
 			-- THE CORE IS CALIBRATED, NOT SCALED. k is a threshold in g-space and
 			-- it is NEGATIVE for some fields (anything written as -(f/l) and the
 			-- like), so k * fraction moves the boundary the WRONG WAY for half
@@ -1288,12 +1421,22 @@ local function run()
 		local accV = v.white or P.COLOUR_WHITE
 		ar, ag, ab = accV.R, accV.G, accV.B
 		br, bg, bb = job.hue.R, job.hue.G, job.hue.B
+		-- stops may be a FUNCTION of the base, which is what lets the flames
+		-- carry whatever hue this slime is rather than a fixed fire colour
+		local stopsV = nil
+		if v.stops then
+			stopsV = (typeof(v.stops) == "function")
+				and v.stops(Color3.new(br, bg, bb)) or v.stops
+		end
 		if v.deep then br, bg, bb = br * v.deep, bg * v.deep, bb * v.deep end
 
 		-- paint, and measure the shape while painting: white texel count and the
 		-- count of white texels with a non-white neighbour give area and perimeter
 		local whiteN, edgeN = 0, 0
 		local coreN, coreEdgeN = 0, 0
+		local visN, visEdgeN = 0, 0
+		local rowVis = table.create(W)
+		local VT2 = P.VIS_THRESHOLD * P.VIS_THRESHOLD
 		local rowWhite = table.create(W)
 		local rowCore = table.create(W)
 		local cr, cg, cb = 0, 0, 0
@@ -1314,10 +1457,21 @@ local function run()
 					if a > 0.5 then whiteN += 1 end
 					rowWhite[x + 1] = a > 0.5
 					if x > 0 and rowWhite[x] ~= rowWhite[x + 1] then edgeN += 1 end
-					local pr = br + (ar-br)*a
-					local pg = bg + (ag-bg)*a
-					local pb = bb + (ab-bb)*a
-					if coreK then
+					local pr, pg, pb
+					if v.stops then
+						-- inside the mask the colour is the ramp; `a` still
+						-- antialiases the mask edge against the body
+						local h = v.heat(qx, qy, qz, fq, sq, qy, k)
+						local hr, hg, hb = rampAt(stopsV, h)
+						pr = br + (hr - br) * a
+						pg = bg + (hg - bg) * a
+						pb = bb + (hb - bb) * a
+					else
+						pr = br + (ar-br)*a
+						pg = bg + (ag-bg)*a
+						pb = bb + (ab-bb)*a
+					end
+					if coreK and not v.stops then
 						local c = whiteAt(v, qx, qy, qz, fq, sq, coreK)
 						pr = pr + (cr-pr)*c
 						pg = pg + (cg-pg)*c
@@ -1326,6 +1480,11 @@ local function run()
 						rowCore[x + 1] = c > 0.5
 						if x > 0 and rowCore[x] ~= rowCore[x + 1] then coreEdgeN += 1 end
 					end
+					local dr, dg, db = pr - br, pg - bg, pb - bb
+					local seen = (dr*dr + dg*dg + db*db) > VT2
+					if seen then visN += 1 end
+					rowVis[x + 1] = seen
+					if x > 0 and rowVis[x] ~= rowVis[x + 1] then visEdgeN += 1 end
 					buffer.writeu8(buf, off, math.floor(math.clamp(pr, 0, 1)*255 + 0.5))
 					buffer.writeu8(buf, off+1, math.floor(math.clamp(pg, 0, 1)*255 + 0.5))
 					buffer.writeu8(buf, off+2, math.floor(math.clamp(pb, 0, 1)*255 + 0.5))
@@ -1333,6 +1492,7 @@ local function run()
 				else
 					rowWhite[x + 1] = false
 					rowCore[x + 1] = false
+					rowVis[x + 1] = false
 					buffer.writeu8(buf, off, 0); buffer.writeu8(buf, off+1, 0)
 					buffer.writeu8(buf, off+2, 0); buffer.writeu8(buf, off+3, 255)
 				end
@@ -1343,8 +1503,17 @@ local function run()
 		local widthStuds = (edgeN > 0)
 			and (2 * whiteN / edgeN) * texelStep * bodyRadiusStuds or 0
 		local widthPx = widthStuds * pxPerStud
+		-- THE VISIBLE SIZE. For a mask this agrees with widthPx by construction,
+		-- because everything inside a mask is the accent. For a RAMP it does not,
+		-- and it is the only one of the two that means anything -- see the header.
+		local visPx = (visEdgeN > 0)
+			and (2 * visN / visEdgeN) * texelStep * bodyRadiusStuds * pxPerStud or 0
+
 		-- a rung with no marking has no narrowest feature; it would read as 0 px
-		if not v.solid and widthPx < worstPx then worstPx, worstWhat = widthPx, v.name end
+		local floorPx = v.stops and visPx or widthPx
+		if not v.solid and floorPx < worstPx then
+			worstPx, worstWhat = floorPx, v.name .. (v.stops and " visible" or "")
+		end
 
 		-- THE CORE IS THE THING AT RISK, not the marking around it: it is
 		-- narrower by construction, so it is measured on its own and tracked
@@ -1404,7 +1573,13 @@ local function run()
 		slime:SetAttribute("ShadowAlignment", shadow)
 		slime:SetAttribute("LitRatio", lit)
 		local coreNote = corePx > 0 and string.format(" | core %5.1f px", corePx) or ""
-		if job.tier ~= "" then
+		if v.stops then
+			-- J and lit are switched off here, not hidden: both are defined on
+			-- white-versus-not and both would invert their meaning on a ramp.
+			log("[Lab] %2d %-17s covers %.1f%% of the body | VISIBLE feature %5.1f px"
+				.. " (mask says %.1f, which is not the number to read) | J -- | lit -- | %s",
+				vi, v.name, measured * 100, visPx, widthPx, v.note)
+		elseif job.tier ~= "" then
 			local lumGap, rgbDist = contrast(job.hue, accV)
 			log("[Lab] %2d %-10s %-7s %-9s white %4.1f%% | feature %5.1f px | lum gap %.2f | rgb %.2f",
 				vi, job.tier, job.hueName, v.name, measured * 100, widthPx, lumGap, rgbDist)
