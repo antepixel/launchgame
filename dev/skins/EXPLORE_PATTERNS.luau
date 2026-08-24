@@ -149,6 +149,27 @@ local P = {
 	LIT_LO = 0.50,
 	LIT_HI = 2.00,
 
+	-- THE SIX AUTHORED HUES, mirrored from SLIME_COLOR_BY_TIER in
+	-- src/ReplicatedStorage/Config/SlimeConfig.luau. Every 6-slime tier uses
+	-- these same six in this same order, so one row of the grid below is one
+	-- tier's entire art. COPIED rather than required, because this file is
+	-- standalone by design -- if SlimeConfig's six ever move, move these too.
+	HUES = {
+		{ "green", Color3.fromRGB(70, 200, 80) },
+		{ "red", Color3.fromRGB(225, 60, 60) },
+		{ "blue", Color3.fromRGB(60, 120, 240) },
+		{ "yellow", Color3.fromRGB(245, 215, 55) },
+		{ "purple", Color3.fromRGB(165, 80, 220) },
+		{ "orange", Color3.fromRGB(250, 140, 40) },
+	},
+
+	-- Tier -> variant. NON-EMPTY SWITCHES THIS FILE TO GRID MODE: every hue
+	-- against every rung, laid out hue across and tier back. A shape chosen on
+	-- one hue is a shape chosen on one sixth of the evidence, and the hue that
+	-- breaks a marking will not be the one it was designed against.
+	LADDER = {},
+	ROW_SPACING = 34,
+
 	-- Build only these variants, by name, in this order. Empty builds them all.
 	-- This is what makes an A/B repeatable instead of a scratch edit: name the
 	-- two you are comparing and everything else about the build is untouched.
@@ -199,6 +220,19 @@ local FACE_REL = FACE_PARTS[1].rel.Position
 local FWD = Vector3.new(FACE_REL.X, 0, FACE_REL.Z).Unit
 local SIDE = Vector3.new(-FWD.Z, 0, FWD.X)
 
+local function luminance(c: Color3): number
+	return 0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B
+end
+
+-- TWO NUMBERS, because one is not enough -- lifted from BUILD_SKINS' accentFor
+-- and kept identical on purpose. Luminance gap alone rejects cream-on-yellow,
+-- which in fact reads perfectly well: the separation there is chroma, not
+-- brightness. RGB distance catches what luminance misses.
+local function contrast(base: Color3, acc: Color3): (number, number)
+	local dr, dg, db = acc.R - base.R, acc.G - base.G, acc.B - base.B
+	return math.abs(luminance(acc) - luminance(base)), math.sqrt(dr*dr + dg*dg + db*db)
+end
+
 local function smoothstep(e0: number, e1: number, x: number): number
 	local u = math.clamp((x - e0) / (e1 - e0), 0, 1)
 	return u * u * (3 - 2 * u)
@@ -246,6 +280,15 @@ end
 local YHALF = 0.6773     -- body half-height in body-radii; refined at build time
 
 local VARIANTS = {
+	{
+		-- Common. Calibration is skipped for it -- there is no boundary to
+		-- place, and bisecting toward 28% white on a shape that has no white
+		-- would run the search to its bracket and report nonsense.
+		name = "bare",
+		note = "no marking at all -- Common",
+		solid = true,
+		g = function(qx, qy, qz, f, s, y) return 9 end,
+	},
 	{
 		name = "countershade",
 		note = "white belly, boundary rising toward the face and dipping at the flanks",
@@ -713,6 +756,27 @@ local function run()
 	end
 	local texelStep = stepSum / math.max(1, stepN)
 
+	local byName = {}
+	for _, v in ipairs(VARIANTS) do byName[v.name] = v end
+
+	-- One flat job list, so grid mode and row mode share the whole builder
+	-- below instead of forking it.
+	local jobs = {}
+	if #P.LADDER > 0 then
+		for row, rung in ipairs(P.LADDER) do
+			local tier, vname = rung[1], rung[2]
+			local v = byName[vname]
+			assert(v, string.format("[Lab] ladder rung %q names variant %q, which is not here",
+				tier, vname))
+			for col, hue in ipairs(P.HUES) do
+				table.insert(jobs, {
+					v = v, tier = tier, hueName = hue[1], hue = hue[2],
+					x = (col - 1) * P.SPACING, z = (row - 1) * P.ROW_SPACING,
+				})
+			end
+		end
+	end
+
 	local build = VARIANTS
 	if #P.ONLY > 0 then
 		local want = {}
@@ -728,13 +792,38 @@ local function run()
 		end
 	end
 
+	if #jobs == 0 then
+		for i, v in ipairs(build) do
+			table.insert(jobs, { v = v, tier = "", hueName = P.HUE_NAME, hue = P.HUE,
+				x = (i - 1) * P.SPACING, z = 0 })
+		end
+	end
+
+	-- k, the white fraction and both light numbers are all GEOMETRY. None of
+	-- them knows what colour the body is, so in grid mode each rung is
+	-- calibrated once and the other five hues reuse it -- 5 bisections rather
+	-- than 30, and it also guarantees a rung is the identical SHAPE across the
+	-- row rather than six independent searches landing 0.3% apart.
+	local shapeCache = {}
+
 	local worstPx, worstWhat = math.huge, "?"
-	for vi, v in ipairs(build) do
+	for vi, job in ipairs(jobs) do
 		Y.tick()
-		local k, measured = calibrate(v)
-		local shadow, lit = lightFit(v, k)
+		local v = job.v
+		local k, measured, shadow, lit
+		if v.solid then
+			k, measured, shadow, lit = 0, 0, 0, 1
+		elseif shapeCache[v.name] then
+			local c = shapeCache[v.name]
+			k, measured, shadow, lit = c[1], c[2], c[3], c[4]
+		else
+			k, measured = calibrate(v)
+			shadow, lit = lightFit(v, k)
+			shapeCache[v.name] = { k, measured, shadow, lit }
+		end
 		local accV = v.white or P.COLOUR_WHITE
 		ar, ag, ab = accV.R, accV.G, accV.B
+		br, bg, bb = job.hue.R, job.hue.G, job.hue.B
 
 		-- paint, and measure the shape while painting: white texel count and the
 		-- count of white texels with a non-white neighbour give area and perimeter
@@ -772,17 +861,20 @@ local function run()
 		local widthStuds = (edgeN > 0)
 			and (2 * whiteN / edgeN) * texelStep * bodyRadiusStuds or 0
 		local widthPx = widthStuds * pxPerStud
-		if widthPx < worstPx then worstPx, worstWhat = widthPx, v.name end
+		-- a rung with no marking has no narrowest feature; it would read as 0 px
+		if not v.solid and widthPx < worstPx then worstPx, worstWhat = widthPx, v.name end
 
 		local img = AssetService:CreateEditableImage({ Size = Vector2.new(W, W) })
 		img:WritePixelsBuffer(Vector2.zero, Vector2.new(W, W), buf)
 		Y.mark()
 
-		local at = P.ORIGIN + Vector3.new((vi - 1) * P.SPACING, 0, 0)
+		local at = P.ORIGIN + Vector3.new(job.x, 0, job.z)
 		local bodyCF = CFrame.new(at.X, at.Y + bodyHeightStuds/2, at.Z)
 			* CFrame.Angles(0, math.rad(P.BODY_YAW_DEG), 0)
 		local slime = Instance.new("Model")
-		slime.Name = string.format("V%02d_%s", vi, v.name)
+		slime.Name = (job.tier ~= "")
+			and string.format("T%02d_%s_%s", vi, job.tier, job.hueName)
+			or string.format("V%02d_%s", vi, v.name)
 		slime.Parent = root
 
 		local body = source:Clone()
@@ -814,21 +906,28 @@ local function run()
 		slime:SetAttribute("BodyCentre", Vector3.new(at.X, at.Y + bodyHeightStuds/2, at.Z))
 		slime:SetAttribute("Variant", v.name)
 		slime:SetAttribute("Index", vi)
-		slime:SetAttribute("Hue", P.HUE_NAME)
+		slime:SetAttribute("Hue", job.hueName)
+		slime:SetAttribute("Tier", job.tier)
 		slime:SetAttribute("WhiteFraction", measured)
 
 		slime:SetAttribute("ShadowAlignment", shadow)
 		slime:SetAttribute("LitRatio", lit)
-		log("[Lab] %2d %-17s white %.1f%% | feature %5.1f px | J %.2f | lit %.2f%s | %s",
-			vi, v.name, measured * 100, widthPx, shadow, lit,
-			(shadow >= P.SHADOW_WARN or lit <= P.LIT_LO or lit >= P.LIT_HI)
-				and " <--" or "    ", v.note)
+		if job.tier ~= "" then
+			local lumGap, rgbDist = contrast(job.hue, accV)
+			log("[Lab] %2d %-10s %-7s %-9s white %4.1f%% | feature %5.1f px | lum gap %.2f | rgb %.2f",
+				vi, job.tier, job.hueName, v.name, measured * 100, widthPx, lumGap, rgbDist)
+		else
+			log("[Lab] %2d %-17s white %.1f%% | feature %5.1f px | J %.2f | lit %.2f%s | %s",
+				vi, v.name, measured * 100, widthPx, shadow, lit,
+				(shadow >= P.SHADOW_WARN or lit <= P.LIT_LO or lit >= P.LIT_HI)
+					and " <--" or "    ", v.note)
+		end
 	end
 
 	log("[Lab] narrowest feature: %.1f px (%s), floor is %d px",
 		worstPx, worstWhat, P.MIN_FEATURE_PX)
 	log("[Lab] watchdog worst hold %.1f ms | built %d variants in %.2f s",
-		Y.worstMs(), #build, os.clock() - t0)
+		Y.worstMs(), #jobs, os.clock() - t0)
 	log("[Lab] undo with workspace.%s:Destroy()", P.ROOT_NAME)
 
 	local outStr = table.concat(lines, "\n")
