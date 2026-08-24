@@ -106,6 +106,57 @@
 -- what a rarity ladder is actually ordering. Keep judging that by eye.
 -- ===========================================================================
 --
+-- ======================== THE SECOND ACCENT ===============================
+--
+-- THIS IS A STRUCTURAL CHANGE, NOT A CONFIG VALUE, and it is written down here
+-- because everything else in this file assumes a skin is TWO colours meeting at
+-- ONE boundary. `core` gives a variant a third colour inside its marking:
+-- the outer band in `white`, an inner region in `core.color` covering
+-- `core.fraction` of the marking's own coverage.
+--
+-- THE CORE IS CALIBRATED, NOT SCALED. k is a threshold in g-space and it is
+-- NEGATIVE for several variants here -- anything written as -(f/l) -- so
+-- k * fraction moves the boundary the WRONG WAY for half the file. The core
+-- gets its own bisection, to WHITE_TARGET * fraction. Sign-agnostic by
+-- construction, at the cost of a second search per variant.
+--
+-- WHAT IT COSTS, all four of these being real and none of them hypothetical:
+--
+--   A SECOND BOUNDARY. This file has argued repeatedly for exactly one -- the
+--   crown cap was turned off for being "a white disc sitting on the pole",
+--   and the adaptive rim before it drew "a faint disc floating around the
+--   face, competing with the one boundary that is supposed to be the design".
+--   A core reintroduces that second edge deliberately. It has to earn it.
+--
+--   THE FEATURE FLOOR NOW BINDS ON THE CORE. The core is narrower than the
+--   marking by construction, so it -- not the marking -- is what approaches
+--   8 px first. It is measured separately and tracked against the same floor;
+--   a core that half-resolves is the same cheap failure as a 1-texel star.
+--   MEASURED on blaze at 28%, whose marking is a flat 44.9 px throughout:
+--       fraction 0.40   core 16.4 px
+--       fraction 0.25   core 10.4 px
+--       fraction 0.15   core  6.0 px   <-- under the floor
+--       fraction 0.08   core  3.5 px
+--   so the floor binds at about fraction 0.20 for THIS shape, and a narrower
+--   marking reaches it sooner. Do not pick a fraction without reading the
+--   core figure the build prints for it.
+--
+--   MATCHED WHITE FRACTION STOPS MEANING MATCHED APPEARANCE. One bisection
+--   used to pin the whole comparison. Now `fraction` is a second free
+--   parameter the calibration does not constrain, so two variants at 28% can
+--   look materially different. Hold `fraction` fixed across any A/B or the
+--   comparison is worth nothing -- the same argument as the white fraction
+--   itself, one level down.
+--
+--   CONTRAST BECOMES PAIRWISE. Three colours is three pairs, and the new one
+--   -- accent against core -- is the dangerous one: two accents close to each
+--   other read as one blurred marking, which is the tonal-accent failure
+--   already killed once. Check it against BOTH numbers, not just luminance.
+--
+-- The per-texel cost is one extra smoothstep, which is nothing. The cost is
+-- entirely in the four paragraphs above.
+-- ===========================================================================
+--
 -- WHAT CARRIES OVER UNCHANGED, all of it already argued in BUILD_SKINS.luau:
 -- white is the only accent; both colours belong to the same shape; nothing under
 -- 8 px at 40 studs; antialiased boundaries; 3D evaluation on the mesh's own UV
@@ -276,6 +327,10 @@ end
 -- Both were added after an A/B that found neither of them is what makes
 -- countershade read as shadow. Keep them: proving a knob does NOT matter is
 -- worth as much as proving one does, and it should not cost a scratch edit.
+--
+-- AND ONE THAT IS NOT A KNOB:
+--     core = { color = Color3, fraction = number }
+-- See THE SECOND ACCENT below. It changes what a skin IS, not how it is tuned.
 -- ===================================================================
 local YHALF = 0.6773     -- body half-height in body-radii; refined at build time
 
@@ -654,7 +709,7 @@ local function run()
 
 	-- one monotone bisection calibrates every shape, because g is written so a
 	-- larger k always admits more white
-	local function calibrate(v): (number, number)
+	local function calibrate(v, target: number): (number, number)
 		local lo, hi, got = P.SEARCH_LO, P.SEARCH_HI, 0
 		for _ = 1, P.SEARCH_ITERS do
 			local mid = (lo + hi) / 2
@@ -664,8 +719,8 @@ local function run()
 				hit += whiteAt(v, q[1], q[2], q[3], q[4], q[5], mid)
 			end
 			got = hit / #sample
-			if math.abs(got - P.WHITE_TARGET) <= P.WHITE_TOLERANCE then return mid, got end
-			if got < P.WHITE_TARGET then lo = mid else hi = mid end
+			if math.abs(got - target) <= P.WHITE_TOLERANCE then return mid, got end
+			if got < target then lo = mid else hi = mid end
 		end
 		return (lo + hi) / 2, got
 	end
@@ -810,16 +865,23 @@ local function run()
 	for vi, job in ipairs(jobs) do
 		Y.tick()
 		local v = job.v
-		local k, measured, shadow, lit
+		local k, measured, shadow, lit, coreK
 		if v.solid then
 			k, measured, shadow, lit = 0, 0, 0, 1
 		elseif shapeCache[v.name] then
 			local c = shapeCache[v.name]
-			k, measured, shadow, lit = c[1], c[2], c[3], c[4]
+			k, measured, shadow, lit, coreK = c[1], c[2], c[3], c[4], c[5]
 		else
-			k, measured = calibrate(v)
+			k, measured = calibrate(v, P.WHITE_TARGET)
 			shadow, lit = lightFit(v, k)
-			shapeCache[v.name] = { k, measured, shadow, lit }
+			-- THE CORE IS CALIBRATED, NOT SCALED. k is a threshold in g-space and
+			-- it is NEGATIVE for some fields (anything written as -(f/l) and the
+			-- like), so k * fraction moves the boundary the WRONG WAY for half
+			-- the variants here. Bisecting to a coverage target is sign-agnostic.
+			if v.core then
+				coreK = calibrate(v, P.WHITE_TARGET * v.core.fraction)
+			end
+			shapeCache[v.name] = { k, measured, shadow, lit, coreK }
 		end
 		local accV = v.white or P.COLOUR_WHITE
 		ar, ag, ab = accV.R, accV.G, accV.B
@@ -828,7 +890,11 @@ local function run()
 		-- paint, and measure the shape while painting: white texel count and the
 		-- count of white texels with a non-white neighbour give area and perimeter
 		local whiteN, edgeN = 0, 0
+		local coreN, coreEdgeN = 0, 0
 		local rowWhite = table.create(W)
+		local rowCore = table.create(W)
+		local cr, cg, cb = 0, 0, 0
+		if v.core then cr, cg, cb = v.core.color.R, v.core.color.G, v.core.color.B end
 		for y = 0, W-1 do
 			if y % P.PAINT_TICK_ROWS == 0 then Y.tick() end
 			for x = 0, W-1 do
@@ -845,12 +911,25 @@ local function run()
 					if a > 0.5 then whiteN += 1 end
 					rowWhite[x + 1] = a > 0.5
 					if x > 0 and rowWhite[x] ~= rowWhite[x + 1] then edgeN += 1 end
-					buffer.writeu8(buf, off, math.floor(math.clamp(br + (ar-br)*a, 0, 1)*255 + 0.5))
-					buffer.writeu8(buf, off+1, math.floor(math.clamp(bg + (ag-bg)*a, 0, 1)*255 + 0.5))
-					buffer.writeu8(buf, off+2, math.floor(math.clamp(bb + (ab-bb)*a, 0, 1)*255 + 0.5))
+					local pr = br + (ar-br)*a
+					local pg = bg + (ag-bg)*a
+					local pb = bb + (ab-bb)*a
+					if coreK then
+						local c = whiteAt(v, qx, qy, qz, fq, sq, coreK)
+						pr = pr + (cr-pr)*c
+						pg = pg + (cg-pg)*c
+						pb = pb + (cb-pb)*c
+						if c > 0.5 then coreN += 1 end
+						rowCore[x + 1] = c > 0.5
+						if x > 0 and rowCore[x] ~= rowCore[x + 1] then coreEdgeN += 1 end
+					end
+					buffer.writeu8(buf, off, math.floor(math.clamp(pr, 0, 1)*255 + 0.5))
+					buffer.writeu8(buf, off+1, math.floor(math.clamp(pg, 0, 1)*255 + 0.5))
+					buffer.writeu8(buf, off+2, math.floor(math.clamp(pb, 0, 1)*255 + 0.5))
 					buffer.writeu8(buf, off+3, 255)
 				else
 					rowWhite[x + 1] = false
+					rowCore[x + 1] = false
 					buffer.writeu8(buf, off, 0); buffer.writeu8(buf, off+1, 0)
 					buffer.writeu8(buf, off+2, 0); buffer.writeu8(buf, off+3, 255)
 				end
@@ -863,6 +942,15 @@ local function run()
 		local widthPx = widthStuds * pxPerStud
 		-- a rung with no marking has no narrowest feature; it would read as 0 px
 		if not v.solid and widthPx < worstPx then worstPx, worstWhat = widthPx, v.name end
+
+		-- THE CORE IS THE THING AT RISK, not the marking around it: it is
+		-- narrower by construction, so it is measured on its own and tracked
+		-- against the same 8 px floor rather than assumed safe.
+		local corePx = 0
+		if coreK and coreEdgeN > 0 then
+			corePx = (2 * coreN / coreEdgeN) * texelStep * bodyRadiusStuds * pxPerStud
+			if corePx < worstPx then worstPx, worstWhat = corePx, v.name .. " core" end
+		end
 
 		local img = AssetService:CreateEditableImage({ Size = Vector2.new(W, W) })
 		img:WritePixelsBuffer(Vector2.zero, Vector2.new(W, W), buf)
@@ -912,13 +1000,14 @@ local function run()
 
 		slime:SetAttribute("ShadowAlignment", shadow)
 		slime:SetAttribute("LitRatio", lit)
+		local coreNote = corePx > 0 and string.format(" | core %5.1f px", corePx) or ""
 		if job.tier ~= "" then
 			local lumGap, rgbDist = contrast(job.hue, accV)
 			log("[Lab] %2d %-10s %-7s %-9s white %4.1f%% | feature %5.1f px | lum gap %.2f | rgb %.2f",
 				vi, job.tier, job.hueName, v.name, measured * 100, widthPx, lumGap, rgbDist)
 		else
-			log("[Lab] %2d %-17s white %.1f%% | feature %5.1f px | J %.2f | lit %.2f%s | %s",
-				vi, v.name, measured * 100, widthPx, shadow, lit,
+			log("[Lab] %2d %-17s white %.1f%% | feature %5.1f px%s | J %.2f | lit %.2f%s | %s",
+				vi, v.name, measured * 100, widthPx, coreNote, shadow, lit,
 				(shadow >= P.SHADOW_WARN or lit <= P.LIT_LO or lit >= P.LIT_HI)
 					and " <--" or "    ", v.note)
 		end
