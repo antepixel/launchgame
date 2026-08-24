@@ -83,6 +83,24 @@
 -- hiding in the shade (countershade) and sitting in the highlight (cap-tilt)
 -- are the same mistake wearing different clothes.
 --
+-- THE COROLLARY, AND IT IS THE USEFUL HALF: A MARKING THAT NEVER MENTIONS
+-- HEIGHT CANNOT BE MISTAKEN FOR A HEIGHT GRADIENT. Every shape here that
+-- scores well is a function of f and s alone -- mane 0.10, brackets 0.11,
+-- blaze 0.13, stripes4 0.05 -- and every shape that scores badly has y in it.
+-- That is not a coincidence, it is the definition of J restated.
+--
+-- IT IS A TRADE, NOT A TUNING PROBLEM, once y is in the formula. A chevron
+-- band |y + 0.45|s| - c| was swept across four offsets looking for one that
+-- both straddles the light and stays unpredictable:
+--     c = 0.18   J 0.40   lit 0.21     buried in the shade
+--     c = 0.30   J 0.50   lit 0.57
+--     c = 0.45   J 0.70   lit 1.66
+--     c = 0.60   J 0.88   lit 3.31     sitting in the highlight
+-- lit passes through 1 somewhere around c = 0.35, where J is already ~0.6.
+-- Raising a y-dependent marking ACROSS the light boundary is the same act as
+-- making it more predictable FROM height. There is no setting where it is both,
+-- so the family was dropped rather than tuned. Reach for f and s instead.
+--
 -- WHAT THESE NUMBERS DO NOT MEASURE IS BOLDNESS. They say whether a shape can
 -- be mistaken for lighting; they say nothing about how loud it is, which is
 -- what a rarity ladder is actually ordering. Keep judging that by eye.
@@ -316,6 +334,28 @@ local VARIANTS = {
 		note = "band over the crown, stopping short of the face",
 		g = function(qx, qy, qz, f, s, y)
 			return math.abs(s) + 0.9 * math.max(0, f - 0.15)
+		end,
+	},
+	-- ---- candidates for Epic -------------------------------------------
+	-- Bolder than collar, quieter than blaze. The metrics push hard toward
+	-- shapes defined by f and s and NOT by y: a marking that never mentions
+	-- height cannot be mistaken for a height gradient, which is why these three
+	-- sit at the bottom of the J column. None of them covers the face, so none
+	-- changes what the creature IS the way plastron and muzzle do.
+	{
+		name = "mane",
+		note = "ring around the face, hue inside it and behind it",
+		g = function(qx, qy, qz, f, s, y)
+			local l = math.sqrt(qx * qx + qy * qy + qz * qz)
+			return l < 1e-9 and 9 or math.abs(f / l - 0.45)
+		end,
+	},
+	{
+		name = "brackets",
+		note = "one stripe down each side of the face, hue between them",
+		g = function(qx, qy, qz, f, s, y)
+			local l = math.sqrt(qx * qx + qy * qy + qz * qz)
+			return l < 1e-9 and 9 or math.abs(math.abs(s) / l - 0.55)
 		end,
 	},
 	{
