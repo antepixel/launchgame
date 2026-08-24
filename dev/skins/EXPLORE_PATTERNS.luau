@@ -334,6 +334,132 @@ end
 -- ===================================================================
 local YHALF = 0.6773     -- body half-height in body-radii; refined at build time
 
+
+-- ===================================================================
+-- THE DOT FIELD.
+--
+-- EQUAL AREA ON THE SPHEROID, NOT EQUAL STEPS IN UV. A UV grid bunches at the
+-- crown, because that is exactly where the unwrap crowds every u column into
+-- one point -- the "dumpling pleats" failure BUILD_GALAXY documents. Latitude
+-- rings do the same thing more politely. So the dots are placed by SURFACE
+-- AREA of the actual body: the body is a surface of revolution with equatorial
+-- semi-axis 1 and polar semi-axis YHALF, its area element is
+--     dA = 2*pi * sin(t) * sqrt(cos(t)^2 + YHALF^2 * sin(t)^2) dt
+-- which is integrated once into a table and inverted, so dot i sits at the
+-- latitude holding (i + 0.5)/n of the total area. Longitude is the golden
+-- angle, which never repeats and so never lines dots up into a seam.
+--
+-- THERE IS NO POLE TO RUN OUT OF. Nothing here is parameterised by longitude,
+-- so no count converges anywhere: the crown is just another patch of area and
+-- gets its share of dots. That is the whole reason for choosing area over UV.
+--
+-- PERFECT REGULARITY IS NOT AVAILABLE AND THIS IS NOT A SHORTCUT. Only 4, 6, 8,
+-- 12 and 20 points can be placed on a sphere all-equidistant -- the Platonic
+-- solids -- and the body is not even a sphere. For every other count the best
+-- that exists is EVENLY SPACED, not identically spaced, and the spread is
+-- measured and reported below rather than asserted away.
+--
+-- KNOWN AND MEASURED: THE PROFILE IS IDEALISED, AND THE BODY IS NOT.
+-- Everything above integrates the area element of a perfect spheroid. The mesh
+-- is a DOME -- rounder on top than underneath -- so the dot count per band is
+-- right for a shape the body only approximates. Measured on dots24 by counting
+-- white against body in three renders:
+--     head-on     28.3%   (calibrated 28.0%, so the calibration itself is right)
+--     crown       46.1%
+--     underside   20.4%
+-- Some of that spread is foreshortening -- an axis-on view sees the pole
+-- face-on and the flanks edge-on -- but the two poles differ from EACH OTHER by
+-- more than foreshortening explains, and that difference is the dome.
+--
+-- The lit ratio caught it independently and before any of these renders existed:
+-- a uniform field should measure lit = 1.00 and these measure 1.16, 1.23, 1.35,
+-- rising with dot count. Two measurements from different evidence agreeing that
+-- the field is top-heavy is worth more than either alone.
+--
+-- THE FIX, NOT APPLIED HERE: integrate the MESH's own radius-versus-height
+-- profile instead of a spheroid's. BUILD_TIERMARKS already does exactly this --
+-- 45,694 vertices bucketed into 96 height bands with radiusAt interpolating
+-- between them -- and it also records the trap, which is that 42 of its 96
+-- buckets come out EMPTY and interpolating into a zero collapses the radius to
+-- ~25% of true. Reuse that, do not rewrite it.
+--
+-- A SECOND, SMALLER RESIDUAL: dot SIZE is not constant either. The threshold is
+-- a fixed distance in 3D, and the body is flatter at the poles -- meridional
+-- radius of curvature a^2/b = 1.48 there against b^2/a = 0.46 at the equator, a
+-- 3.2x difference -- so the same radius cuts a wider patch on the flatter part.
+-- Correcting it means scaling the threshold by local curvature. Left alone: it
+-- is far smaller than the profile error above, and fixing the profile first may
+-- make it not worth fixing at all.
+-- ===================================================================
+local DOT_CACHE = {}
+local DOT_ORDER = {}
+local DOT_NOTES = {}
+
+local function dotCentres(n: number)
+	if DOT_CACHE[n] then return DOT_CACHE[n] end
+	local b = YHALF
+	local STEPS = 4096
+	local cum = table.create(STEPS + 1)
+	cum[1] = 0
+	for i = 1, STEPS do
+		local th = (i - 0.5) * math.pi / STEPS
+		local st = math.sin(th)
+		cum[i + 1] = cum[i] + st * math.sqrt(math.cos(th)^2 + b*b*st*st) * (math.pi / STEPS)
+	end
+	local total = cum[STEPS + 1]
+
+	local cx, cy, cz = table.create(n), table.create(n), table.create(n)
+	local GA = math.pi * (3 - math.sqrt(5))
+	local j = 1
+	for i = 0, n - 1 do
+		local target = (i + 0.5) / n * total
+		while j < STEPS and cum[j + 1] < target do j += 1 end
+		local th = (j - 0.5) * math.pi / STEPS
+		local lon = i * GA
+		local st = math.sin(th)
+		cx[i + 1] = st * math.cos(lon)
+		cy[i + 1] = b * math.cos(th)
+		cz[i + 1] = st * math.sin(lon)
+	end
+
+	-- how even did that actually come out? nearest-neighbour spacing in 3D on
+	-- the body itself, plus where the dots sit in height, reported not assumed
+	local lo, hi, sum = math.huge, 0, 0
+	local topN = 0
+	for i = 1, n do
+		local best = math.huge
+		for k = 1, n do
+			if k ~= i then
+				local dx, dy, dz = cx[i]-cx[k], cy[i]-cy[k], cz[i]-cz[k]
+				local d = dx*dx + dy*dy + dz*dz
+				if d < best then best = d end
+			end
+		end
+		best = math.sqrt(best)
+		lo = math.min(lo, best); hi = math.max(hi, best); sum += best
+		if cy[i] > 0.8 * b then topN += 1 end
+	end
+	DOT_NOTES[n] = string.format(
+		"spacing min %.3f mean %.3f max %.3f (max/min %.2f) | %d of %d dots in the top 20%% of height",
+		lo, sum / n, hi, hi / lo, topN, n)
+	table.insert(DOT_ORDER, n)
+	local t = { cx = cx, cy = cy, cz = cz, n = n }
+	DOT_CACHE[n] = t
+	return t
+end
+
+local function dotField(qx: number, qy: number, qz: number, n: number): number
+	local d = dotCentres(n)
+	local cx, cy, cz = d.cx, d.cy, d.cz
+	local best = math.huge
+	for i = 1, n do
+		local dx, dy, dz = qx - cx[i], qy - cy[i], qz - cz[i]
+		local s = dx*dx + dy*dy + dz*dz
+		if s < best then best = s end
+	end
+	return math.sqrt(best)
+end
+
 local VARIANTS = {
 	{
 		-- Common. Calibration is skipped for it -- there is no boundary to
@@ -440,6 +566,21 @@ local VARIANTS = {
 	-- height cannot be mistaken for a height gradient, which is why these three
 	-- sit at the bottom of the J column. None of them covers the face, so none
 	-- changes what the creature IS the way plastron and muzzle do.
+	{
+		name = "dots12",
+		note = "12 dots, equal-area on the spheroid",
+		g = function(qx, qy, qz, f, s, y) return dotField(qx, qy, qz, 12) end,
+	},
+	{
+		name = "dots24",
+		note = "24 dots, equal-area on the spheroid",
+		g = function(qx, qy, qz, f, s, y) return dotField(qx, qy, qz, 24) end,
+	},
+	{
+		name = "dots40",
+		note = "40 dots, equal-area on the spheroid",
+		g = function(qx, qy, qz, f, s, y) return dotField(qx, qy, qz, 40) end,
+	},
 	{
 		name = "mane",
 		note = "ring around the face, hue inside it and behind it",
@@ -1013,6 +1154,9 @@ local function run()
 		end
 	end
 
+	for _, n in ipairs(DOT_ORDER) do
+		log("[Lab] dots %d: %s", n, DOT_NOTES[n])
+	end
 	log("[Lab] narrowest feature: %.1f px (%s), floor is %d px",
 		worstPx, worstWhat, P.MIN_FEATURE_PX)
 	log("[Lab] watchdog worst hold %.1f ms | built %d variants in %.2f s",
