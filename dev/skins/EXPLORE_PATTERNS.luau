@@ -220,10 +220,14 @@ local P = {
 	-- breaks a marking will not be the one it was designed against.
 	-- THE LADDER AS IT STANDS. Paste this in as LADDER to build the grid:
 	--     { "Common", "bare" },
-	--     { "Uncommon", "stripes4" },   -- twist 140
-	--     { "Rare", "dots24" },
-	--     { "Epic", "mane" },
-	--     { "Legendary", "blaze" },
+	--     { "Uncommon", "blaze" },
+	--     { "Rare", "stripes4" },       -- twist 140
+	--     { "Epic", "dots24" },
+	--     { "Legendary", <fire> },      -- NOT YET: see FIRE above
+	-- Mane is out -- it read as a soft halo bleeding into the body rather than
+	-- as a marking. Legendary stops being a shape and becomes an image, which
+	-- is the medium change the tiers above the patterns need, arriving one rung
+	-- earlier than first planned.
 	-- Collar held Rare until dots24 displaced it: collar and mane are both a
 	-- white band across the upper face, and one row apart they were hard to
 	-- rank. A dot field is a different visual family altogether, which is what
@@ -494,7 +498,190 @@ local function dotField(qx: number, qy: number, qz: number, n: number): number
 	return math.sqrt(best)
 end
 
+
+
+-- ========================= FIRE: TWO ATTEMPTS, NEITHER LANDS =============
+--
+-- Legendary is meant to stop being a shape and become an IMAGE, and fire is the
+-- image. Both attempts below are kept because re-deriving them costs what it
+-- cost the first time, and because the second one is wrong in a way that says
+-- what the third needs.
+--
+-- ATTEMPT 1 -- plain fbm as a height field, amp 0.5, scale 2.0.
+-- Read as a PALE WASH with a wavy top edge. No tongues at all. The measured
+-- tell was there before the render: feature sizes of 98 to 207 px, when a
+-- flame should be producing far finer boundary than a plain marking. Smooth
+-- fbm has no peaks, and flames are peaks.
+--
+-- ATTEMPT 2 -- ridged noise, squared, advected downward with height, amp 1.15.
+-- Feature dropped to 28-41 px, and tongues appeared. They read as DRIPS
+-- RUNNING DOWN rather than flames licking up.
+--
+-- WHY, AND IT IS NOT A SHAPE PROBLEM. A tapering pale streak on a darker body
+-- is exactly what a drip looks like. What makes a flame read upward is the
+-- COLOUR RAMP ALONG ITS LENGTH -- white-hot at the root, cooling to the hue at
+-- the tip -- and this file cannot express that. `core` colours a SMALLER
+-- COVERAGE, which on a height field is a horizontal band across the bottom of
+-- everything, not a gradient that follows each tongue to its own tip. So every
+-- tongue comes out flat-coloured and the direction cue is missing.
+--
+-- WHAT THE THIRD ATTEMPT NEEDS, and it is structural, not a parameter:
+-- a variant must be able to return a RAMP rather than a threshold -- colour as
+-- a continuous function of how far up its own tongue a texel sits, normalised
+-- per tongue, something like (amp*ridge - t) / (amp*ridge). That is a third
+-- colour mode beside `white` and `core`, and it breaks the assumption every
+-- measurement here rests on: that a skin is regions with boundaries. Feature
+-- size, white fraction and both light numbers are all defined on a MASK. A ramp
+-- has no mask, so either fire keeps a thresholded mask for measurement and
+-- ramps only the colour inside it, or the measurements need rethinking.
+--
+-- AND A TENSION WORTH SETTLING BEFORE ANY OF THAT. Fire wants fine detail and
+-- 40 studs forbids it: attempt 2's core is already 9.8 px against the 8 px
+-- floor. Breaking the tips into separate embers -- which is what would most
+-- sell the direction -- goes straight under it. Fire at this distance may have
+-- to be a FEW BOLD TONGUES rather than many fine ones, which is a different
+-- picture from the one the word "fire" suggests.
+--
+-- WHAT DID WORK, MEASURED: the hue survives fire better than it survives the
+-- rung below it. Share of body pixels where blue clearly dominates red:
+--     bare          88.3%
+--     fire-ember2   84.6%
+--     fire-lick2    82.5%
+--     fire-engulf2  76.9%
+--     dots24        66.6%   <- the current Rare rung
+-- Because the flames are themselves in the hue family -- a luminance ramp
+-- within the hue rather than a separate fire colour -- while white dots are
+-- neutral. SO THE ANSWER TO "how does the hue survive" IS: THE FLAMES ARE THE
+-- HUE. A blue slime burns blue. Orange flames would read as an orange slime,
+-- and the tier colour is already carried elsewhere (SLIME_TIER_COLORS).
+-- ===========================================================================
+-- ===================================================================
+-- VALUE NOISE, lifted verbatim from BUILD_GALAXY so the two files cannot
+-- drift: same integer hash, same trilinear smoothstep interpolation, same
+-- fbm. Reproducible bit-for-bit from the seed, which is what lets a skin be
+-- regenerated rather than stored.
+-- ===================================================================
+local function ihash(x: number, y: number, z: number, s: number): number
+	local h = bit32.bxor(
+		(x * 374761393) % 4294967296,
+		(y * 668265263) % 4294967296,
+		(z * 1103515245) % 4294967296,
+		(s * 2654435761) % 4294967296
+	)
+	h = bit32.bxor(h, bit32.rshift(h, 15))
+	h = (h * 40503) % 4294967296
+	h = bit32.bxor(h, bit32.rshift(h, 13))
+	h = (h * 40503) % 4294967296
+	return bit32.bxor(h, bit32.rshift(h, 16))
+end
+
+local function hnorm(x: number, y: number, z: number, s: number): number
+	return ihash(x, y, z, s) / 4294967296
+end
+
+local function vnoise3(x: number, y: number, z: number, s: number): number
+	local ix, iy, iz = math.floor(x), math.floor(y), math.floor(z)
+	local fx, fy, fz = x - ix, y - iy, z - iz
+	local ux = fx * fx * (3 - 2 * fx)
+	local uy = fy * fy * (3 - 2 * fy)
+	local uz = fz * fz * (3 - 2 * fz)
+	local c000 = hnorm(ix, iy, iz, s)
+	local c100 = hnorm(ix + 1, iy, iz, s)
+	local c010 = hnorm(ix, iy + 1, iz, s)
+	local c110 = hnorm(ix + 1, iy + 1, iz, s)
+	local c001 = hnorm(ix, iy, iz + 1, s)
+	local c101 = hnorm(ix + 1, iy, iz + 1, s)
+	local c011 = hnorm(ix, iy + 1, iz + 1, s)
+	local c111 = hnorm(ix + 1, iy + 1, iz + 1, s)
+	local x00 = c000 + (c100 - c000) * ux
+	local x10 = c010 + (c110 - c010) * ux
+	local x01 = c001 + (c101 - c001) * ux
+	local x11 = c011 + (c111 - c011) * ux
+	local y0 = x00 + (x10 - x00) * uy
+	local y1 = x01 + (x11 - x01) * uy
+	return y0 + (y1 - y0) * uz
+end
+
+local function fbm3(x: number, y: number, z: number, oct: number, s: number): number
+	local sum, amp, norm, f = 0, 1, 0, 1
+	for _ = 1, oct do
+		sum += amp * vnoise3(x * f, y * f, z * f, s)
+		norm += amp
+		amp *= 0.5
+		f *= 2
+	end
+	return sum / norm
+end
+
+-- ===================================================================
+-- THE FLAME FIELD. FIRE HAS A DIRECTION, WHICH IS THE WHOLE DIFFERENCE
+-- FROM GALAXY. Galaxy's nebula is isotropic -- it looks the same whichever way
+-- the body is turned, which is right for a sky and wrong for a flame. Here:
+--
+--   THE NOISE IS SAMPLED COMPRESSED IN Y, so its features come out TALL.
+--   Isotropic noise gives blobs, and blobs read as mould, not fire. VSTRETCH
+--   below is how many times taller than wide a tongue is.
+--
+--   IT IS A HEIGHT FIELD, NOT A DENSITY. The flame reaches a height that
+--   varies with where you are around the body, and burns everything below it.
+--   That is what makes tongues lick UPWARD from a common base instead of
+--   floating as detached patches.
+--
+--   THE HOTTEST PART IS THE BASE, and this comes out for free. The core is
+--   calibrated to a SMALLER coverage than the flame, and a smaller coverage of
+--   a height field is the lower part of it. Fire is hottest at its root; this
+--   is the one place where the existing two-accent machinery happens to model
+--   the physics rather than merely allow it.
+-- ===================================================================
+local function flameG(qx: number, qy: number, qz: number,
+	scale: number, vstretch: number, amp: number, seed: number): number
+	local t = (qy - PROFILE_Y0) / math.max(PROFILE_Y1 - PROFILE_Y0, 1e-9)
+	-- ADVECTION: the sample point drifts downward as t rises, so a tongue leans
+	-- and narrows on its way up instead of standing as a vertical stripe.
+	local n = fbm3(qx * scale, qy * scale / vstretch - t * 1.6, qz * scale, 2, seed)
+	-- RIDGED: |2n-1| folded gives SHARP PEAKS where plain fbm gives smooth
+	-- humps. Flames are peaks. This is the whole difference between the first
+	-- attempt, which read as a pale wash with a wavy top, and a tongue.
+	local ridge = 1 - math.abs(2 * n - 1)
+	ridge = ridge * ridge          -- sharpen further: narrow tips, wide roots
+	return t - amp * ridge
+end
+
 local VARIANTS = {
+	{
+		-- HUE ON TOP, FIRE BELOW. The most conservative answer to "does it still
+		-- read as a blue slime": most of the body is untouched hue and the fire
+		-- is a band with a flame-shaped upper edge.
+		name = "fire-lick2",
+		note = "flames to 40%% of height, body keeps its hue above",
+		target = 0.40,
+		white = Color3.fromRGB(150, 200, 255),
+		core = { color = Color3.fromRGB(255, 255, 255), fraction = 0.35 },
+		g = function(qx, qy, qz, f, s, y) return flameG(qx, qy, qz, 3.0, 3.0, 1.15, 17) end,
+	},
+	{
+		-- THE HUE IS IN THE FLAMES. Same colours, far more of them: only the
+		-- crown is left unburnt, so the hue is carried by the fire itself
+		-- rather than by the untouched body.
+		name = "fire-engulf2",
+		note = "flames to 70%% of height, only the crown unburnt",
+		target = 0.62,
+		white = Color3.fromRGB(150, 200, 255),
+		core = { color = Color3.fromRGB(255, 255, 255), fraction = 0.35 },
+		g = function(qx, qy, qz, f, s, y) return flameG(qx, qy, qz, 3.0, 3.0, 1.15, 17) end,
+	},
+	{
+		-- BODY DARK, FLAMES CARRY THE HUE. This is the option that risks
+		-- galaxy's exact failure -- a near-black base that mips to a dark blob
+		-- at distance -- so it is here to be TESTED rather than assumed bad.
+		name = "fire-ember2",
+		deep = 0.30,
+		note = "deep body, flames carry the hue to a pale core",
+		target = 0.65,
+		white = Color3.fromRGB(60, 120, 240),
+		core = { color = Color3.fromRGB(200, 230, 255), fraction = 0.30 },
+		g = function(qx, qy, qz, f, s, y) return flameG(qx, qy, qz, 3.0, 3.0, 1.15, 17) end,
+	},
 	{
 		-- Common. Calibration is skipped for it -- there is no boundary to
 		-- place, and bisecting toward 28% white on a shape that has no white
@@ -1087,20 +1274,21 @@ local function run()
 			local c = shapeCache[v.name]
 			k, measured, shadow, lit, coreK = c[1], c[2], c[3], c[4], c[5]
 		else
-			k, measured = calibrate(v, P.WHITE_TARGET)
+			k, measured = calibrate(v, v.target or P.WHITE_TARGET)
 			shadow, lit = lightFit(v, k)
 			-- THE CORE IS CALIBRATED, NOT SCALED. k is a threshold in g-space and
 			-- it is NEGATIVE for some fields (anything written as -(f/l) and the
 			-- like), so k * fraction moves the boundary the WRONG WAY for half
 			-- the variants here. Bisecting to a coverage target is sign-agnostic.
 			if v.core then
-				coreK = calibrate(v, P.WHITE_TARGET * v.core.fraction)
+				coreK = calibrate(v, (v.target or P.WHITE_TARGET) * v.core.fraction)
 			end
 			shapeCache[v.name] = { k, measured, shadow, lit, coreK }
 		end
 		local accV = v.white or P.COLOUR_WHITE
 		ar, ag, ab = accV.R, accV.G, accV.B
 		br, bg, bb = job.hue.R, job.hue.G, job.hue.B
+		if v.deep then br, bg, bb = br * v.deep, bg * v.deep, bb * v.deep end
 
 		-- paint, and measure the shape while painting: white texel count and the
 		-- count of white texels with a non-white neighbour give area and perimeter
