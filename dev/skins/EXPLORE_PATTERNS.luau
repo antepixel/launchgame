@@ -735,6 +735,34 @@ local function flameT(qy: number): number
 end
 
 
+-- ===================== THE OUTLINE, AND WHAT IT CANNOT BE ================
+--
+-- A REAL RIM IS VIEW-DEPENDENT AND A BAKED TEXTURE CANNOT BE. Fresnel lights
+-- the edge because it asks where the CAMERA is, every frame. A texture is
+-- painted once and knows nothing about the viewer, and Roblox exposes no shader
+-- hook on a MeshPart's texture to ask. So what follows is not a rim: it is a
+-- rim BAKED FOR ONE DIRECTION, and that direction is the face.
+--
+-- WHICH IS CORRECT HEAD-ON AND WRONG FROM ANYWHERE ELSE. The set of points
+-- whose normal is perpendicular to a fixed direction is a great circle; from
+-- that direction it is exactly the silhouette, and as the body turns the bright
+-- band slides across the surface and stops coinciding with the edge. Every shot
+-- in this file is head-on at 40 studs, so the lab cannot see this failure --
+-- which is precisely why it is written down here rather than discovered later.
+-- BEFORE SHIPPING IT, settle whether a slime ever presents another face.
+--
+-- WHAT IS YAW-INDEPENDENT, if it turns out slimes do turn: a band near the TOP
+-- (and bottom) of the body sits on the silhouette from EVERY horizontal
+-- direction, because those normals point up and are grazing to any horizontal
+-- view. A top-and-bottom rim survives rotation; a full outline does not. It is
+-- a different picture -- a lit crown rather than an outline -- so it is a
+-- design decision, not a fallback.
+--
+-- Galaxy, incidentally, had no rim term at all. Its EDGE_COLOR is the
+-- low-density end of the nebula ramp; the lighter edges being remembered are
+-- cloud, not silhouette.
+-- ===========================================================================
+
 -- ===================================================================
 -- TONGUES ARE PLACED, NOT THRESHOLDED. This is attempt five, and the change is
 -- the same one that rescued the dot field after two failures at scattered
@@ -802,6 +830,74 @@ local function tongueHeight(qx: number, qy: number, qz: number,
 end
 
 local VARIANTS = {
+	-- ---- outline: a rim baked for the head-on view ----------------------
+	-- See THE OUTLINE above for the one thing that matters about these.
+	-- |f/l| is how far the surface normal points along the face axis, so it is
+	-- 0 exactly on the head-on silhouette and 1 at the nose and the tail.
+	{
+		name = "rim-thin",
+		note = "narrow bright outline, nothing else",
+		target = 0.16,
+		g = function(qx, qy, qz, f, s, y)
+			local l = math.sqrt(qx * qx + qy * qy + qz * qz)
+			return l < 1e-9 and 9 or math.abs(f / l)
+		end,
+		heat = function(qx, qy, qz, f, s, y, k)
+			local l = math.sqrt(qx * qx + qy * qy + qz * qz)
+			if l < 1e-9 or k <= 1e-6 then return 0 end
+			return math.clamp(1 - math.abs(f / l) / k, 0, 1)
+		end,
+		stops = function(base)
+			return { { 0.00, base }, { 1.00, Color3.new(
+				base.R + (1 - base.R) * 0.80,
+				base.G + (1 - base.G) * 0.80,
+				base.B + (1 - base.B) * 0.80) } }
+		end,
+	},
+	{
+		name = "rim-thick",
+		note = "the same outline, twice the depth",
+		target = 0.34,
+		g = function(qx, qy, qz, f, s, y)
+			local l = math.sqrt(qx * qx + qy * qy + qz * qz)
+			return l < 1e-9 and 9 or math.abs(f / l)
+		end,
+		heat = function(qx, qy, qz, f, s, y, k)
+			local l = math.sqrt(qx * qx + qy * qy + qz * qz)
+			if l < 1e-9 or k <= 1e-6 then return 0 end
+			return math.clamp(1 - math.abs(f / l) / k, 0, 1)
+		end,
+		stops = function(base)
+			return { { 0.00, base }, { 1.00, Color3.new(
+				base.R + (1 - base.R) * 0.80,
+				base.G + (1 - base.G) * 0.80,
+				base.B + (1 - base.B) * 0.80) } }
+		end,
+	},
+	{
+		-- The mask is the WHOLE body here and the ramp does all the work, which
+		-- is the other thing ramp mode buys: a treatment with no boundary at all.
+		name = "rim-body",
+		note = "outline plus a faint mottling across the body",
+		target = 0.98,
+		g = function(qx, qy, qz, f, s, y)
+			local l = math.sqrt(qx * qx + qy * qy + qz * qz)
+			return l < 1e-9 and 9 or math.abs(f / l)
+		end,
+		heat = function(qx, qy, qz, f, s, y, k)
+			local l = math.sqrt(qx * qx + qy * qy + qz * qz)
+			if l < 1e-9 then return 0 end
+			local rim = math.clamp(1 - math.abs(f / l) / 0.30, 0, 1)
+			local mottle = fbm3(qx * 1.6, qy * 1.6, qz * 1.6, 2, 91) - 0.5
+			return math.clamp(rim * 0.92 + mottle * 0.42, 0, 1)
+		end,
+		stops = function(base)
+			return { { 0.00, base }, { 1.00, Color3.new(
+				base.R + (1 - base.R) * 0.80,
+				base.G + (1 - base.G) * 0.80,
+				base.B + (1 - base.B) * 0.80) } }
+		end,
+	},
 	-- ---- Legendary: fire, tongues placed explicitly ---------------------
 	-- The tip stop IS the body colour, so a tongue fades out rather than
 	-- ending at an edge -- which is also why the mask's feature size stopped
