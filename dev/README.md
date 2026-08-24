@@ -87,7 +87,7 @@ rebuild in a few minutes:
 Send `Accept: application/json, text/event-stream`; replies come back as either
 plain JSON or SSE `data:` frames, so handle both.
 
-### Two more traps once you are through
+### More traps once you are through
 
 - **`execute_luau` is capped at ~30 s.** A longer script does *not* stop when the
   call returns — it keeps running inside Studio while your bridge reports a
@@ -99,3 +99,20 @@ plain JSON or SSE `data:` frames, so handle both.
   parks inside an Async engine call looks exactly like a span that blocked the
   main thread. Any "did this stall?" measurement has to exclude known-yielding
   calls explicitly — see `newYielder`'s `mark()` in `skins/BUILD_GALAXY.luau`.
+- **The viewport ignores a camera rotation written from a plugin.** Studio's
+  edit-mode navigation owns `CurrentCamera` and re-asserts its own rotation every
+  frame. Position survives, rotation does not, and reading the property straight
+  back returns *your* value — so it looks like it worked while the viewport keeps
+  rendering from wherever the user last dragged. Set
+  `CameraType = Enum.CameraType.Scriptable` **before** writing `CFrame`, and set
+  it back to `Fixed` when done or the viewport is left unnavigable. Verify with
+  `cam:WorldToViewportPoint(target)`, never with the screenshot or the CFrame:
+  a negative depth means the subject is behind a camera standing in exactly the
+  right place. `skins/AIM.luau` does all of this.
+- **A screenshot needs Studio to be the foreground window.** Background Studio
+  throttles rendering, `capture_screenshot` never gets a frame, and it fails with
+  "Ensure the Studio viewport is visible" — which reads like a tab-focus problem
+  and is not. Foreground the window first. Captures can also lag a frame or two
+  behind a camera move, so settle before shooting, and be aware that two captures
+  of an *unchanged* view still differ byte-for-byte because the sky animates:
+  comparing file hashes proves nothing.
