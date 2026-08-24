@@ -39,6 +39,55 @@
 -- bisections failed it by reading as a painted egg. That is the only question
 -- these ten are here to answer.
 --
+-- ===================== THE TERMINATOR RULE (learned here) =================
+--
+-- A MARKING HAS TO CROSS THE LIGHT BOUNDARY TO READ AS A MARKING. If it lies
+-- along one side of that boundary instead, the renderer is already drawing the
+-- same shape for free, and the eye takes the cheaper explanation: not a marked
+-- creature, just a lit one. This is what killed countershade, and in hindsight
+-- it is what killed the tonal accents before it. Both put their edge exactly
+-- where the light already puts one.
+--
+-- IT IS NOT THE TONE AND IT IS NOT THE EDGE. Both were A/B'd against
+-- countershade at 40 studs, on the body, at matched white fraction, and neither
+-- moves it:
+--     cream  (252,251,247) on the belly renders  144.9
+--     pure   (255,255,255) on the belly renders  146.8   -- 2 of 255, invisible
+--     the SAME cream on an up-facing crown renders 234.1 -- 90 of 255
+-- The grey is the shading, not the paint; the accent was already 1.2% off pure
+-- white, so there was never any grey in it to remove. Likewise the boundary
+-- already resolves in about 2 px at 40 studs, and a 6x harder texture edge
+-- moved exactly one pixel. THIS IS WHY BOTH KNOBS EXIST AS PER-VARIANT
+-- OVERRIDES rather than having been deleted: proving a knob does not matter is
+-- worth keeping, and it should not cost a scratch edit to prove it again.
+--
+-- SO IT IS MEASURED, NOT EYEBALLED -- lightFit() reports two numbers per
+-- variant, and they answer different halves of the question.
+--
+--   J   Youden's J of the best single height threshold. All a light does is
+--       fall off monotonically from top to bottom, so this asks how much of the
+--       marking a plain gradient could account for. 1.00 = a light draws it
+--       exactly. Measured: socks 1.00, cap-tilt 0.73, countershade 0.51,
+--       blaze 0.13, stripes4 0.05, plastron 0.01.
+--
+--   lit Mean lambert over the white, against mean lambert over the whole body.
+--       Where the marking SITS rather than what shape it is, and the one that
+--       matches what the pixels did. Countershade measures 0.01 -- its white is
+--       entirely under the equator, which is exactly the 144.9-against-234.1
+--       above. Wanted: near 1, meaning the marking straddles the boundary.
+--       Measured: socks 0.00, countershade 0.01, bib 0.16, stripes2 0.70,
+--       plastron 1.00, blaze 1.47, crest 1.74, cap-tilt 3.02.
+--
+-- BOTH ARE FLAGGED, NEVER ASSERTED. A high J or a lopsided lit is a reason to
+-- look, not proof of a bad marking -- and the flag is two-sided, because
+-- hiding in the shade (countershade) and sitting in the highlight (cap-tilt)
+-- are the same mistake wearing different clothes.
+--
+-- WHAT THESE NUMBERS DO NOT MEASURE IS BOLDNESS. They say whether a shape can
+-- be mistaken for lighting; they say nothing about how loud it is, which is
+-- what a rarity ladder is actually ordering. Keep judging that by eye.
+-- ===========================================================================
+--
 -- WHAT CARRIES OVER UNCHANGED, all of it already argued in BUILD_SKINS.luau:
 -- white is the only accent; both colours belong to the same shape; nothing under
 -- 8 px at 40 studs; antialiased boundaries; 3D evaluation on the mesh's own UV
@@ -70,6 +119,22 @@ local P = {
 	-- hue dominates: white is the marking, not half the animal
 	WHITE_TARGET = 0.28,
 	WHITE_TOLERANCE = 0.004,
+
+	-- THE TERMINATOR RULE, measured -- see the section of that name above.
+	-- A warning, never an assert: a high score is a reason to look, not proof
+	-- of a bad marking.
+	SHADOW_BINS = 256,
+	SHADOW_WARN = 0.80,
+	-- A marking wants to STRADDLE the light, so the flag is two-sided: well
+	-- under 1 means it hides in the shade and renders grey (countershade), well
+	-- over 1 means it sits in the highlight and reads as a lit top (cap-tilt).
+	LIT_LO = 0.50,
+	LIT_HI = 2.00,
+
+	-- Build only these variants, by name, in this order. Empty builds them all.
+	-- This is what makes an A/B repeatable instead of a scratch edit: name the
+	-- two you are comparing and everything else about the build is untouched.
+	ONLY = {},
 	SEARCH_ITERS = 30,
 	SEARCH_LO = -3.0,
 	SEARCH_HI = 3.0,
@@ -150,6 +215,15 @@ end
 --
 -- f = forward (toward the face), s = sideways, y = up. Anything using s*s or
 -- |s| is bilaterally symmetric -- the way a marking on an animal is.
+--
+-- TWO OPTIONAL FIELDS, both there so a shape can be A/B'd against ITSELF with
+-- everything else held fixed -- which is the only way the comparison means
+-- anything, exactly as the shared white fraction is:
+--     white = Color3   the accent for this variant only (default COLOUR_WHITE)
+--     soft  = number   boundary half-width for this variant (default EDGE_SOFT)
+-- Both were added after an A/B that found neither of them is what makes
+-- countershade read as shadow. Keep them: proving a knob does NOT matter is
+-- worth as much as proving one does, and it should not cost a scratch edit.
 -- ===================================================================
 local YHALF = 0.6773     -- body half-height in body-radii; refined at build time
 
@@ -207,10 +281,14 @@ local VARIANTS = {
 		end,
 	},
 	{
+		-- TAKEN FOR UNCOMMON at 140 deg. At 70 the white read as a specular
+		-- smear on a glossy curved body; doubling the twist makes the band
+		-- visibly WRAP, and nothing about a highlight wraps. Measured against
+		-- the 70 deg version side by side, both at 28% white.
 		name = "stripes4",
-		note = "four spiral stripes, white narrower than hue",
+		note = "four spiral stripes, twist 140 deg -- Uncommon",
 		g = function(qx, qy, qz, f, s, y)
-			return -stripeField(qx, qy, qz, 2, 0, math.rad(70), YHALF)
+			return -stripeField(qx, qy, qz, 2, 0, math.rad(140), YHALF)
 		end,
 	},
 	{
@@ -218,6 +296,37 @@ local VARIANTS = {
 		note = "two wide spiral stripes, white narrower than hue",
 		g = function(qx, qy, qz, f, s, y)
 			return -stripeField(qx, qy, qz, 1, 0, math.rad(70), YHALF)
+		end,
+	},
+
+	-- ---- candidates for Rare -------------------------------------------
+	-- Between stripes4 and blaze in boldness: ONE marking rather than four,
+	-- but not the whole crown. All three are shaped so their edge cuts ACROSS
+	-- the light rather than lying along it, and none is a diagonal sweep.
+	{
+		name = "flanks",
+		note = "one patch down each side, hue over spine, belly and face",
+		g = function(qx, qy, qz, f, s, y)
+			local l = math.sqrt(qx * qx + qy * qy + qz * qz)
+			return l < 1e-9 and 9 or -(math.abs(s) / l)
+		end,
+	},
+	{
+		name = "crest",
+		note = "band over the crown, stopping short of the face",
+		g = function(qx, qy, qz, f, s, y)
+			return math.abs(s) + 0.9 * math.max(0, f - 0.15)
+		end,
+	},
+	{
+		name = "plastron",
+		note = "tall shield down the front, from the brow to the belly",
+		g = function(qx, qy, qz, f, s, y)
+			local l = math.sqrt(qx * qx + qy * qy + qz * qz)
+			if l < 1e-9 then return 9 end
+			-- muzzle, squashed sideways: taller and narrower, so it spans the
+			-- light boundary instead of sitting on one side of it
+			return -(f / l) + 0.8 * (s / l) * (s / l)
 		end,
 	},
 }
@@ -456,7 +565,8 @@ local function run()
 	end
 
 	local function whiteAt(v, qx, qy, qz, f, s, k)
-		return smoothstep(-P.EDGE_SOFT, P.EDGE_SOFT, k - v.g(qx, qy, qz, f, s, qy))
+		local soft = v.soft or P.EDGE_SOFT
+		return smoothstep(-soft, soft, k - v.g(qx, qy, qz, f, s, qy))
 	end
 
 	-- one monotone bisection calibrates every shape, because g is written so a
@@ -477,6 +587,61 @@ local function run()
 		return (lo + hi) / 2, got
 	end
 
+	-- ===================================================================
+	-- THE TERMINATOR RULE, MEASURED.
+	-- All a light does is fall off monotonically from top to bottom, so "could
+	-- lighting have drawn this marking?" is exactly "how well does a single
+	-- height threshold predict where the white is?". This returns Youden's J of
+	-- the best such threshold: 1 means a light draws it exactly, 0 means height
+	-- tells you nothing at all about where the white went.
+	-- ===================================================================
+	local function lightFit(v, k: number): (number, number)
+		local B = P.SHADOW_BINS
+		local wHist, nHist = table.create(B, 0), table.create(B, 0)
+		local lo, hi = math.huge, -math.huge
+		for _, q in ipairs(sample) do
+			if q[2] < lo then lo = q[2] end
+			if q[2] > hi then hi = q[2] end
+		end
+		local span = math.max(hi - lo, 1e-9)
+		local white, total = 0, 0
+		local litWhite, litAll = 0, 0
+		for si, q in ipairs(sample) do
+			if si % P.TICK_EVERY == 0 then Y.tick() end
+			local b = math.clamp(math.floor((q[2] - lo) / span * B), 0, B - 1) + 1
+			-- the body is close enough to a sphere that the outward direction IS
+			-- the normal, so lambert against a straight-down key light is q.y/|q|
+			local l = math.sqrt(q[1]*q[1] + q[2]*q[2] + q[3]*q[3])
+			local lit = l > 1e-9 and math.max(0, q[2] / l) or 0
+			litAll += lit
+			if whiteAt(v, q[1], q[2], q[3], q[4], q[5], k) > 0.5 then
+				wHist[b] += 1
+				white += 1
+				litWhite += lit
+			else
+				nHist[b] += 1
+			end
+			total += 1
+		end
+		-- how lit is the marking, against how lit the body is on average? Below 1
+		-- the marking sits in the shade and renders grey no matter how white the
+		-- paint is -- which is countershade's whole failure, and no tone or edge
+		-- setting escapes it.
+		local litRatio = (white > 0 and litAll > 0)
+			and (litWhite / white) / (litAll / total) or 0
+
+		-- an all-white or all-hue body is trivially predicted by any threshold
+		if white == 0 or white == total then return 1, litRatio end
+		local cw, cn, best = 0, 0, 0
+		for b = 1, B do
+			cw += wHist[b]
+			cn += nHist[b]
+			local j = math.abs(cw / white - cn / (total - white))
+			if j > best then best = j end
+		end
+		return best, litRatio
+	end
+
 	for _, c in ipairs(workspace:GetChildren()) do
 		if c.Name == P.ROOT_NAME then c:Destroy() end
 	end
@@ -488,7 +653,7 @@ local function run()
 	local buf = buffer.create(W*W*4)
 	local base, acc = P.HUE, P.COLOUR_WHITE
 	local br, bg, bb = base.R, base.G, base.B
-	local ar, ag, ab = acc.R, acc.G, acc.B
+	local ar, ag, ab = acc.R, acc.G, acc.B  -- reassigned per variant below
 
 	-- median texel step, for turning the area/perimeter ratio into studs
 	local stepSum, stepN = 0, 0
@@ -508,10 +673,28 @@ local function run()
 	end
 	local texelStep = stepSum / math.max(1, stepN)
 
+	local build = VARIANTS
+	if #P.ONLY > 0 then
+		local want = {}
+		for _, n in ipairs(P.ONLY) do want[n] = true end
+		build = {}
+		for _, n in ipairs(P.ONLY) do
+			for _, v in ipairs(VARIANTS) do
+				if v.name == n then table.insert(build, v) want[n] = nil break end
+			end
+		end
+		for n in pairs(want) do
+			error(string.format("[Lab] P.ONLY names %q, which is not a variant here", n))
+		end
+	end
+
 	local worstPx, worstWhat = math.huge, "?"
-	for vi, v in ipairs(VARIANTS) do
+	for vi, v in ipairs(build) do
 		Y.tick()
 		local k, measured = calibrate(v)
+		local shadow, lit = lightFit(v, k)
+		local accV = v.white or P.COLOUR_WHITE
+		ar, ag, ab = accV.R, accV.G, accV.B
 
 		-- paint, and measure the shape while painting: white texel count and the
 		-- count of white texels with a non-white neighbour give area and perimeter
@@ -594,14 +777,18 @@ local function run()
 		slime:SetAttribute("Hue", P.HUE_NAME)
 		slime:SetAttribute("WhiteFraction", measured)
 
-		log("[Lab] %2d %-13s white %.1f%% | feature %.1f px | %s",
-			vi, v.name, measured * 100, widthPx, v.note)
+		slime:SetAttribute("ShadowAlignment", shadow)
+		slime:SetAttribute("LitRatio", lit)
+		log("[Lab] %2d %-17s white %.1f%% | feature %5.1f px | J %.2f | lit %.2f%s | %s",
+			vi, v.name, measured * 100, widthPx, shadow, lit,
+			(shadow >= P.SHADOW_WARN or lit <= P.LIT_LO or lit >= P.LIT_HI)
+				and " <--" or "    ", v.note)
 	end
 
 	log("[Lab] narrowest feature: %.1f px (%s), floor is %d px",
 		worstPx, worstWhat, P.MIN_FEATURE_PX)
 	log("[Lab] watchdog worst hold %.1f ms | built %d variants in %.2f s",
-		Y.worstMs(), #VARIANTS, os.clock() - t0)
+		Y.worstMs(), #build, os.clock() - t0)
 	log("[Lab] undo with workspace.%s:Destroy()", P.ROOT_NAME)
 
 	local outStr = table.concat(lines, "\n")
