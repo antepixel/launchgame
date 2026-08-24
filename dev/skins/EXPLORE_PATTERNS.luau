@@ -734,34 +734,91 @@ local function flameT(qy: number): number
 	return (qy - PROFILE_Y0) / math.max(PROFILE_Y1 - PROFILE_Y0, 1e-9)
 end
 
+
+-- ===================================================================
+-- TONGUES ARE PLACED, NOT THRESHOLDED. This is attempt five, and the change is
+-- the same one that rescued the dot field after two failures at scattered
+-- spots: STOP HOPING A NOISE FIELD PRODUCES THE FEATURE AND PUT THE FEATURE
+-- WHERE YOU WANT IT.
+--
+-- Attempts one to four all thresholded smooth noise and all failed for the
+-- same underlying reason, however different they looked. Smooth noise has no
+-- lateral contrast: neighbouring columns differ only slightly, so the result is
+-- always a band, a drip or a gradient -- never a countable tongue with a gap
+-- beside it. A tongue needs its neighbour to be BODY, sharply.
+--
+-- So N azimuths are chosen outright, each gets a width and a height, and noise
+-- is demoted to perturbing what is already there. The count is a parameter
+-- instead of an emergent accident, which is what "four or five bold tongues"
+-- requires -- you cannot ask a noise threshold for exactly five of anything.
+--
+-- NO atan2, for the same reason stripeField has none: the branch cut is a seam
+-- waiting to happen. Proximity to a tongue is a DOT PRODUCT against a horizontal
+-- unit vector, which is continuous everywhere including across the wrap.
+-- ===================================================================
+local TONGUE_CACHE = {}
+
+local function tongueDirs(n: number, seed: number)
+	local key = n * 1000 + seed
+	if TONGUE_CACHE[key] then return TONGUE_CACHE[key] end
+	local dx, dz, hj = table.create(n), table.create(n), table.create(n)
+	for i = 1, n do
+		local a = 2 * math.pi * (i - 1) / n
+		dx[i], dz[i] = math.cos(a), math.sin(a)
+		-- per-tongue height, so they are not a row of identical spikes
+		hj[i] = 0.70 + 0.60 * hnorm(i, 7, 13, seed)
+	end
+	local t = { dx = dx, dz = dz, hj = hj, n = n }
+	TONGUE_CACHE[key] = t
+	return t
+end
+
+local function tongueHeight(qx: number, qy: number, qz: number,
+	n: number, halfCos: number, amp: number, seed: number): number
+	local r = math.sqrt(qx * qx + qz * qz)
+	if r < 1e-6 then return 0 end
+	local ux, uz = qx / r, qz / r
+	local T = tongueDirs(n, seed)
+	local best, bestI = -2, 1
+	for i = 1, n do
+		local c = ux * T.dx[i] + uz * T.dz[i]
+		if c > best then best, bestI = c, i end
+	end
+	-- outside the tongue's own width there is NO flame at all: this is the
+	-- lateral contrast that every noise-threshold attempt failed to produce
+	if best <= halfCos then return 0 end
+	local w = (best - halfCos) / (1 - halfCos)
+	w = w * w * (3 - 2 * w)
+	-- SHARPENING THE PROFILE WAS TRIED (w^2.2) AND MADE IT WORSE, which is
+	-- worth keeping because the reason is not obvious. Narrowing the tongue
+	-- lowers coverage, so the bisection raises k to compensate, and a larger k
+	-- scales every tongue BOTH taller and wider at the root. The tips came out
+	-- blunter than before and the tongues read as broad panels. Under a
+	-- calibrated field you cannot change one dimension of a shape in isolation;
+	-- the calibration gives back whatever area you take away.
+	local t = flameT(qy)
+	local nz = fbm3(qx * 2.2, qy * 0.55 - t * 1.1, qz * 2.2, 1, seed + 3)
+	return amp * T.hj[bestI] * w * (0.80 + 0.40 * nz)
+end
+
 local VARIANTS = {
-	-- ---- Legendary: fire, as a ramp -------------------------------------
-	-- The tip stop IS the body colour, so a tongue fades out instead of ending
-	-- at an edge. That is what removes the hard tip the drip version had, and
-	-- it is also why the mask's feature size stopped meaning anything: the top
-	-- of the mask is invisible on purpose.
+	-- ---- Legendary: fire, tongues placed explicitly ---------------------
+	-- The tip stop IS the body colour, so a tongue fades out rather than
+	-- ending at an edge -- which is also why the mask's feature size stopped
+	-- meaning anything and the floor moved to VISIBLE size.
 	--
 	-- The stops are a FUNCTION of the base, so the flames carry whatever hue
-	-- the slime is. A blue slime burns blue. This is the measured answer --
-	-- fire in the hue family preserved hue better than the white dot field
-	-- below it did, 82.5% against 66.6% blue-dominant.
-	-- THE FIELD IS A RATIO, NOT A DIFFERENCE, and this is the load-bearing bit.
-	-- Written as t - H the calibration adds a constant to every column, so once
-	-- k is large enough to hit the target coverage every tongue has nearly the
-	-- same total height and `heat` collapses into a flat horizontal gradient --
-	-- the ramp present in the code and invisible on the body, which is exactly
-	-- what the first ramp build produced. Written as t / H the same k SCALES
-	-- each tongue instead, so tongue-to-tongue variation survives calibration
-	-- and heat stays normalised per tongue.
+	-- the slime is: measured, fire in the hue family preserved hue better than
+	-- the white dot field one rung below it, 82.5% against 66.6%.
 	{
-		name = "fire-tongues",
-		note = "bold tongues, white-hot roots fading to the hue at the tips",
+		name = "fire-t5",
+		note = "five placed tongues, white-hot roots fading to the hue",
 		target = 0.45,
 		g = function(qx, qy, qz, f, s, y)
-			return flameT(qy) / math.max(flameHeight(qx, qy, qz, 1.20, 4.0, 1.60, 17), 1e-3)
+			return flameT(qy) / math.max(tongueHeight(qx, qy, qz, 5, 0.90, 1.30, 17), 1e-3)
 		end,
 		heat = function(qx, qy, qz, f, s, y, k)
-			local h = k * flameHeight(qx, qy, qz, 1.20, 4.0, 1.60, 17)
+			local h = k * tongueHeight(qx, qy, qz, 5, 0.90, 1.30, 17)
 			return h > 1e-6 and math.clamp(1 - flameT(qy) / h, 0, 1) or 0
 		end,
 		stops = function(base)
@@ -773,14 +830,14 @@ local VARIANTS = {
 		end,
 	},
 	{
-		name = "fire-few",
-		note = "fewer, broader tongues -- the lowest frequency that still reads as flame",
+		name = "fire-t4",
+		note = "four placed tongues, wider each",
 		target = 0.45,
 		g = function(qx, qy, qz, f, s, y)
-			return flameT(qy) / math.max(flameHeight(qx, qy, qz, 0.80, 4.0, 1.80, 17), 1e-3)
+			return flameT(qy) / math.max(tongueHeight(qx, qy, qz, 4, 0.86, 1.40, 17), 1e-3)
 		end,
 		heat = function(qx, qy, qz, f, s, y, k)
-			local h = k * flameHeight(qx, qy, qz, 0.80, 4.0, 1.80, 17)
+			local h = k * tongueHeight(qx, qy, qz, 4, 0.86, 1.40, 17)
 			return h > 1e-6 and math.clamp(1 - flameT(qy) / h, 0, 1) or 0
 		end,
 		stops = function(base)
@@ -792,14 +849,14 @@ local VARIANTS = {
 		end,
 	},
 	{
-		name = "fire-hot",
-		note = "same tongues, white carried further up each one",
+		name = "fire-t5-hot",
+		note = "five tongues, white carried further up each one",
 		target = 0.45,
 		g = function(qx, qy, qz, f, s, y)
-			return flameT(qy) / math.max(flameHeight(qx, qy, qz, 1.20, 4.0, 1.60, 17), 1e-3)
+			return flameT(qy) / math.max(tongueHeight(qx, qy, qz, 5, 0.90, 1.30, 17), 1e-3)
 		end,
 		heat = function(qx, qy, qz, f, s, y, k)
-			local h = k * flameHeight(qx, qy, qz, 1.20, 4.0, 1.60, 17)
+			local h = k * tongueHeight(qx, qy, qz, 5, 0.90, 1.30, 17)
 			return h > 1e-6 and math.clamp(1 - flameT(qy) / h, 0, 1) or 0
 		end,
 		stops = function(base)
@@ -807,8 +864,7 @@ local VARIANTS = {
 				return Color3.new(base.R + (1 - base.R) * u,
 					base.G + (1 - base.G) * u, base.B + (1 - base.B) * u)
 			end
-			return { { 0.00, base }, { 0.30, toward(0.60) }, { 0.62, Color3.new(1, 1, 1) },
-				{ 1.00, Color3.new(1, 1, 1) } }
+			return { { 0.00, base }, { 0.25, toward(0.55) }, { 0.60, Color3.new(1, 1, 1) }, { 1.00, Color3.new(1, 1, 1) } }
 		end,
 	},
 	{

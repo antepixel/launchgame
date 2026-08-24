@@ -87,6 +87,53 @@ rebuild in a few minutes:
 Send `Accept: application/json, text/event-stream`; replies come back as either
 plain JSON or SSE `data:` frames, so handle both.
 
+---
+
+## A number stays computable after the thing it described stops existing
+
+**This has now caught us three times, in three unrelated places.** It is not a
+Studio problem or a maths problem — it is what happens when a measurement
+outlives the representation it was defined on. The code keeps running. The
+number keeps printing. It looks healthy. It is describing something that is no
+longer there.
+
+### The three
+
+| The number | What it was defined on | What it was being read as | What went wrong |
+| --- | --- | --- | --- |
+| White pixels counted down the pole, to check dot distribution | A projected view | "Do the dots cover their share of the crown?" | An axis-on view sees the pole face-on and the flanks edge-on, so it over-reads whichever pole faces the camera *regardless of placement*. It moved 46.1% → 42.8% while the real error halved. It was measuring projection. |
+| IoU between adjacent ladder rungs | Two binary masks | "Are these two tiers distinguishable?" | IoU measures *where the white sits*. Perceived rarity is not that. It called Uncommon → Rare the tight pair; the eye called Rare → Epic, and the eye was right. |
+| Feature size 2A/P, on a ramp | A mask with a boundary | "Is the smallest visible feature above 8 px?" | A ramp's mask edge is invisible by design — the flame tip fades to the body colour. The number described a contour nobody can see, and it stayed comfortably above the floor while saying nothing. |
+
+### The rule
+
+When the representation changes, **re-derive the metric from the thing you
+actually care about** — do not keep reading the old number because the old code
+still runs. In all three cases the fix was to go back to the question:
+
+- not "white per pole view" but *white share per height band on the texel set*;
+- not "how much do the masks overlap" but *look at the grid*;
+- not "how wide is the mask" but *how wide is the region that visibly differs
+  from the body*.
+
+Two habits that catch it earlier:
+
+- **If a metric inverts or loses meaning for a class of inputs, switch it off
+  for that class.** Do not annotate it and print it anyway. `J` and `lit` are
+  not computed for ramp variants, because fire is a height field and would
+  score as "lighting could have drawn this" while being brightest where the
+  light is dimmest — the opposite of what a high score means everywhere else.
+- **Keep printing the lapsed number, labelled.** `EXPLORE_PATTERNS` prints the
+  ramp mask width as `(mask says N, which is not the number to read)`. Deleting
+  it invites the next person to recompute it and trust it; labelling it spends
+  one line and closes the question.
+
+### The tell
+
+Ask of any number in a report: *what would have to change about the object for
+this to become wrong, and would the number notice?* A metric that cannot notice
+its own irrelevance needs a guard, not a comment.
+
 ### More traps once you are through
 
 - **`execute_luau` is capped at ~30 s.** A longer script does *not* stop when the
