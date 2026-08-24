@@ -218,6 +218,19 @@ local P = {
 	-- against every rung, laid out hue across and tier back. A shape chosen on
 	-- one hue is a shape chosen on one sixth of the evidence, and the hue that
 	-- breaks a marking will not be the one it was designed against.
+	-- THE LADDER AS IT STANDS. Paste this in as LADDER to build the grid:
+	--     { "Common", "bare" },
+	--     { "Uncommon", "stripes4" },   -- twist 140
+	--     { "Rare", "dots24" },
+	--     { "Epic", "mane" },
+	--     { "Legendary", "blaze" },
+	-- Collar held Rare until dots24 displaced it: collar and mane are both a
+	-- white band across the upper face, and one row apart they were hard to
+	-- rank. A dot field is a different visual family altogether, which is what
+	-- separates Uncommon from Epic in a way another band could not. Note this
+	-- was NOT what the IoU numbers said -- they called Uncommon -> Rare the
+	-- tight pair, because they measure where the white sits and not what a
+	-- player perceives. The grid was believed over the metric, correctly.
 	LADDER = {},
 	ROW_SPACING = 34,
 
@@ -359,52 +372,73 @@ local YHALF = 0.6773     -- body half-height in body-radii; refined at build tim
 -- that exists is EVENLY SPACED, not identically spaced, and the spread is
 -- measured and reported below rather than asserted away.
 --
--- KNOWN AND MEASURED: THE PROFILE IS IDEALISED, AND THE BODY IS NOT.
--- Everything above integrates the area element of a perfect spheroid. The mesh
--- is a DOME -- rounder on top than underneath -- so the dot count per band is
--- right for a shape the body only approximates. Measured on dots24 by counting
--- white against body in three renders:
---     head-on     28.3%   (calibrated 28.0%, so the calibration itself is right)
---     crown       46.1%
---     underside   20.4%
--- Some of that spread is foreshortening -- an axis-on view sees the pole
--- face-on and the flanks edge-on -- but the two poles differ from EACH OTHER by
--- more than foreshortening explains, and that difference is the dome.
+-- THE PROFILE IS THE MESH'S OWN, AND THIS IS THE FIX FOR A MEASURED DEFECT.
+-- The first version of this integrated a perfect spheroid. The body is a DOME,
+-- rounder on top than underneath, so every band got the dot count that a shape
+-- the body only approximates would deserve. White share per height band,
+-- base -> crown, 24 dots:
+--     ideal spheroid    18.6 18.0 29.3 34.9 35.1 33.9 34.0 34.7   spread 17.1
+--     measured profile  22.0 30.9 28.5 30.6 30.8 30.9 30.9 29.8   spread  8.9
+-- A monotone tilt toward the crown, replaced by a flat profile with one low
+-- band at the base. The lit ratio agrees from different evidence: 1.23 -> 1.08
+-- against an ideal of 1.00, and J stops climbing with dot count -- 0.12/0.17/
+-- 0.25 across 12/24/40 dots became 0.09/0.09/0.10, because that climb WAS the
+-- bias rather than anything about density.
 --
--- The lit ratio caught it independently and before any of these renders existed:
--- a uniform field should measure lit = 1.00 and these measure 1.16, 1.23, 1.35,
--- rising with dot count. Two measurements from different evidence agreeing that
--- the field is top-heavy is worth more than either alone.
+-- THE EMPTY-BUCKET TRAP IS REAL HERE TOO, and it is BUILD_TIERMARKS' trap
+-- exactly: this mesh fills 54 of 96 bands, so 42 are empty. Interpolating into
+-- those zeros collapses the radius to roughly a quarter of true. Over there it
+-- buried marks inside the body across two invisible builds; here it would put a
+-- whole latitude of dots inside the slime. Only non-empty bands are samples.
 --
--- THE FIX, NOT APPLIED HERE: integrate the MESH's own radius-versus-height
--- profile instead of a spheroid's. BUILD_TIERMARKS already does exactly this --
--- 45,694 vertices bucketed into 96 height bands with radiusAt interpolating
--- between them -- and it also records the trap, which is that 42 of its 96
--- buckets come out EMPTY and interpolating into a zero collapses the radius to
--- ~25% of true. Reuse that, do not rewrite it.
+-- DO NOT VALIDATE THIS BY COUNTING PIXELS DOWN THE POLE. That check was tried
+-- and it cannot resolve the question: an axis-on view sees the pole face-on and
+-- the flanks edge-on, so it over-reads white at whichever pole faces the camera
+-- no matter how the dots are placed. It moved 46.1% -> 42.8% at the crown while
+-- the actual distribution error halved. Per-band share on the texel set is the
+-- instrument that works.
 --
--- A SECOND, SMALLER RESIDUAL: dot SIZE is not constant either. The threshold is
--- a fixed distance in 3D, and the body is flatter at the poles -- meridional
--- radius of curvature a^2/b = 1.48 there against b^2/a = 0.46 at the equator, a
--- 3.2x difference -- so the same radius cuts a wider patch on the flatter part.
--- Correcting it means scaling the threshold by local curvature. Left alone: it
--- is far smaller than the profile error above, and fixing the profile first may
--- make it not worth fixing at all.
+-- STILL UNCORRECTED, and much smaller: dot SIZE is not constant. The threshold
+-- is a fixed distance in 3D and the body is flatter at the poles, so the same
+-- radius cuts a wider patch there. That is most of the residual base band above.
+-- Correcting it means scaling the threshold by local curvature.
 -- ===================================================================
 local DOT_CACHE = {}
 local DOT_ORDER = {}
 local DOT_NOTES = {}
 
+-- The measured silhouette, installed by run() before any variant is evaluated.
+local PROFILE: { { number } }? = nil
+local PROFILE_Y0, PROFILE_Y1 = -0.6773, 0.6773
+
+local function radiusAt(t: number): number
+	local sm = PROFILE :: { { number } }
+	t = math.clamp(t, 0, 1)
+	if t <= sm[1][1] then return sm[1][2] end
+	if t >= sm[#sm][1] then return sm[#sm][2] end
+	for i = 1, #sm - 1 do
+		local a, b = sm[i], sm[i + 1]
+		if t >= a[1] and t <= b[1] then
+			return a[2] + (b[2] - a[2]) * ((t - a[1]) / (b[1] - a[1]))
+		end
+	end
+	return sm[#sm][2]
+end
+
 local function dotCentres(n: number)
 	if DOT_CACHE[n] then return DOT_CACHE[n] end
-	local b = YHALF
+	assert(PROFILE, "[Lab] dot field evaluated before the silhouette was measured")
+
+	-- Cumulative area of the MEASURED surface of revolution. The 2*pi factors
+	-- out of both the cumulative sum and the target, so it is left off.
 	local STEPS = 4096
+	local y0, y1 = PROFILE_Y0, PROFILE_Y1
+	local dy = (y1 - y0) / STEPS
 	local cum = table.create(STEPS + 1)
 	cum[1] = 0
 	for i = 1, STEPS do
-		local th = (i - 0.5) * math.pi / STEPS
-		local st = math.sin(th)
-		cum[i + 1] = cum[i] + st * math.sqrt(math.cos(th)^2 + b*b*st*st) * (math.pi / STEPS)
+		local r0, r1 = radiusAt((i - 1) / STEPS), radiusAt(i / STEPS)
+		cum[i + 1] = cum[i] + ((r0 + r1) / 2) * math.sqrt((r1 - r0)^2 + dy * dy)
 	end
 	local total = cum[STEPS + 1]
 
@@ -414,12 +448,12 @@ local function dotCentres(n: number)
 	for i = 0, n - 1 do
 		local target = (i + 0.5) / n * total
 		while j < STEPS and cum[j + 1] < target do j += 1 end
-		local th = (j - 0.5) * math.pi / STEPS
+		local t = (j - 0.5) / STEPS
 		local lon = i * GA
-		local st = math.sin(th)
-		cx[i + 1] = st * math.cos(lon)
-		cy[i + 1] = b * math.cos(th)
-		cz[i + 1] = st * math.sin(lon)
+		local r = radiusAt(t)
+		cx[i + 1] = r * math.cos(lon)
+		cy[i + 1] = y0 + (y1 - y0) * t
+		cz[i + 1] = r * math.sin(lon)
 	end
 
 	-- how even did that actually come out? nearest-neighbour spacing in 3D on
@@ -430,14 +464,14 @@ local function dotCentres(n: number)
 		local best = math.huge
 		for k = 1, n do
 			if k ~= i then
-				local dx, dy, dz = cx[i]-cx[k], cy[i]-cy[k], cz[i]-cz[k]
-				local d = dx*dx + dy*dy + dz*dz
+				local ax, ay, az = cx[i]-cx[k], cy[i]-cy[k], cz[i]-cz[k]
+				local d = ax*ax + ay*ay + az*az
 				if d < best then best = d end
 			end
 		end
 		best = math.sqrt(best)
 		lo = math.min(lo, best); hi = math.max(hi, best); sum += best
-		if cy[i] > 0.8 * b then topN += 1 end
+		if cy[i] > y0 + 0.8 * (y1 - y0) then topN += 1 end
 	end
 	DOT_NOTES[n] = string.format(
 		"spacing min %.3f mean %.3f max %.3f (max/min %.2f) | %d of %d dots in the top 20%% of height",
@@ -568,17 +602,17 @@ local VARIANTS = {
 	-- changes what the creature IS the way plastron and muzzle do.
 	{
 		name = "dots12",
-		note = "12 dots, equal-area on the spheroid",
+		note = "12 dots, equal-area on the measured silhouette",
 		g = function(qx, qy, qz, f, s, y) return dotField(qx, qy, qz, 12) end,
 	},
 	{
 		name = "dots24",
-		note = "24 dots, equal-area on the spheroid",
+		note = "24 dots, equal-area on the measured silhouette -- Rare",
 		g = function(qx, qy, qz, f, s, y) return dotField(qx, qy, qz, 24) end,
 	},
 	{
 		name = "dots40",
-		note = "40 dots, equal-area on the spheroid",
+		note = "40 dots, equal-area on the measured silhouette",
 		g = function(qx, qy, qz, f, s, y) return dotField(qx, qy, qz, 40) end,
 	},
 	{
@@ -675,6 +709,40 @@ local function buildUVMap(meshId: string, W: number, Y)
 	local CX, CY, CZ = (mnx+mxx)/2, (mny+mxy)/2, (mnz+mxz)/2
 	local RAD = (mxx - mnx) / 2
 
+	-- ===================================================================
+	-- THE MEASURED SILHOUETTE. Lifted from BUILD_TIERMARKS' buildProfile:
+	-- 96 height bands, the MAX radius in each, and -- the part that matters --
+	-- ONLY NON-EMPTY BUCKETS become interpolation samples. The vertices sit in
+	-- discrete latitude rings, so a large minority of the bands contain none at
+	-- all; interpolating into a zero collapses the radius to about a quarter of
+	-- true, which over there buried every mark inside the body across two
+	-- entirely invisible builds. Here it would put a whole latitude of dots
+	-- inside the slime instead. Same trap, different symptom.
+	-- Built in this pass rather than a second one: the vertices are already open.
+	-- ===================================================================
+	local PB = 96
+	local bucket = table.create(PB, 0)
+	for _, id in ipairs(verts) do
+		Y.tick()
+		if not isStray[id] then
+			local p = em:GetPosition(id)
+			local tb = (p.Y - mny) / math.max(mxy - mny, 1e-9)
+			local bi = math.clamp(math.floor(tb * PB) + 1, 1, PB)
+			local rr = math.sqrt((p.X-CX)^2 + (p.Z-CZ)^2) / RAD
+			if rr > bucket[bi] then bucket[bi] = rr end
+		end
+	end
+	local profile, filled = {}, 0
+	for bi = 1, PB do
+		if bucket[bi] > 0 then
+			filled += 1
+			table.insert(profile, { (bi - 0.5) / PB, bucket[bi] })
+		end
+	end
+	assert(#profile >= 8, string.format(
+		"[Lab] silhouette profile has only %d non-empty bands of %d -- too few to interpolate",
+		#profile, PB))
+
 	local POS = buffer.create(W*W*12)
 	local PRIO = buffer.create(W*W*8)
 	local MASK = buffer.create(W*W)
@@ -742,6 +810,8 @@ local function buildUVMap(meshId: string, W: number, Y)
 		POS = POS, MASK = MASK, covered = covered,
 		CX = CX, CY = CY, CZ = CZ, RAD = RAD,
 		HEIGHT = mxy - mny, FULL_W = amxx - amnx,
+		PROFILE = profile, PROFILE_BANDS = PB, PROFILE_FILLED = filled,
+		QY0 = (mny - CY) / RAD, QY1 = (mxy - CY) / RAD,
 	}
 end
 
@@ -810,6 +880,8 @@ local function run()
 	assert(coverage > 0.10, string.format(
 		"[Lab] source mesh covers only %.2f%% of the sheet -- no usable UV unwrap", coverage * 100))
 	log("[Lab] UV map: %d texels (%.1f%% of sheet)", M.covered, coverage * 100)
+	log("[Lab] silhouette: %d non-empty of %d height bands, radius %.3f at the base to %.3f at the crown",
+		M.PROFILE_FILLED, M.PROFILE_BANDS, M.PROFILE[1][2], M.PROFILE[#M.PROFILE][2])
 
 	local POS, MASK = M.POS, M.MASK
 	dilate(POS, MASK, W, 3, Y)
@@ -820,6 +892,8 @@ local function run()
 	local bodyRadiusStuds = M.RAD * studsPerMeshUnit
 	local bodyHeightStuds = M.HEIGHT * studsPerMeshUnit
 	YHALF = (M.HEIGHT / M.RAD) / 2
+	PROFILE = M.PROFILE
+	PROFILE_Y0, PROFILE_Y1 = M.QY0, M.QY1
 	local pxPerStud = P.VIEW_FRAME_PX / (2 * P.VIEW_DISTANCE * math.tan(math.rad(P.VIEW_FOV_DEG) / 2))
 	log("[Lab] body %.2f studs across, %.2f px/stud at %d studs, white target %.0f%%",
 		2 * bodyRadiusStuds, pxPerStud, P.VIEW_DISTANCE, P.WHITE_TARGET * 100)
