@@ -142,6 +142,15 @@
 -- is a bigger local contrast than any amount of hue on hue. The tier below
 -- would have out-shouted the tier above.
 --
+-- AND THE ANSWER IS BOTH, WHICH IS WHY regalia EXISTS. plume's claim on the top
+-- rung is a change of KIND -- it is the only slime in the ladder that is not a
+-- ball -- and that is a real claim, but on the ladder's own axis, white AREA,
+-- it does not beat dots24. A rung that loses to the rung below on the measure
+-- the ladder is ordered by is a rung worth testing twice. regalia is the plume
+-- with the crown's ring around its foot: five white-capped drops plus three
+-- beads, so the top rung wins on kind AND on area, and it stops being a
+-- question anyone has to argue about.
+--
 -- SO THE GEOMETRY CARRIES THE LADDER'S OWN ACCENT. Not a new colour, not gold,
 -- not a material change: the same (252, 251, 247) every rung below is built
 -- from, on the geometry instead of on the surface. The slime still reads as
@@ -197,6 +206,22 @@
 -- with. It holds -- the beads separate on all six, because they are discrete
 -- objects with their own shading and not a tonal difference.
 --
+-- THE ACCENT'S HUE-DEPENDENCE IS THE LADDER'S OWN, NOT A NEW ONE. Measured on
+-- regalia by classifying the render rather than sampling guessed coordinates --
+-- the caps are the only low-saturation high-value pixels on the subject:
+--     hue      white cap against body     rgb     lum
+--     red                                0.926   0.541
+--     green                              0.856   0.290
+--     orange                             0.791   0.335
+--     blue                               0.789   0.462
+--     purple                             0.689   0.498
+--     yellow                             0.679   0.176
+-- Yellow is last, which is exactly where flat white-on-yellow lands in the
+-- texture ladder too: (252,251,247) on (245,215,55) computes to rgb 0.766 and
+-- lum 0.161, against the geometry's measured 0.679 and 0.176. The top rung is
+-- no more hue-sensitive than the four below it, and for the same reason -- it
+-- is the same accent.
+--
 -- AND IT SURVIVES THE REVEAL, WHICH IS WHAT THE GLOW SHELL COULD NOT DO.
 -- Same 16-stud slime, same box camera at 34 studs and pitch 0, same fully
 -- saturated road underneath. Contrast of the addition against what is actually
@@ -220,8 +245,9 @@
 -- ============================== COST ======================================
 --
 --     candidate   tris   x60 slimes   meshes
---     plume       1242        75k        6 (one per hue)
+--     regalia     2617       157k        6 (one per hue)
 --     crown       2436       146k        6
+--     plume       1242        75k        6
 --     antennae     824        49k        6
 -- against TierMarks' accepted 352k and the glow shell's 924k for a cloned
 -- body. One MeshPart per slime in every case, which is the budget that was
@@ -255,8 +281,10 @@ local P = {
 	-- on different days, and this is the only honest way to ask it. Requires
 	-- EXPLORE_PATTERNS to have been run with ONLY = { "dots24" } first; the
 	-- texture is lifted off that slime rather than re-derived here, so it is
-	-- the SAME image and not a second implementation of it.
-	LADDER_REF = false,
+	-- the SAME image and not a second implementation of it. Name as many rungs
+	-- as you want in front of the candidates; the whole ladder in one frame is
+	-- the only way to see whether the top of it is actually the top.
+	LADDER_REF = {},
 	-- Which hues. Empty builds just the first.
 	HUES_ONLY = { "blue" },
 	-- "base" (7 studs on a pad, on grass) or "reveal" (16 studs, over the road)
@@ -796,6 +824,40 @@ local CANDIDATES = {
 		end,
 	},
 	{
+		-- BOTH AT ONCE. The plume's claim on the top rung is a change of KIND --
+		-- it is the only slime in the ladder that is not a ball -- but on white
+		-- AREA it does not beat dots24, and a rung that loses to the rung below
+		-- on the ladder's own axis is worth testing against a version that does
+		-- not. This is the plume with the crown's ring around its foot.
+		name = "regalia",
+		note = "the plume, ringed at its foot by five white-capped drops",
+		spin = 0.0, bob = 0.045, sway = 5.0, smooth = true,
+		build = function(E, R, T)
+			local base = surfacePoint(Vector3.new(0, 1, 0))
+			local axis = (Vector3.new(0, 1, 0) + FWD * 0.10).Unit
+			emitLathe(E, base - Vector3.new(0, R * 0.28, 0), axis,
+				dropProfile(R * 1.00, R * 0.520, 16), 18, T.body, T.light)
+			local tip = base + axis * (R * 0.72)
+			for k, rr in ipairs({ 0.100, 0.065, 0.038 }) do
+				local c = tip + axis * (R * (0.20 + 0.195 * (k - 1))) + FWD * (R * 0.035 * (k - 1))
+				emitLathe(E, c - Vector3.new(0, R * rr, 0), Vector3.new(0, 1, 0),
+					ballStations(R * rr, 9), 12, T.accent, T.accent)
+			end
+			local n = 5
+			for i = 0, n - 1 do
+				local az = FACE_AZ + math.pi + TAU * i / n
+				local dir = dirAt(az, 30)
+				local b = surfacePoint(dir)
+				local a2 = (dir + Vector3.new(0, 0.85, 0)).Unit
+				emitLathe(E, b - dir * (R * 0.10), a2,
+					dropProfile(R * 0.46, R * 0.155, 12), 11, function(u)
+						if u < 0.72 then return T.body:Lerp(T.light, u / 0.72) end
+						return T.accent
+					end, nil)
+			end
+		end,
+	},
+	{
 		-- A CONE IS THE WRONG SHAPE EVEN WHEN THE COLOUR IS RIGHT. Built as
 		-- straight cones with a hard white cap this read, unmistakably, as a
 		-- ring of SHARPENED PENCILS -- and moving the cap from 0.62 to 0.80 did
@@ -1078,19 +1140,20 @@ local function run()
 		end
 	end
 
-	if P.LADDER_REF then
+	for ri = #P.LADDER_REF, 1, -1 do
+		local want = P.LADDER_REF[ri]
 		local lab = workspace:FindFirstChild("PatternLab")
 		local ref = nil
 		if lab then
 			for _, c in ipairs(lab:GetChildren()) do
-				if c:GetAttribute("Variant") == "dots24" then ref = c end
+				if c:GetAttribute("Variant") == want then ref = c end
 			end
 		end
-		assert(ref, "[Legendary] LADDER_REF needs workspace.PatternLab with a dots24 slime"
-			.. " -- run EXPLORE_PATTERNS with ONLY = { \"dots24\" } first")
-		table.insert(jobs, 1, { c = { name = "dots24-ref", spin = 0, bob = 0,
-			note = "the rung below, same size, same ground, same camera" },
-			hue = hues[1], phase = 0, name = "dots24_ref",
+		assert(ref, string.format("[Legendary] LADDER_REF names %q -- run"
+			.. " EXPLORE_PATTERNS with that variant in ONLY first", want))
+		table.insert(jobs, 1, { c = { name = want .. "-ref", spin = 0, bob = 0, sway = 0,
+			note = "a rung below, same size, same ground, same camera" },
+			hue = hues[1], phase = 0, name = want .. "_ref",
 			texture = (ref:FindFirstChild("body") :: any).TextureContent })
 	end
 
