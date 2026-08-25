@@ -9,6 +9,90 @@
 -- NOT SHIPPING CODE and deliberately NOT under src/ (Rojo syncs that). Same
 -- standing as BUILD_SKINS, BUILD_TIERMARKS and BUILD_DIVINE beside it.
 --
+--
+-- ================= WHAT THE DATA SAYS THE PROBLEM IS ======================
+--
+-- READ SlimeConfig AND SlimeData BEFORE DESIGNING ANYTHING ELSE HERE, because
+-- the shape of the work is in them and it is not what a single treatment
+-- implies.
+--
+--     SLIME_TIER_COUNTS = { 6, 6, 6, 6, 6, 6, 21, 8 }        -- 65 slimes
+--     Common Uncommon Rare Epic Legendary Mythic Secret Divine
+--
+-- LEGENDARY IS SIX SLIMES, NOT ONE. SlimeData's generator binds `color =
+-- colors[i]` to "Legendary Slime i", so each of the six is a distinct,
+-- permanently-coloured individual. The tier is not one design shown on six
+-- hues; it is six designs, one per hue.
+--
+-- AND LEGENDARY DOES NOT LEAVE THE HUE CYCLE. SLIME_COLOR_BY_TIER gives
+-- Common through Mythic the SAME six hues in the SAME order -- green, red,
+-- blue, yellow, purple, orange. So the tier's colours are already spoken for,
+-- and a design does NOT have to survive six hues. It has to survive ONE, for
+-- good. That is a materially easier constraint than the one this file was
+-- built under, and it is why designs that lean on their accent can be sent to
+-- the hues that carry an accent best.
+--
+-- THE SET STILL HAS TO SURVIVE SIX BACKDROPS, which is the constraint that
+-- does not go away: six different hues on the same grass and the same road,
+-- reading as one tier.
+--
+-- WITHIN LEGENDARY NOTHING IS RARER THAN ANYTHING ELSE.
+-- SLIME_TIER_WEIGHT_RATIO is { 1, 1, 1, 1, 1, 1, 1, 1.40 } -- flat everywhere
+-- except Divine. The six Legendary incomes do climb (250, 300, 350, 400, 450,
+-- 500 per second) but the ROLL does not favour any of them, so there is no
+-- rarity argument for one being visually bigger. Uniform weight is not just a
+-- taste rule here; the data agrees with it.
+--
+-- ---------------------- AND THE THREE TIERS ABOVE -------------------------
+--
+--     Mythic  6 designs, the same six hues again.
+--     Secret  21 designs, 21 distinct hues -- the six, then 15 further
+--             authored ones (teal, magenta, lime, indigo, sky cyan, maroon,
+--             olive, coral, slate blue, mint, plum, steel blue, amber brown,
+--             rose, chartreuse).
+--     Divine  8 designs, the six plus teal and magenta, and the only tier with
+--             an internal rarity gradient (1.40).
+--
+-- SO THE REMAINING WORK AFTER THIS IS 35 MORE DISTINCT DESIGNS, and 21 of them
+-- are one tier. THAT IS A DIFFERENT KIND OF PROBLEM AND SHOULD NOT BE
+-- APPROACHED THIS WAY. Six can be hand-authored and hand-judged; twenty-one
+-- cannot, not at an even weight, and hand-authoring them would guarantee the
+-- unevenness this file just spent a calibration pass removing. Secret wants a
+-- COMBINATORIAL scheme -- a small vocabulary crossed with a small set of
+-- arrangements, every cell of the cross calibrated by the same bisection -- or
+-- it wants its identity to come from something other than shape. Worth noting
+-- that SLIME_TIER_COUNTS' own comment calls Secret "a wide bucket of
+-- equally-weighted individuals... a big junk rare bucket below the true top
+-- tier", which is an argument for the cheap scheme rather than 21 hero
+-- designs. Divine already has a rig -- DivinePrototype -- and needs 8
+-- variations of it, not 8 new ideas.
+--
+-- ==================== RE-READING EVERY CUT AS A SET ======================
+--
+-- With one slot, "worse than the winner" and "does not work" both mean cut.
+-- With six, only the second one does. Re-read:
+--
+--   DOES NOT WORK -- structural, still cut, would be cut again
+--     orbit, ring, drips   the silhouette rule. Geometry at or below the
+--                          equator cannot be seen to change the outline by a
+--                          level camera, and both game cameras are level.
+--     shards, frill        flat panes read as sheet metal on a blob.
+--     crown-cones          straight tapers read as sharpened pencils.
+--
+--   WORSE THAN THE WINNER, OR A SETTING -- back in play
+--     coronet   cut for being timid against regalia. In a set of six the
+--               comparison is gone -- but it is crown without the white cap,
+--               and crown is the version that wins, so it stays out on
+--               REDUNDANCY rather than on weight.
+--     halo      cut for reading as bubbles drifting off. That was the SPACING
+--               (0.66R out, 0.22R up), not the idea. IN THE SET.
+--     spire     plume at the wrong aspect. Subsumed, not a separate design.
+--     regalia   the single-slot recommendation, and now redundant: it is plume
+--               and crown at once, and both of those earn their own slot.
+--
+-- ONE OF THE SIX IS A RESURRECTED CUT, which is the whole point of having
+-- re-read them.
+-- ===========================================================================
 -- ======================= WHY THIS IS NOT A TEXTURE =========================
 --
 -- THE LADDER BELOW IT IS SETTLED AND IT IS ALL PAINT: bare, blaze, stripes4 at
@@ -335,6 +419,15 @@ local P = {
 	-- either -- see WHAT WHITE IS DOING HERE.
 	ACCENT = Color3.fromRGB(252, 251, 247),
 	PHASE = 0.25,
+	-- The matched boldness target, as a fraction of the body's own head-on
+	-- silhouette area. 0.30 was picked by building the four survivors
+	-- uncalibrated and taking roughly where they already sat, so nothing has
+	-- to be distorted much to join the set.
+	SILHOUETTE_TARGET = 0.30,
+	CAL_ITERS = 16,
+	CALIBRATE = true,
+	-- one cell per design, each on the hue SlimeData binds it to
+	SET_MODE = true,
 	-- emit the animator so the lab actually moves; the static pose above is
 	-- still what a screenshot sees
 	ANIMATE = true,
@@ -580,15 +673,37 @@ local function emitSpike(E, base: Vector3, axis: Vector3, r0: number, r1: number
 end
 
 -- ---- a swept tube along a polyline, radius per station ----
+-- SEE THE PARALLEL-TRANSPORT COMMENT INSIDE. A tube that crosses vertical is
+-- where the frame bug lives, and only one of the four tube-based candidates
+-- crosses it -- so it looked like "the horns are broken" rather than like a
+-- bug in the emitter, which is the kind of thing that gets fixed in the wrong
+-- place.
 local function emitTube(E, pts: { Vector3 }, radii: { number }, segs: number,
 	shades: { Color3 })
+	-- PARALLEL TRANSPORT, NOT A FRESH FRAME PER STATION. frameFor() picks its
+	-- up-reference by testing |axis.Y| > 0.95, so a sweep that crosses vertical
+	-- gets a DIFFERENT reference on either side of the crossing and the ring
+	-- rotates discontinuously between two stations. On the horns -- which start
+	-- horizontal and end vertical, so they cross it in the middle -- that tore a
+	-- visible gap in one horn and not the other, because only one crossed.
+	-- Carrying the frame forward and re-perpendicularising it against each new
+	-- tangent removes the whole class: there is no reference to disagree about.
 	local rings = {}
+	local up = nil
 	for k, c in ipairs(pts) do
 		local dir
 		if k == 1 then dir = (pts[2] - pts[1])
 		elseif k == #pts then dir = (pts[#pts] - pts[#pts - 1])
 		else dir = (pts[k + 1] - pts[k - 1]) end
-		local u, v = frameFor(dir)
+		local t = dir.Unit
+		if not up then
+			up = select(1, frameFor(t))
+		else
+			local u2 = up - t * up:Dot(t)
+			up = (u2.Magnitude > 1e-5) and u2.Unit or select(1, frameFor(t))
+		end
+		local u = up :: Vector3
+		local v = t:Cross(u).Unit
 		local ring = table.create(segs)
 		for i = 0, segs - 1 do
 			local th = TAU * i / segs
@@ -724,63 +839,120 @@ local function dropProfile(len: number, fat: number, stations: number)
 	return out
 end
 
+
 -- ===================================================================
--- THE CANDIDATES.
+-- BOLDNESS, MEASURED, BECAUSE A SET NEEDS IT MATCHED.
 --
--- Every one is a function of the emitter and the body's measured radius R, in
--- the mesh's own units, centred on the body's centre. Every one is body-
--- coloured; `spin` and `bob` declare motion for the animator; `smooth` picks
--- averaged normals over per-face ones.
+-- Legendary is not one design on six hues. SLIME_TIER_COUNTS is
+-- { 6, 6, 6, 6, 6, 6, 21, 8 } and SlimeData binds colors[i] to slime i, so it
+-- is SIX DISTINCT SLIMES, each permanently one hue. That makes the hard
+-- constraint a different one: not "does this shape survive six hues" but
+-- "do six shapes read as one tier".
 --
+-- AND THE THING THAT MUST NOT VARY IS WEIGHT. Six designs of differing
+-- loudness would make the quiet ones feel like Epics, and within Legendary
+-- there is no rarity gradient to justify one being bigger --
+-- SLIME_TIER_WEIGHT_RATIO is 1.0 for every tier except Divine, so all six are
+-- equally likely. Shape is free to vary. Weight is not.
+--
+-- SO IT IS BISECTED, exactly the way EXPLORE_PATTERNS bisects white fraction
+-- and for exactly the same reason: without it a shape would look bolder for
+-- being bigger rather than for being a better shape, and the set would be
+-- comparing nothing.
+--
+-- THE QUANTITY IS ADDED SILHOUETTE AREA -- the screen area the treatment adds
+-- OUTSIDE the body's own outline, in the head-on projection both game cameras
+-- use. Not volume, not triangle count, not height: the outline is what a
+-- level camera can see change, which is the rule that killed three candidates
+-- already. Area inside the body's outline is worth nothing and is not counted.
+--
+-- Measured by rasterising the projection rather than integrating it, because
+-- these shapes overlap each other and themselves and a sum of triangle areas
+-- would count the overlaps twice. 512 x 512 over the treatment's own bounds.
+-- ===================================================================
+local CAL_GRID = 512
+
+-- A measuring emitter: same interface as the real one, records triangles and
+-- builds no mesh. Bisecting on the real emitter would mean a
+-- CreateMeshPartAsync per iteration, which is the expensive half of the build.
+local function newProbe()
+	local tris = {}
+	return {
+		triOut = function(pa, pb, pc, ref, sa, sb, sc)
+			table.insert(tris, { pa, pb, pc, sa })
+		end,
+		tris = tris,
+		count = function() return #tris end,
+		clamped = function() return 0 end,
+	}
+end
+
+-- head-on: the camera looks along -FWD, so the picture plane is (SIDE, Y)
+local SIDE = Vector3.new(-FWD.Z, 0, FWD.X)
+
+local function measureAreas(tris, accent: Color3, R: number): (number, number)
+	local umin, umax = -2.4 * R, 2.4 * R
+	local vmin, vmax = -1.6 * R, 3.4 * R
+	local du = (umax - umin) / CAL_GRID
+	local dv = (vmax - vmin) / CAL_GRID
+	local hit = {}
+	local acc = {}
+	local function project(p: Vector3)
+		return p.X * SIDE.X + p.Z * SIDE.Z, p.Y
+	end
+	for _, t in ipairs(tris) do
+		local u1, v1 = project(t[1])
+		local u2, v2 = project(t[2])
+		local u3, v3 = project(t[3])
+		local isAcc = t[4] ~= nil and (t[4] :: Color3) == accent
+		local x1 = math.floor((u1 - umin) / du)
+		local x2 = math.floor((u2 - umin) / du)
+		local x3 = math.floor((u3 - umin) / du)
+		local y1 = math.floor((v1 - vmin) / dv)
+		local y2 = math.floor((v2 - vmin) / dv)
+		local y3 = math.floor((v3 - vmin) / dv)
+		local lox = math.max(math.min(x1, x2, x3), 0)
+		local hix = math.min(math.max(x1, x2, x3), CAL_GRID - 1)
+		local loy = math.max(math.min(y1, y2, y3), 0)
+		local hiy = math.min(math.max(y1, y2, y3), CAL_GRID - 1)
+		local d = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)
+		if math.abs(d) > 1e-9 then
+			local inv = 1 / d
+			for py = loy, hiy do
+				for px = lox, hix do
+					local l1 = ((y2 - y3) * (px - x3) + (x3 - x2) * (py - y3)) * inv
+					local l2 = ((y3 - y1) * (px - x3) + (x1 - x3) * (py - y3)) * inv
+					local l3 = 1 - l1 - l2
+					if l1 >= -0.001 and l2 >= -0.001 and l3 >= -0.001 then
+						local key = py * CAL_GRID + px
+						hit[key] = true
+						if isAcc then acc[key] = true end
+					end
+				end
+			end
+		end
+	end
+	-- outside the BODY's own outline, which at height v spans +/- radiusAt(v)
+	local cell = du * dv
+	local added, accentArea = 0, 0
+	for key in pairs(hit) do
+		local py = key // CAL_GRID
+		local px = key % CAL_GRID
+		local u = umin + (px + 0.5) * du
+		local v = vmin + (py + 0.5) * dv
+		local t = (v - PY0) / math.max(PY1 - PY0, 1e-9)
+		local inBody = (t >= 0 and t <= 1) and (math.abs(u) <= radiusAt(t) * PRAD)
+		if not inBody then
+			added += cell
+			if acc[key] then accentArea += cell end
+		end
+	end
+	return added, accentArea
+end
+
 -- Azimuths are taken from the FACE, not from world X, for the same reason the
 -- pattern lab resolves everything into f/s/y: the body has a front, and a
 -- decoration that ignores it is a shape imposed on a sphere.
---
--- THREE FROM THE FIRST PASS ARE GONE and the reasons are worth more than the
--- shapes were:
---
---   drips  INVISIBLE AT THE FRAMING THAT MATTERS. Teardrops hanging off the
---          lower rim are occluded by the body's own bulge from any camera at
---          or above eye height, and what clears the bulge is then against the
---          pad. It measured as a treatment and rendered as nothing. The lower
---          hemisphere of a slime that sits on the ground is not display space.
---
---   shards ANGULAR PLATES ARE THE WRONG MATERIAL. Flat panes read as sheet
---          metal or paper bolted to a blob -- the silhouette changed and the
---          creature stopped being a slime. This is the same failure as the
---          tonal accents, one level up: the addition has to belong to the
---          thing, and hard flat facets do not belong to something soft.
---
---   frill  SAME, plus it fanned out sideways into a collar, and a white band
---          across the upper body is the marking family this project has
---          already rejected twice (mane, collar). Rebuilding it in geometry
---          did not make it a new idea.
---
--- What survived the first pass is the observation that spikes and stalks BOTH
--- read instantly at 7 studs. Silhouette was never in doubt. The question the
--- second pass is asking is whether it can read as a slime while it does.
---
--- AND THREE MORE DIED OF ONE RULE, which is the most useful thing this file
--- found and is worth stating on its own:
---
---     GEOMETRY ONLY COUNTS WHERE IT BREAKS THE SILHOUETTE FROM THE CAMERA THE
---     GAME ACTUALLY USES, AND BOTH OF THOSE CAMERAS ARE LEVEL.
---
---   ring   Eight beads circling the waist at 1.06R. A level camera sees a
---          waist ring EDGE-ON: the near beads sit inside the body's own
---          outline and change nothing, and only the two at the extreme sides
---          break it, where they read as lumps rather than as a ring. A ring
---          reads as a ring from above, and nothing in this game looks down.
---   orbit  Same failure at 1.20R, with the added problem that beads floating
---          clear of a body they match read as debris rather than as its doing.
---   drips  Same failure below the equator, plus occlusion by the body's own
---          bulge and then by the pad.
---
--- So the usable space is UP and OUT-AND-UP, and every candidate that survived
--- is in it. That is not a taste convergence, it is where the two framings put
--- their horizon: the base camera sits at eye height with the slime's crown
--- 21% above it, and the reveal camera is level through the slime's middle.
--- ===================================================================
 local FACE_AZ = math.atan2(FWD.X, FWD.Z)
 
 -- a direction from azimuth (about the face) and elevation
@@ -789,104 +961,101 @@ local function dirAt(az: number, elevDeg: number): Vector3
 	return Vector3.new(math.sin(az) * math.cos(e), math.sin(e), math.cos(az) * math.cos(e))
 end
 
+-- ===================================================================
+-- THE SET.
+--
+-- Six distinct designs, not one design six times. What makes them one TIER
+-- rather than six unrelated slimes is a shared KIND, and it is three rules
+-- every one of them obeys:
+--
+--   1. ADDED MASS IN THE BODY'S OWN HUE, ABOVE THE EQUATOR. Never paint, never
+--      a glow, never below the waist -- the silhouette rule that killed orbit,
+--      ring and drips is what makes "above the equator" a rule rather than a
+--      preference.
+--   2. IT TERMINATES IN THE LADDER'S WHITE, AT A HARD EDGE. Same
+--      (252, 251, 247) every rung below is built from, always as a discrete
+--      element or a step and never as a ramp, because a ramp reads as sheen.
+--   3. IT MOVES. Nothing below Legendary moves. That is the one tier signal
+--      that survives every shape change, costs one CFrame write, and cannot be
+--      confused with a louder pattern.
+--
+-- A seventh design that obeyed all three would still belong. One that broke
+-- any of them would not, whatever it looked like.
+--
+-- AND THE WEIGHT IS BISECTED, NOT AUTHORED. Every candidate takes a scale k
+-- and the build solves for the k that puts its ADDED SILHOUETTE AREA on
+-- SILHOUETTE_TARGET. Shape varies; weight does not. See BOLDNESS, MEASURED.
+--
+-- HUE IS FIXED PER SLIME, WHICH CHANGES WHAT HAS TO SURVIVE WHAT. Design i
+-- lives on hue i for good, so no design has to work on all six -- it has to
+-- work on ONE. The set still has to look even across six hues, which is a
+-- different and harder problem, because the white accent is not equally strong
+-- on all of them: measured, red 0.926 and yellow 0.679. So the designs that
+-- lean hardest on their accent go to the hues that carry it best.
+-- ===================================================================
 local CANDIDATES = {
 	{
-		-- THE ONE THAT LANDED FIRST TIME. A slime is a drop of liquid; the thing
-		-- a drop of liquid does that nothing else here does is LIFT.
 		name = "plume",
-		note = "the crown drawn up into a standing drop, beads breaking off above",
+		note = "one tall drop off the crown, three beads breaking away above it",
+		hue = "blue",
 		spin = 0.0, bob = 0.045, sway = 5.5, smooth = true,
-		build = function(E, R, T)
+		build = function(E, R, T, k)
 			local base = surfacePoint(Vector3.new(0, 1, 0))
 			local axis = (Vector3.new(0, 1, 0) + FWD * 0.10).Unit
-			-- A DROP READS AS A DROP BY ITS ASPECT, NOT ITS SIZE. At 1.10R long
-			-- and 0.325R fat this was a SPIRE -- the eye called it a spike on a
-			-- ball and the slime stopped being liquid. Shorter and fatter is the
-			-- fix, and it is the same trade the fire tongues found: under a
-			-- shape you cannot change one dimension in isolation and keep the
-			-- reading.
-			-- WHITE ARRIVES PARTWAY UP, NOT AT THE TIP. The ladder below is
-			-- ordered by white COVERAGE -- 0, blaze, stripes4, dots24 at 28% --
-			-- so a top rung whose white is three small beads is not obviously
-			-- its last step. Measured against a real dots24 slime at the same
-			-- size it was not obviously bolder either. The crest carries it.
-			-- SUNK AND WIDE, so it flows out of the crown instead of sitting on
-			-- it. `peak` was built as a separate candidate to test exactly this
-			-- -- 0.545R fat and sunk 0.30R against the plume's 0.355R and 0.12R
-			-- -- and it won on both counts: bigger reads bolder, and a base
-			-- wider than the dome's local radius removes the ledge where an
-			-- addition meets a body. The two were merged rather than shipped
-			-- as a pair, because they were one idea at two settings.
-			emitLathe(E, base - Vector3.new(0, R * 0.28, 0), axis,
-				dropProfile(R * 1.00, R * 0.520, 16), 18, T.body, T.light)
-			local tip = base + axis * (R * 0.72)
-			-- three beads, each smaller and further, so the eye reads a sequence
-			-- rather than a cluster: this is the same argument as placing tongues
-			-- instead of thresholding them, one dimension down.
-			for k, rr in ipairs({ 0.100, 0.065, 0.038 }) do
-				local c = tip + axis * (R * (0.20 + 0.195 * (k - 1))) + FWD * (R * 0.035 * (k - 1))
-				emitLathe(E, c - Vector3.new(0, R * rr, 0), Vector3.new(0, 1, 0),
-					ballStations(R * rr, 9), 12, T.accent, T.accent)
+			emitLathe(E, base - Vector3.new(0, R * 0.28 * k, 0), axis,
+				dropProfile(R * 1.00 * k, R * 0.520 * k, 16), 18, T.body, T.light)
+			local tip = base + axis * (R * 0.72 * k)
+			for j, rr in ipairs({ 0.100, 0.065, 0.038 }) do
+				local c = tip + axis * (R * k * (0.20 + 0.195 * (j - 1)))
+					+ FWD * (R * k * 0.035 * (j - 1))
+				emitLathe(E, c - Vector3.new(0, R * rr * k, 0), Vector3.new(0, 1, 0),
+					ballStations(R * rr * k, 9), 12, T.accent, T.accent)
 			end
 		end,
 	},
 	{
-		-- BOTH AT ONCE. The plume's claim on the top rung is a change of KIND --
-		-- it is the only slime in the ladder that is not a ball -- but on white
-		-- AREA it does not beat dots24, and a rung that loses to the rung below
-		-- on the ladder's own axis is worth testing against a version that does
-		-- not. This is the plume with the crown's ring around its foot.
-		name = "regalia",
-		note = "the plume, ringed at its foot by five white-capped drops",
-		spin = 0.0, bob = 0.045, sway = 5.0, smooth = true,
-		build = function(E, R, T)
-			local base = surfacePoint(Vector3.new(0, 1, 0))
-			local axis = (Vector3.new(0, 1, 0) + FWD * 0.10).Unit
-			emitLathe(E, base - Vector3.new(0, R * 0.28, 0), axis,
-				dropProfile(R * 1.00, R * 0.520, 16), 18, T.body, T.light)
-			local tip = base + axis * (R * 0.72)
-			for k, rr in ipairs({ 0.100, 0.065, 0.038 }) do
-				local c = tip + axis * (R * (0.20 + 0.195 * (k - 1))) + FWD * (R * 0.035 * (k - 1))
-				emitLathe(E, c - Vector3.new(0, R * rr, 0), Vector3.new(0, 1, 0),
-					ballStations(R * rr, 9), 12, T.accent, T.accent)
-			end
-			local n = 5
-			for i = 0, n - 1 do
-				local az = FACE_AZ + math.pi + TAU * i / n
-				local dir = dirAt(az, 30)
-				local b = surfacePoint(dir)
-				local a2 = (dir + Vector3.new(0, 0.85, 0)).Unit
-				emitLathe(E, b - dir * (R * 0.10), a2,
-					dropProfile(R * 0.46, R * 0.155, 12), 11, function(u)
-						if u < 0.72 then return T.body:Lerp(T.light, u / 0.72) end
-						return T.accent
-					end, nil)
+		name = "horns",
+		note = "two heavy horns sweeping up and out, white at the points",
+		hue = "red",
+		spin = 0.0, bob = 0.03, sway = 3.0, smooth = true,
+		build = function(E, R, T, k)
+			for side = -1, 1, 2 do
+				local az = FACE_AZ + math.pi + side * math.rad(52)
+				local dir = dirAt(az, 34)
+				local base = surfacePoint(dir)
+				local out = Vector3.new(math.sin(az), 0, math.cos(az))
+				local len = R * 1.05 * k
+				local pts, radii, shades = {}, {}, {}
+				for j = 0, 8 do
+					local u = j / 8
+					-- sweeps out first, then up: a horn is a curve, and a
+					-- straight one is the cone that read as a pencil
+					pts[j + 1] = base + out * (len * (0.62 * u - 0.16 * u * u))
+						+ Vector3.new(0, len * (0.30 * u + 0.62 * u * u), 0)
+					radii[j + 1] = R * k * (0.185 - 0.150 * u * u)
+					shades[j + 1] = T.body:Lerp(T.light, u * 0.7)
+				end
+				emitTube(E, pts, radii, 12, shades)
+				local tipAxis = (pts[9] - pts[8]).Unit
+				emitLathe(E, pts[9] - tipAxis * (R * k * 0.04), tipAxis,
+					dropProfile(R * 0.30 * k, R * 0.075 * k, 8), 10, T.accent, T.accent)
 			end
 		end,
 	},
 	{
-		-- A CONE IS THE WRONG SHAPE EVEN WHEN THE COLOUR IS RIGHT. Built as
-		-- straight cones with a hard white cap this read, unmistakably, as a
-		-- ring of SHARPENED PENCILS -- and moving the cap from 0.62 to 0.80 did
-		-- not touch it, because the tell was never the cap. A straight taper
-		-- with a circular base is a manufactured object; the slime is not. So
-		-- the crown is built from the same drop profile as the plume, which is
-		-- the shape the body itself is made of.
 		name = "crown",
-		note = "seven drops standing off the shoulder, capped in the ladder's white",
+		note = "seven drops standing off the shoulder, capped in white",
+		hue = "yellow",
 		spin = 0.0, bob = 0.02, sway = 2.0, smooth = true,
-		build = function(E, R, T)
-			local n = 7
-			for i = 0, n - 1 do
-				local az = FACE_AZ + math.pi + TAU * i / n
+		build = function(E, R, T, k)
+			for i = 0, 6 do
+				local az = FACE_AZ + math.pi + TAU * i / 7
 				local dir = dirAt(az, 40)
 				local base = surfacePoint(dir)
 				local axis = (dir + Vector3.new(0, 0.72, 0)).Unit
-				local len = R * (0.66 + 0.10 * math.sin(i * 2.4))
+				local len = R * k * (0.66 + 0.10 * math.sin(i * 2.4))
 				emitLathe(E, base - dir * (R * 0.10), axis,
-					dropProfile(len, R * 0.20, 14), 12, function(u)
-						-- a STEP, not a ramp: white that fades up a form reads
-						-- as sheen, which is the terminator rule in geometry
+					dropProfile(len, R * 0.20 * k, 14), 12, function(u)
 						if u < 0.74 then return T.body:Lerp(T.light, u / 0.74) end
 						return T.accent
 					end, nil)
@@ -895,31 +1064,135 @@ local CANDIDATES = {
 	},
 	{
 		name = "antennae",
-		note = "two thick stalks with heavy white bulbs, leaning forward",
+		note = "two slender stalks leaning forward, heavy white bulbs",
+		hue = "green",
 		spin = 0.0, bob = 0.05, sway = 7.0, smooth = true,
-		build = function(E, R, T)
+		build = function(E, R, T, k)
 			for side = -1, 1, 2 do
 				local az = FACE_AZ + side * math.rad(24)
 				local dir = dirAt(az, 64)
 				local base = surfacePoint(dir)
 				local pts, radii, shades = {}, {}, {}
-				local len = R * 0.90
-				for k = 0, 8 do
-					local u = k / 8
-					pts[k + 1] = base + Vector3.new(0, len * u, 0)
+				local len = R * 0.90 * k
+				for j = 0, 8 do
+					local u = j / 8
+					pts[j + 1] = base + Vector3.new(0, len * u, 0)
 						+ FWD * (len * 0.30 * u * u)
 						+ Vector3.new(math.sin(az), 0, math.cos(az)) * (len * 0.16 * u)
-					radii[k + 1] = R * (0.082 - 0.030 * u)
-					shades[k + 1] = T.body:Lerp(T.light, u)
+					radii[j + 1] = R * k * (0.082 - 0.030 * u)
+					shades[j + 1] = T.body:Lerp(T.light, u)
 				end
 				emitTube(E, pts, radii, 10, shades)
-				local b = R * 0.155
+				local b = R * 0.108 * k
 				emitLathe(E, pts[9] - Vector3.new(0, b, 0), Vector3.new(0, 1, 0),
-					ballStations(b, 9), 14, T.accent, T.accent)
+					ballStations(b, 10), 14, T.accent, T.accent)
 			end
 		end,
 	},
-
+	{
+		-- BACK IN PLAY, AND FIXED. Cut at 0.66R out and 0.22R up, where the
+		-- beads read as bubbles drifting off rather than as the slime holding
+		-- them. The failure was the SPACING, not the idea: pulled in to 0.40R
+		-- and dropped to 0.10R they read as one object the slime is carrying.
+		-- It is the only design in the set with detached mass, which is most of
+		-- why it earns a slot.
+		name = "halo",
+		note = "five white beads held in a tight ring over the crown, turning",
+		hue = "purple",
+		spin = 0.55, bob = 0.03, sway = 0.0, smooth = true,
+		build = function(E, R, T, k)
+			local top = surfacePoint(Vector3.new(0, 1, 0)).Y
+			for i = 0, 4 do
+				local az = TAU * i / 5
+				-- 0.66R out and 0.22R up scattered; 0.40R and 0.10R sat ON the
+				-- crown and read as a row of lumps. What the read needs is SKY
+				-- between the beads and the body -- enough to be unambiguous,
+				-- not so much that they stop belonging to it.
+				local rad = R * 0.44 * k
+				local c = Vector3.new(math.sin(az) * rad, top + R * 0.34 * k, math.cos(az) * rad)
+				local rr = R * 0.185 * k
+				-- CAPPED, NOT WHITE. All-white beads put halo's accent area at
+				-- 29.9% against the set's 3% -- ten times the rest, on the axis
+				-- that is supposed to be the constant. The cap is still a hard
+				-- edge and still the termination, so rule 2 holds.
+				emitLathe(E, c - Vector3.new(0, rr, 0), Vector3.new(0, 1, 0),
+					ballStations(rr, 12), 14, function(u)
+						if u < 0.62 then return T.body:Lerp(T.light, u / 0.62) end
+						return T.accent
+					end, nil)
+			end
+		end,
+	},
+	{
+		-- The only asymmetric one, and the only one that reads differently from
+		-- the left and the right. A slime is liquid; a wave is what liquid does
+		-- that a crown and a pair of horns cannot.
+		name = "wave",
+		note = "the crown thrown forward into a breaking wave, white at the crest",
+		hue = "orange",
+		spin = 0.0, bob = 0.05, sway = 6.5, smooth = true,
+		build = function(E, R, T, k)
+			-- SUNK. Starting the sweep AT the crown left the root hanging in
+			-- the air: the dome is narrow at its apex and the tube's first ring
+			-- is 0.44R across, so nothing of it was inside the body. A drop
+			-- thrown off a slime has to come OUT of the slime.
+			local base = surfacePoint(Vector3.new(0, 1, 0)) - Vector3.new(0, R * 0.30 * k, 0)
+			local pts, radii, shades = {}, {}, {}
+			local len = R * 1.30 * k
+			for j = 0, 9 do
+				local u = j / 9
+				pts[j + 1] = base
+					+ Vector3.new(0, len * (0.72 * u - 0.10 * u * u), 0)
+					+ FWD * (len * (0.48 * u * u))
+				radii[j + 1] = R * k * (0.40 - 0.355 * u * u)
+				shades[j + 1] = T.body:Lerp(T.light, u * 0.8)
+			end
+			emitTube(E, pts, radii, 16, shades)
+			-- the crest: three beads spilling off the curl, forward and down
+			local tipAxis = (pts[10] - pts[9]).Unit
+			for j, rr in ipairs({ 0.105, 0.070, 0.045 }) do
+				local c = pts[10] + tipAxis * (R * k * (0.13 + 0.155 * (j - 1)))
+					- Vector3.new(0, R * k * 0.05 * (j - 1) * (j - 1), 0)
+				emitLathe(E, c - Vector3.new(0, R * rr * k, 0), Vector3.new(0, 1, 0),
+					ballStations(R * rr * k, 9), 12, T.accent, T.accent)
+			end
+		end,
+	},
+	{
+		-- Kept buildable because it was the single-slot recommendation and the
+		-- reasoning for it is on record, but it is NOT in the six: it is plume
+		-- and crown at once, and with both of those in the set it reads as a
+		-- combination of two siblings rather than as a seventh idea.
+		name = "regalia",
+		note = "the plume, ringed at its foot by five white-capped drops",
+		dead = "not broken -- redundant. plume and crown both earn their own slot,"
+			.. " and regalia is the two of them together",
+		spin = 0.0, bob = 0.045, sway = 5.0, smooth = true,
+		build = function(E, R, T, k)
+			local base = surfacePoint(Vector3.new(0, 1, 0))
+			local axis = (Vector3.new(0, 1, 0) + FWD * 0.10).Unit
+			emitLathe(E, base - Vector3.new(0, R * 0.28 * k, 0), axis,
+				dropProfile(R * 1.00 * k, R * 0.520 * k, 16), 18, T.body, T.light)
+			local tip = base + axis * (R * 0.72 * k)
+			for j, rr in ipairs({ 0.100, 0.065, 0.038 }) do
+				local c = tip + axis * (R * k * (0.20 + 0.195 * (j - 1)))
+					+ FWD * (R * k * 0.035 * (j - 1))
+				emitLathe(E, c - Vector3.new(0, R * rr * k, 0), Vector3.new(0, 1, 0),
+					ballStations(R * rr * k, 9), 12, T.accent, T.accent)
+			end
+			for i = 0, 4 do
+				local az = FACE_AZ + math.pi + TAU * i / 5
+				local dir = dirAt(az, 30)
+				local b = surfacePoint(dir)
+				local a2 = (dir + Vector3.new(0, 0.85, 0)).Unit
+				emitLathe(E, b - dir * (R * 0.10), a2,
+					dropProfile(R * 0.46 * k, R * 0.155 * k, 12), 11, function(u)
+						if u < 0.72 then return T.body:Lerp(T.light, u / 0.72) end
+						return T.accent
+					end, nil)
+			end
+		end,
+	},
 	-- ===================================================================
 	-- THE ONES THAT DID NOT MAKE IT, KEPT AS CODE.
 	--
@@ -948,7 +1221,7 @@ local CANDIDATES = {
 		dead = "read as sharpened pencils -- a straight taper on a circular base"
 			.. " is a manufactured object and a slime is not one",
 		spin = 0.0, bob = 0.0, sway = 0.0, smooth = false,
-		build = function(E, R, T)
+		build = function(E, R, T, k)
 			for i = 0, 6 do
 				local az = FACE_AZ + math.pi + TAU * i / 7
 				local dir = dirAt(az, 38)
@@ -966,7 +1239,7 @@ local CANDIDATES = {
 		dead = "right family, too timid to be a rung above a 24-dot field."
 			.. " Absorbed into crown, which is this at size with a white cap",
 		spin = 0.0, bob = 0.0, sway = 0.0, smooth = true,
-		build = function(E, R, T)
+		build = function(E, R, T, k)
 			for i = 0, 6 do
 				local az = FACE_AZ + math.pi + TAU * i / 7
 				local dir = dirAt(az, 40)
@@ -979,12 +1252,12 @@ local CANDIDATES = {
 		end,
 	},
 	{
-		name = "halo",
+		name = "halo-wide",
 		note = "six droplets in a ring above the crown, turning",
 		dead = "scattered rather than a ring: at 0.66R apart and clear of the"
 			.. " body they read as bubbles drifting off, not as the slime's doing",
 		spin = 0.40, bob = 0.0, sway = 0.0, smooth = true,
-		build = function(E, R, T)
+		build = function(E, R, T, k)
 			local top = surfacePoint(Vector3.new(0, 1, 0)).Y
 			for i = 0, 5 do
 				local az = TAU * i / 6
@@ -1003,7 +1276,7 @@ local CANDIDATES = {
 			.. " the near beads sit inside the body's own outline and change"
 			.. " nothing, and the side ones read as lumps stuck on",
 		spin = 0.45, bob = 0.0, sway = 0.0, smooth = true,
-		build = function(E, R, T)
+		build = function(E, R, T, k)
 			for i = 0, 5 do
 				local az = TAU * i / 6
 				local lift = 0.26 * math.sin(i * 1.7 + 0.4)
@@ -1022,7 +1295,7 @@ local CANDIDATES = {
 			.. " whether TIGHT and EVEN rescued it. It does not: the geometry is"
 			.. " correct and the camera still cannot see it",
 		spin = 0.55, bob = 0.0, sway = 0.0, smooth = true,
-		build = function(E, R, T)
+		build = function(E, R, T, k)
 			for i = 0, 7 do
 				local az = TAU * i / 8
 				local rad = R * 1.06
@@ -1040,7 +1313,7 @@ local CANDIDATES = {
 			.. " body's own bulge is then against the pad. The lower hemisphere"
 			.. " of a slime that sits on the ground is not display space",
 		spin = 0.0, bob = 0.0, sway = 0.0, smooth = true,
-		build = function(E, R, T)
+		build = function(E, R, T, k)
 			for i = 0, 6 do
 				local az = FACE_AZ + math.pi + TAU * i / 7 + 0.16
 				local dir = dirAt(az, -26)
@@ -1068,7 +1341,7 @@ local CANDIDATES = {
 			.. " The tonal-accent failure one level up -- the addition has to"
 			.. " belong to the thing",
 		spin = 0.0, bob = 0.0, sway = 0.0, smooth = false,
-		build = function(E, R, T)
+		build = function(E, R, T, k)
 			local specs = {
 				{ 150, 46, 0.78, 0.34 }, { 205, 30, 0.95, 0.40 },
 				{ 255, 52, 0.70, 0.30 }, { 180, 66, 0.62, 0.26 },
@@ -1092,7 +1365,7 @@ local CANDIDATES = {
 			.. " upper body is the marking family this project has already"
 			.. " rejected twice. Rebuilding it in geometry did not make it new",
 		spin = 0.0, bob = 0.0, sway = 0.0, smooth = false,
-		build = function(E, R, T)
+		build = function(E, R, T, k)
 			for i = 0, 13 do
 				local az = TAU * i / 14
 				local dir = dirAt(az, 16)
@@ -1111,7 +1384,7 @@ local CANDIDATES = {
 			.. " slime stopped being liquid. Kept because the failure is a"
 			.. " setting rather than an idea, and the setting is easy to redo",
 		spin = 0.0, bob = 0.045, sway = 5.5, smooth = true,
-		build = function(E, R, T)
+		build = function(E, R, T, k)
 			local base = surfacePoint(Vector3.new(0, 1, 0))
 			local axis = (Vector3.new(0, 1, 0) + FWD * 0.10).Unit
 			emitLathe(E, base - Vector3.new(0, R * 0.12, 0), axis,
@@ -1277,6 +1550,10 @@ local function run()
 		if #P.HUES_ONLY == 0 or wanted[h[1]] then table.insert(hues, h) end
 	end
 	if #hues == 0 then hues = { P.HUES[1] } end
+	-- SET MODE: each design on ITS OWN hue, which is what SlimeData actually
+	-- does -- colors[i] is bound to slime i for good. Six cells, not thirty-six.
+	local hueByName = {}
+	for _, h in ipairs(P.HUES) do hueByName[h[1]] = h[2] end
 
 	for _, c in ipairs(workspace:GetChildren()) do
 		if c.Name == P.ROOT_NAME then c:Destroy() end
@@ -1295,16 +1572,56 @@ local function run()
 	-- rather than one. That is the shape TierMarks already ships (four masks,
 	-- four meshes) and it changes nothing that costs: still one PART per slime,
 	-- still the same triangles on screen.
+	-- THE BODY'S OWN SILHOUETTE AREA, which the target is a fraction of.
+	-- Integrated off the same measured profile everything else here uses.
+	local bodyArea = 0
+	do
+		local N = 512
+		for i = 0, N - 1 do
+			local t = (i + 0.5) / N
+			bodyArea += 2 * radiusAt(t) * PRAD * ((PY1 - PY0) / N)
+		end
+	end
+	local target = bodyArea * P.SILHOUETTE_TARGET
+
+	-- Bisect k so the added silhouette lands on target. Monotone in k because
+	-- k scales every protrusion and the body it is measured against does not
+	-- move -- the same property that lets one bisection calibrate all ten
+	-- shapes in EXPLORE_PATTERNS.
+	local calCache = {}
+	local function calibrate(c): (number, number, number)
+		if calCache[c.name] then
+			local q = calCache[c.name] return q[1], q[2], q[3]
+		end
+		local T = { body = Color3.new(0, 0, 0), light = Color3.new(0, 0, 0), accent = P.ACCENT }
+		local function areaAt(k: number): (number, number)
+			local pr = newProbe()
+			c.build(pr, RAD, T, k)
+			Y.tick()
+			return measureAreas(pr.tris, P.ACCENT, RAD)
+		end
+		local lo, hi = 0.15, 3.0
+		local k, got, accentArea = 1, 0, 0
+		for _ = 1, P.CAL_ITERS do
+			k = (lo + hi) / 2
+			got, accentArea = areaAt(k)
+			if got < target then lo = k else hi = k end
+		end
+		calCache[c.name] = { k, got / bodyArea, accentArea / bodyArea }
+		return k, got / bodyArea, accentArea / bodyArea
+	end
+
 	local proto = {}
 	local function protoFor(c, hueName: string, hue: Color3)
 		local key = c.name .. "|" .. hueName
 		if proto[key] then return proto[key] end
+		local k = P.CALIBRATE and (calibrate(c)) or 1.0
 		local E = newEmitter(BOX, P.EXTENT_XZ, P.EXTENT_Y, c.smooth == true)
 		c.build(E, RAD, {
 			body = hue,
 			light = hue:Lerp(Color3.new(1, 1, 1), P.LIFT),
 			accent = P.ACCENT,
-		})
+		}, k)
 		Y.mark()
 		local mp = AssetService:CreateMeshPartAsync(Content.fromObject(E.em))
 		Y.mark()
@@ -1347,6 +1664,12 @@ local function run()
 		for _, ph in ipairs(P.SHOOT_PHASES) do
 			table.insert(jobs, { c = c, hue = hues[1], phase = ph,
 				name = string.format("%s_p%02d", c.name, math.floor(ph * 100)) })
+		end
+	elseif P.SET_MODE then
+		for _, c in ipairs(build) do
+			local hn = c.hue or hues[1][1]
+			table.insert(jobs, { c = c, hue = { hn, hueByName[hn] }, phase = P.PHASE,
+				name = string.format("%s_%s", c.name, hn) })
 		end
 	else
 		for _, c in ipairs(build) do
@@ -1469,12 +1792,17 @@ local function run()
 	end
 	for _, c in ipairs(build) do
 		local any = nil
-		for k, pr in pairs(proto) do if k:sub(1, #c.name + 1) == c.name .. "|" then any = pr end end
+		for kk, pr in pairs(proto) do if kk:sub(1, #c.name + 1) == c.name .. "|" then any = pr end end
 		if any then
-			log("[Legendary] %-12s %5d tris | %s%s", c.name, any.tris,
+			local cal = calCache[c.name]
+			log("[Legendary] %-10s %5d tris | k %.2f | silhouette %+.1f%% | accent %4.1f%% | %s%s",
+				c.name, any.tris, cal and cal[1] or 1,
+				cal and (cal[2] * 100) or 0, cal and (cal[3] * 100) or 0,
 				c.dead and "CUT -- " or "", c.dead or c.note)
 		end
 	end
+	log("[Legendary] body silhouette %.3f mesh-units^2; target %+.0f%% of it",
+		bodyArea, P.SILHOUETTE_TARGET * 100)
 	-- ---- the animator, so the motion is real rather than posed ----
 	-- Emitted into the lab the way BUILD_DIVINE emits DivineAnimator: the
 	-- treatment has to be a thing that exists and runs, not a pose the build
