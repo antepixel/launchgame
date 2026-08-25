@@ -273,8 +273,15 @@ local P = {
 	ROOT_NAME = "LegendaryLab",
 	SOURCE_MODELS = { "Slime", "AuxScene", "slime_uv" },
 
-	-- Which candidates, by name, in this order. Empty builds them all.
+	-- Which candidates, by name, in this order. Empty builds every LIVE one.
 	ONLY = {},
+	-- Include the cut directions too. They are kept as code rather than only as
+	-- prose because a reason you cannot rebuild is a reason nobody can check --
+	-- and because every one of them was judged before the tone and sphere bugs
+	-- were found, so the shots that killed them are not shots of what they
+	-- would look like now. Rebuilt, coronet and halo look materially better;
+	-- both are still cut, and the reason is written on each one.
+	SHOW_DEAD = false,
 	-- BUILD THE RUNG BELOW AS A REFERENCE CELL, at the same size, on the same
 	-- ground, under the same camera. "Decisively bolder than dots24" is not a
 	-- judgement anyone can make from two screenshots taken at different scales
@@ -604,7 +611,7 @@ end
 -- ---- a flat angular plate: a quad given thickness ----
 local function emitPlate(E, centre: Vector3, normal: Vector3, along: Vector3,
 	halfLen: number, halfWid: number, thick: number, tipPinch: number,
-	sBase: number, sTip: number)
+	sBase: Color3, sTip: Color3)
 	local n = normal.Unit
 	local a = (along - n * along:Dot(n)).Unit
 	local w = n:Cross(a).Unit
@@ -912,6 +919,211 @@ local CANDIDATES = {
 			end
 		end,
 	},
+
+	-- ===================================================================
+	-- THE ONES THAT DID NOT MAKE IT, KEPT AS CODE.
+	--
+	-- The prose above says what each of these died of, which is worth having
+	-- and is not the same as having them. A reason you cannot rebuild is a
+	-- reason nobody can check, and every one of these was judged in a round
+	-- BEFORE the tone bug and the sphere-profile bug were found -- so the
+	-- shots that killed them are not shots of what they would look like now.
+	-- Set SHOW_DEAD to build them alongside the survivors, under the same
+	-- emitter, the same accent and the same camera. Same argument as the
+	-- matched white fraction one lab over: a comparison across different
+	-- builds is not a comparison.
+	--
+	-- CORONET AND HALO LOOK MATERIALLY BETTER REBUILT than they did when they
+	-- were cut, and both are still cut. coronet is a clean set of soft horns
+	-- once the tone is right -- it is crown without the white cap, and crown is
+	-- the version of it that wins. halo is a real ring of droplets once they
+	-- are spheres rather than lemons; it is still scattered rather than held,
+	-- but it is the first thing to reopen if regalia is rejected. Saying that
+	-- is the useful half of keeping them: a cut made on a broken build is a cut
+	-- that deserves re-reading, and eleven of the thirteen still read the same.
+	-- ===================================================================
+	{
+		name = "crown-cones",
+		note = "the first crown: straight cones, hard white cap",
+		dead = "read as sharpened pencils -- a straight taper on a circular base"
+			.. " is a manufactured object and a slime is not one",
+		spin = 0.0, bob = 0.0, sway = 0.0, smooth = false,
+		build = function(E, R, T)
+			for i = 0, 6 do
+				local az = FACE_AZ + math.pi + TAU * i / 7
+				local dir = dirAt(az, 38)
+				local base = surfacePoint(dir)
+				local axis = (dir + Vector3.new(0, 0.55, 0)).Unit
+				local len = R * (0.70 + 0.11 * math.sin(i * 2.4))
+				emitSpike(E, base - dir * (R * 0.06), axis,
+					R * 0.145, R * 0.035, len, 8, T.body, T.accent, 0.80)
+			end
+		end,
+	},
+	{
+		name = "coronet",
+		note = "seven soft drops on the shoulder, no cap",
+		dead = "right family, too timid to be a rung above a 24-dot field."
+			.. " Absorbed into crown, which is this at size with a white cap",
+		spin = 0.0, bob = 0.0, sway = 0.0, smooth = true,
+		build = function(E, R, T)
+			for i = 0, 6 do
+				local az = FACE_AZ + math.pi + TAU * i / 7
+				local dir = dirAt(az, 40)
+				local base = surfacePoint(dir)
+				local axis = (dir + Vector3.new(0, 0.75, 0)).Unit
+				local len = R * (0.52 + 0.09 * math.sin(i * 2.4))
+				emitLathe(E, base - dir * (R * 0.08), axis,
+					dropProfile(len, R * 0.155, 9), 10, T.body, T.light)
+			end
+		end,
+	},
+	{
+		name = "halo",
+		note = "six droplets in a ring above the crown, turning",
+		dead = "scattered rather than a ring: at 0.66R apart and clear of the"
+			.. " body they read as bubbles drifting off, not as the slime's doing",
+		spin = 0.40, bob = 0.0, sway = 0.0, smooth = true,
+		build = function(E, R, T)
+			local top = surfacePoint(Vector3.new(0, 1, 0)).Y
+			for i = 0, 5 do
+				local az = TAU * i / 6
+				local rad = R * 0.66
+				local c = Vector3.new(math.sin(az) * rad, top + R * 0.22, math.cos(az) * rad)
+				local rr = R * 0.175
+				emitLathe(E, c - Vector3.new(0, rr, 0), Vector3.new(0, 1, 0),
+					ballStations(rr, 9), 14, T.accent, T.light)
+			end
+		end,
+	},
+	{
+		name = "orbit",
+		note = "six droplets held off the flanks in a ring, turning",
+		dead = "THE SILHOUETTE RULE. A level camera sees a waist ring edge-on:"
+			.. " the near beads sit inside the body's own outline and change"
+			.. " nothing, and the side ones read as lumps stuck on",
+		spin = 0.45, bob = 0.0, sway = 0.0, smooth = true,
+		build = function(E, R, T)
+			for i = 0, 5 do
+				local az = TAU * i / 6
+				local lift = 0.26 * math.sin(i * 1.7 + 0.4)
+				local rad = R * 1.20
+				local c = Vector3.new(math.sin(az) * rad, R * lift, math.cos(az) * rad)
+				local rr = R * (0.175 + 0.035 * math.sin(i * 1.3))
+				emitLathe(E, c - Vector3.new(0, rr, 0), Vector3.new(0, 1, 0),
+					ballStations(rr, 9), 14, T.light, T.body)
+			end
+		end,
+	},
+	{
+		name = "ring",
+		note = "eight beads circling the waist, tight and even, turning",
+		dead = "the same rule, and this one was built specifically to test"
+			.. " whether TIGHT and EVEN rescued it. It does not: the geometry is"
+			.. " correct and the camera still cannot see it",
+		spin = 0.55, bob = 0.0, sway = 0.0, smooth = true,
+		build = function(E, R, T)
+			for i = 0, 7 do
+				local az = TAU * i / 8
+				local rad = R * 1.06
+				local c = Vector3.new(math.sin(az) * rad, R * 0.06, math.cos(az) * rad)
+				local rr = R * 0.125
+				emitLathe(E, c - Vector3.new(0, rr, 0), Vector3.new(0, 1, 0),
+					ballStations(rr, 9), 12, T.accent, T.light)
+			end
+		end,
+	},
+	{
+		name = "drips",
+		note = "seven teardrops hanging off the lower rim",
+		dead = "the same rule below the equator, plus occlusion: what clears the"
+			.. " body's own bulge is then against the pad. The lower hemisphere"
+			.. " of a slime that sits on the ground is not display space",
+		spin = 0.0, bob = 0.0, sway = 0.0, smooth = true,
+		build = function(E, R, T)
+			for i = 0, 6 do
+				local az = FACE_AZ + math.pi + TAU * i / 7 + 0.16
+				local dir = dirAt(az, -26)
+				local base = surfacePoint(dir)
+				local len = R * (0.34 + 0.20 * math.abs(math.sin(i * 2.9)))
+				local pts, radii, shades = {}, {}, {}
+				for k = 0, 5 do
+					local u = k / 5
+					pts[k + 1] = base + Vector3.new(0, -len * u, 0)
+					radii[k + 1] = R * (0.10 * (1 - u * 0.85) + 0.055 * math.sin(u * math.pi))
+					shades[k + 1] = T.body:Lerp(T.light, u)
+				end
+				emitTube(E, pts, radii, 7, shades)
+				local b = R * 0.075
+				emitLathe(E, pts[6] + Vector3.new(0, -R * 0.055 - b, 0), Vector3.new(0, 1, 0),
+					ballStations(b, 9), 10, T.accent, T.accent)
+			end
+		end,
+	},
+	{
+		name = "shards",
+		note = "five angular plates erupting from the back and shoulders",
+		dead = "WRONG MATERIAL. Flat panes read as sheet metal bolted to a blob:"
+			.. " the silhouette changed and the creature stopped being a slime."
+			.. " The tonal-accent failure one level up -- the addition has to"
+			.. " belong to the thing",
+		spin = 0.0, bob = 0.0, sway = 0.0, smooth = false,
+		build = function(E, R, T)
+			local specs = {
+				{ 150, 46, 0.78, 0.34 }, { 205, 30, 0.95, 0.40 },
+				{ 255, 52, 0.70, 0.30 }, { 180, 66, 0.62, 0.26 },
+				{ 232, 12, 0.86, 0.36 },
+			}
+			for _, sp in ipairs(specs) do
+				local az = FACE_AZ + math.pi + math.rad(sp[1])
+				local dir = dirAt(az, sp[2])
+				local base = surfacePoint(dir)
+				local axis = (dir + Vector3.new(0, 0.35, 0)).Unit
+				local normal = Vector3.new(math.cos(az), 0, -math.sin(az))
+				emitPlate(E, base + axis * (R * sp[3] * 0.5), normal, axis,
+					R * sp[3] * 0.5, R * sp[4], R * 0.035, 0.18, T.body, T.accent)
+			end
+		end,
+	},
+	{
+		name = "frill",
+		note = "a ruff of fourteen overlapping petals around the upper body",
+		dead = "the same wrong material, fanned sideways -- and a band across the"
+			.. " upper body is the marking family this project has already"
+			.. " rejected twice. Rebuilding it in geometry did not make it new",
+		spin = 0.0, bob = 0.0, sway = 0.0, smooth = false,
+		build = function(E, R, T)
+			for i = 0, 13 do
+				local az = TAU * i / 14
+				local dir = dirAt(az, 16)
+				local base = surfacePoint(dir)
+				local axis = (dir + Vector3.new(0, -0.30, 0)).Unit
+				local normal = Vector3.new(math.cos(az), 0, -math.sin(az))
+				emitPlate(E, base + axis * (R * 0.20), normal, axis,
+					R * 0.24, R * 0.16, R * 0.022, 0.55, T.body, T.accent)
+			end
+		end,
+	},
+	{
+		name = "spire",
+		note = "the plume at 1.10R long and 0.325R fat",
+		dead = "a DROP READS BY ITS ASPECT. Tall and narrow is a spire, and the"
+			.. " slime stopped being liquid. Kept because the failure is a"
+			.. " setting rather than an idea, and the setting is easy to redo",
+		spin = 0.0, bob = 0.045, sway = 5.5, smooth = true,
+		build = function(E, R, T)
+			local base = surfacePoint(Vector3.new(0, 1, 0))
+			local axis = (Vector3.new(0, 1, 0) + FWD * 0.10).Unit
+			emitLathe(E, base - Vector3.new(0, R * 0.12, 0), axis,
+				dropProfile(R * 1.10, R * 0.325, 14), 16, T.body, T.light)
+			local tip = base + axis * (R * 1.10)
+			for k, rr in ipairs({ 0.115, 0.072, 0.042 }) do
+				local c = tip + axis * (R * (0.17 + 0.26 * (k - 1))) + FWD * (R * 0.03 * (k - 1))
+				emitLathe(E, c - Vector3.new(0, R * rr, 0), Vector3.new(0, 1, 0),
+					ballStations(R * rr, 9), 12, T.accent, T.accent)
+			end
+		end,
+	},
 }
 
 
@@ -1042,6 +1254,11 @@ local function run()
 		P.FRAMING, widthStuds, pxPerStud, distance, widthStuds * pxPerStud)
 
 	-- ---- which candidates, which hues ----
+	local live = {}
+	for _, c in ipairs(CANDIDATES) do
+		if P.SHOW_DEAD or not c.dead then table.insert(live, c) end
+	end
+
 	local build = {}
 	if #P.ONLY > 0 then
 		for _, n in ipairs(P.ONLY) do
@@ -1051,7 +1268,7 @@ local function run()
 			table.insert(build, found)
 		end
 	else
-		build = CANDIDATES
+		build = live
 	end
 	local hues = {}
 	local wanted = {}
@@ -1253,7 +1470,10 @@ local function run()
 	for _, c in ipairs(build) do
 		local any = nil
 		for k, pr in pairs(proto) do if k:sub(1, #c.name + 1) == c.name .. "|" then any = pr end end
-		if any then log("[Legendary] %-9s %5d tris | %s", c.name, any.tris, c.note) end
+		if any then
+			log("[Legendary] %-12s %5d tris | %s%s", c.name, any.tris,
+				c.dead and "CUT -- " or "", c.dead or c.note)
+		end
 	end
 	-- ---- the animator, so the motion is real rather than posed ----
 	-- Emitted into the lab the way BUILD_DIVINE emits DivineAnimator: the
