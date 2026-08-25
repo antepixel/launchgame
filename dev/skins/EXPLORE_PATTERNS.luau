@@ -244,6 +244,43 @@ local P = {
 	LADDER = {},
 	ROW_SPACING = 34,
 
+	-- ---- THE GLOW SHELL. See the section of that name above. ----
+	-- TRUE switches this file to SHELL MATRIX mode: shell settings across,
+	-- base variant x hue back. It ships OFF, like LADDER, so a plain paste
+	-- still builds the variant row this file is mainly for -- but unlike
+	-- LADDER the settings below stay live, because they are the treatment's
+	-- definition rather than a mode selector, and a commented-out definition
+	-- is one that gets retyped slightly differently next time.
+	SHELL_MATRIX = false,
+
+	-- THE SWEEP IS AN L, NOT A GRID: transparency held at the Divine peak for
+	-- the inflate column, inflate held at 0.110 for the transparency column,
+	-- and the two meeting at `wide`. A full cross would be 12 columns of which
+	-- 10 answer nothing -- the same argument as holding `fraction` fixed
+	-- across an A/B, one axis up.
+	-- The px notes are what these MEASURED off the render, not targets; and
+	-- see WHAT THE RENDER SAYS before reading any of them as a threshold,
+	-- because the ring's width turned out not to be what decides it.
+	SHELL_SET = {
+		-- name        inflate  transparency
+		{ "off",         0.000, 1.00 },   -- control: no shell part at all
+		{ "divine",      0.045, 0.73 },   -- the pair as remembered; see above,
+		                                  -- it is a mean size with a peak alpha
+		{ "peak",        0.072, 0.73 },   -- what Divine ACTUALLY is at 0.73
+		{ "wide",        0.110, 0.73 },   -- ring 8 px flank, 5 crown (measured)
+		{ "widest",      0.160, 0.73 },   -- ring 12 px flank, 8 crown (measured)
+		{ "faint",       0.110, 0.85 },   -- Divine's trough alpha at `wide`
+		{ "solid",       0.110, 0.55 },
+	},
+	-- Two hues and two undersides: the composition question is whether the
+	-- veil eats a pattern, so a patterned row and a bare row is the minimum
+	-- that can answer it, and one hue is one hue's worth of evidence.
+	SHELL_BASES = { "bare", "dots24" },
+	SHELL_HUES = { "blue", "green" },
+	-- 0 = the body's own hue. Divine uses 0.4 toward its gold accent, which is
+	-- the rig's identity and does not come with the shell -- see above.
+	SHELL_WHITE_MIX = 0.0,
+
 	-- Build only these variants, by name, in this order. Empty builds them all.
 	-- This is what makes an A/B repeatable instead of a scratch edit: name the
 	-- two you are comparing and everything else about the build is untouched.
@@ -761,6 +798,214 @@ end
 -- Galaxy, incidentally, had no rim term at all. Its EDGE_COLOR is the
 -- low-density end of the nebula ramp; the lighter edges being remembered are
 -- cloud, not silhouette.
+-- ===========================================================================
+
+-- ==================== THE GLOW SHELL: GEOMETRY, NOT TEXTURE ==============
+--
+-- EVERY RIM ABOVE FAILED BECAUSE IT WAS PAINTED, and the section before this
+-- one drew the wrong conclusion from measuring that carefully: not "an outline
+-- is unavailable" but "an outline IN THE TEXTURE is unavailable". Divine-
+-- Prototype's L4_Pulse has had one the whole time and it is not a texture at
+-- all -- it is a second copy of the body mesh, scaled up, Neon, transparent,
+-- worn around the body like a coat. THAT is the effect the texture attempts
+-- were reaching for, which is also why looking for it in the galaxy slime's
+-- texture found nothing: it was never in a texture there either.
+--
+-- WHY IT ESCAPES THE FORESHORTENING TRAP, which is the entire point. The baked
+-- rim had to spend SURFACE to buy screen width, and surface near the
+-- silhouette is edge-on, so 16% of the body's area bought 0.9 px. The shell
+-- spends no surface. Its ring is the gap between two silhouettes IN THE
+-- PROJECTION PLANE, and a gap in the projection plane is already in pixels:
+--
+--     ring = inflate x (centre-to-tangent-plane distance at that silhouette
+--                       point)                       -- no cosine anywhere
+--
+-- At 14 studs across seen from 40 the body is 70.4 px in radius, so the ring
+-- is 70.4 * inflate px on the flank and nothing else enters into it. 0.045
+-- buys 3.2 px where 16% of the surface bought 0.9.
+--
+-- THE RING IS NOT THE SAME WIDTH ALL THE WAY ROUND, because inflate is a SCALE
+-- and not an offset: scaling about the centre moves each silhouette point
+-- outward in proportion to how far out it already was, so the ring is thinnest
+-- where the body is closest to its own centre. This body is a dome, half-height
+-- 0.677 of its radius, so
+--     flank  ring = inflate * 7.00 studs
+--     crown  ring = inflate * 4.74 studs   -- 32% thinner
+-- and it is the CROWN that binds against any floor. Both are printed.
+--
+-- IT SCALES ABOUT THE PART'S BOUNDING BOX, which is only the body's centre if
+-- the mesh is centred in its own box. Measured on this mesh rather than
+-- assumed: 0 stray vertices of 7951, box x[-1.0003, 1.0003] y[-0.6775, 0.6775]
+-- z[-1.0007, 1.0007], centre (0, 0, 0) to four decimals. So here the two
+-- coincide and the ring is even. On a mesh where they did not, the shell would
+-- scale about the wrong point and the ring would be fatter on one side --
+-- check before reusing this on another body.
+--
+-- THE MASK METRICS ARE ALL SWITCHED OFF FOR IT. That is dev/README.md's rule,
+-- not a gap: white fraction, J, lit and 2A/P are defined on the TEXEL SET and
+-- ask where the paint went, and the shell puts no paint on the body at all.
+-- Every one of them still COMPUTES -- and every one would be describing the
+-- pattern underneath while appearing to describe the treatment. So the shell
+-- carries its own number, the ring in px, and the variant underneath keeps
+-- its own unchanged.
+--
+-- THE SHELL IS A COMPOSITOR, NOT A VARIANT, and that is why it is a separate
+-- axis rather than a row of new entries in VARIANTS. Anything in that table
+-- can wear one. It also means the shell is never alone in a frame: at
+-- transparency t it lays (1-t) of a Neon body-coloured veil over everything
+-- underneath, so the question "does it compose with a pattern" is really "how
+-- much contrast does the veil cost the pattern", which is what the matrix is
+-- for.
+--
+-- NOT CARRIED OVER FROM DIVINE, deliberately: the shell there is
+-- bodyColor:Lerp(AccentColor, 0.4), 40% toward the rig's gold. That gold is
+-- the Divine identity and it arrives with a halo, seven motes and a ground
+-- light. Standalone the shell takes the body's own hue; SHELL_WHITE_MIX is
+-- there to move it and defaults to 0.
+--
+-- AND THE TWO AUTHORED NUMBERS ARE FROM DIFFERENT MOMENTS. "Inflate 0.045,
+-- transparency 0.73" describes no single frame of the Divine shell:
+--     inflate      1 + 0.045 * (1 + 0.6u)   ->  1.8% at u = -1, 7.2% at u = +1
+--     transparency 0.8 - 0.12 * 0.6u        ->  0.87 at u = -1, 0.73 at u = +1
+-- 0.73 is the TOP of the breath, and at the top of the breath the shell is
+-- inflated 7.2%, not 4.5%. 0.045 is the MEAN size and 0.73 is the PEAK
+-- brightness, and the pair has never been on screen together. Both are in the
+-- matrix, because remembering a treatment by its mean size and its peak
+-- brightness is how it gets rebuilt wrong.
+--
+-- ------------------------- WHAT THE RENDER SAYS -------------------------
+--
+-- SHOT HEAD-ON AT 40 STUDS, viewport pinned to 563 px tall so px-per-stud is
+-- the 10.05 everything here is calibrated against. The ring is measured by
+-- differencing each shot against its own no-shell control on the same screen
+-- ray -- the camera orientation is identical between shots, so the skybox is
+-- pixel-identical and the difference IS the shell. Cloud drift measured 0.0.
+--
+-- THE RING IS ITS GEOMETRY, to within a pixel, which is the claim above
+-- actually tested:
+--     inflate    flank predicted / measured    crown predicted / measured
+--     0.045          3.4 / 4                       2.2 / 3
+--     0.072          5.4 / 6                       3.4 / 4
+--     0.110          8.2 / 8                       5.3 / 6
+--     0.160         12.0 / 12                      7.6 / 8
+-- Left and right flanks agree. The body silhouette itself measures 68 px at
+-- the flank and 48 px at the crown against 70.4 and 47.6 predicted. Nothing
+-- foreshortens and nothing collapses: the failure the whole outline section
+-- above is about does not happen to geometry.
+--
+-- AND BEING RESOLVED IS NOT BEING VISIBLE. THIS IS THE RESULT. What decides
+-- whether the ring reads is its contrast against the BACKDROP, and at alpha
+-- 0.73 that contrast is small and almost entirely CHROMA:
+--     ring against sky (154, 209, 225)      rgb dist    lum gap
+--     blue  shell, any inflate                 0.166      0.017
+--     green shell, any inflate                 0.250      0.106
+--     for scale: white marking on blue body    0.912      0.530
+-- The blue ring is 5.5x weaker in rgb distance and 31x weaker in luminance
+-- than the marking contrast this file already treats as the working amount.
+-- Measured in luminance alone the blue ring is NEGATIVE -- 3.6 of 255 DARKER
+-- than the sky -- which would have called it invisible. It is not invisible,
+-- it reads as blue. This is the cream-on-yellow case that put two numbers in
+-- contrast() instead of one, arriving from a new direction.
+--
+-- SO THE TREATMENT IS HUE-DEPENDENT IN A WAY NO PATTERN HERE IS. A shape is a
+-- shape on all six hues -- that is why grid mode exists. A glow is a colour
+-- against a backdrop, and this lab's backdrop is a bright blue sky, so blue is
+-- the hue it works WORST on: the one case where the treatment and the
+-- background are the same colour. Green gets 6x the luminance separation from
+-- identical geometry. Before this goes on a rarity ladder, settle what a slime
+-- is seen against, because if it is this sky the ladder does not read equally
+-- across the six.
+--
+-- WHAT IT COSTS THE PATTERN UNDERNEATH, which is the composition question:
+--     dots24, dot-against-body rgb distance   no shell -> alpha 0.73
+--     blue                                       0.988 -> 0.712   -28%
+--     green                                      1.069 -> 0.743   -30%
+-- Both still read as dotted. But on GREEN the loss is not evenly spread: the
+-- veil pins the green channel at 255 on the body AND on the dots (body
+-- 64,167,71 -> 66,255,77; dots 253,252,248 -> 204,255,207), so luminance
+-- separation collapses 0.446 -> 0.152, a 66% loss, while rgb distance drops
+-- 30%. A pattern carried in the channel the shell saturates loses more than
+-- the headline number says.
+--
+-- THE NOMINAL VEIL IS NOT THE VEIL. (1 - transparency) says 27% at alpha 0.73.
+-- Measured on the blue body: G 101 -> 129 and B 202 -> 255, against the +5 and
+-- +10 a 27% blend of the part's own colour would give. About 5x, because Neon
+-- is emissive and renders far brighter than its albedo, and then clips. The
+-- build still prints the nominal number, labelled, for dev/README.md's reason:
+-- deleting it invites the next person to recompute it and trust it.
+--
+-- DO NOT REPLACE THE MEASUREMENT WITH contrast(hue, backdrop). It was tried and
+-- it INVERTS THE ANSWER: against this sky it scores blue at lum gap 0.325 and
+-- green at 0.137, the opposite way round from the measured 0.017 and 0.106,
+-- because the shell does not render as its albedo. A computable-looking number
+-- that gets the ordering backwards is worse than no number, so there is not one.
+-- ===========================================================================
+--
+-- ========================= WHAT THE SHELL COSTS ==========================
+--
+-- THE PART COUNT HOLDS. THE BUDGET DOES NOT. One MeshPart per slime, 60 on
+-- screen worst case, and 0 new mesh assets -- the shell IS the body's own mesh,
+-- so it is a second reference to something already resident, where TierMarks
+-- needs 4 generated shells of its own. On parts alone this is cheaper than
+-- TierMarks.
+--
+-- BUT "ONE PART PER SLIME" WAS NEVER THE BUDGET, it was the shape of the thing
+-- that fit inside it. What TierMarks actually gated on is in its own header, in
+-- the sentence rejecting a finer grid: "the 60-slime worst case is already
+-- ~352k triangles". That is the number, and the shell fails it:
+--     body mesh, measured                15400 triangles (7951 vertices)
+--     TierMarks Legendary, per slime      5862 triangles
+--     60 slimes of marks                   352k  <- accepted
+--     60 shells                            924k  <- 2.6x the whole mark budget
+-- A shell is a whole extra body. Sixty slimes already carry 924k triangles of
+-- body, and the shell exactly doubles that, where TierMarks adds 38%.
+--
+-- THAT IS dev/README.md's PATTERN AGAIN, and it is worth naming because this
+-- time it arrived as a SENTENCE rather than as a metric: "one part per slime"
+-- stayed true while what it stood for changed by 2.6x. The part count was a
+-- proxy for the triangle count because every part it had ever described was a
+-- mark. Ask of a proxy what would have to change for it to stop tracking the
+-- thing -- here, a part whose mesh is the body's own.
+--
+-- MEASURED FRAME TIME CANNOT SETTLE IT, and saying so is the honest result.
+-- 60 bodies against 60 bodies + 60 shells, Studio edit mode, RenderStepped
+-- deltas over 3 s: 16.66 ms against 16.58 ms. Both are vsync. The instrument is
+-- pinned at the cap and cannot see the difference -- and at 240 and 600 slimes
+-- it is still pinned, because the camera pulls back as the grid grows and the
+-- LOD comes down with it, so that sweep does not measure what it appears to
+-- either. It BOUNDS the cost (60 shells did not break 60 fps here, on one
+-- machine, in edit mode) and it does not measure it.
+--     AND WATCH THE FOCUS. The first run of that test read 16.8 / 66.6 / 66.6 /
+--     16.6 and looked like a load curve with a threshold in it. 66.6 ms is 15
+--     fps exactly: Studio's BACKGROUND THROTTLE. The numbers were reporting
+--     which window had focus. Hold the window forward for the whole run, not
+--     just at the moment of capture.
+--
+-- RenderFidelity IS writable on a clone of an asset-backed MeshPart from plugin
+-- context. BUILD_TIERMARKS says it is never written, but that is about parts
+-- built by CreateMeshPartAsync, which is a different case. It buys nothing
+-- here: Precise, Automatic and Performance render the shell PIXEL-IDENTICALLY
+-- at 40 studs, 0 pixels differing across the frame. LOD is distance-driven and
+-- 40 studs is close, so the lever exists and does not pull at the distance this
+-- treatment is judged at.
+--
+-- NEON HAS NO PER-INSTANCE COST BEYOND THE PART. Tested rather than asserted: a
+-- 10x10 white Neon panel 4 studs in front of a grey wall moved the wall's
+-- rendered value by 0.00 at every patch sampled. It is a material, not a light;
+-- nothing joins the light list. The Divine rig is the evidence from the other
+-- direction -- it carries L5_GroundLight, a real PointLight, precisely because
+-- the Neon shell lights nothing.
+-- What the panel DID do is bloom, 27 px left and 45 px right of its own edge,
+-- and Lighting here carries a BloomEffect. That is a screen-space pass, costed
+-- per FRAME and not per Neon part. At the shell's own brightness the bloom is
+-- negligible: it sits inside the 1 px the ring measurements already carry.
+--
+-- WHAT IS LEFT PAYING is ordinary, and unmeasured here: 60 more draw calls, and
+-- 60 FULL-SILHOUETTE TRANSPARENT parts, which go in the sorted blend pass,
+-- cannot early-z against each other, and overdraw the whole body rather than a
+-- mark's worth of it. That last one is the difference TierMarks does not have:
+-- its shells are opaque and cover part of a slime, this one is translucent and
+-- covers all of it.
 -- ===========================================================================
 
 -- ===================================================================
@@ -1366,6 +1611,52 @@ local function run()
 	log("[Lab] body %.2f studs across, %.2f px/stud at %d studs, white target %.0f%%",
 		2 * bodyRadiusStuds, pxPerStud, P.VIEW_DISTANCE, P.WHITE_TARGET * 100)
 
+	-- ===================================================================
+	-- THE RING, MEASURED ON THE MESH'S OWN SILHOUETTE.
+	--
+	-- Scaling by 1+i about the centre carries a silhouette point outward in
+	-- proportion to how far out it already was, so the ring's width at that
+	-- point is i times the distance from the centre to the TANGENT PLANE
+	-- there -- not to the point. The two differ by the cosine between the
+	-- radius and the normal, which is 1 at the flank and at the crown and
+	-- less than 1 in between, so using the point would overstate the waist.
+	--
+	-- The outline is the measured profile: (r, y) in body radii, walked as a
+	-- polyline, with the tangent taken from the neighbouring samples. This is
+	-- the same PROFILE the dots are placed on, so if the mesh changes, both
+	-- move together.
+	--
+	-- HEAD-ON IS THE ONLY VIEW THIS IS TRUE FOR, and unlike the baked rim that
+	-- is not a limitation: the shell is a solid of revolution about the same
+	-- axis as the body, so every horizontal view sees the identical outline.
+	-- The rim above was head-on-only because its BAND was baked in one
+	-- direction. Turning the slime turns nothing here.
+	-- ===================================================================
+	local function ringSpread(inflate: number): (number, number, number)
+		local pr = PROFILE :: { { number } }
+		local pts = {}
+		for _, e in ipairs(pr) do
+			table.insert(pts, { e[2], PROFILE_Y0 + e[1] * (PROFILE_Y1 - PROFILE_Y0) })
+		end
+		local lo, hi, sum, n = math.huge, -math.huge, 0, 0
+		for i = 1, #pts do
+			local a = pts[math.max(i - 1, 1)]
+			local b = pts[math.min(i + 1, #pts)]
+			local tx, ty = b[1] - a[1], b[2] - a[2]
+			local tl = math.sqrt(tx * tx + ty * ty)
+			if tl > 1e-9 then
+				-- outward normal of the outline, then the support distance
+				local nx, ny = ty / tl, -tx / tl
+				if nx < 0 then nx, ny = -nx, -ny end
+				local h = math.abs(pts[i][1] * nx + pts[i][2] * ny)
+				local w = inflate * h * bodyRadiusStuds * pxPerStud
+				lo = math.min(lo, w); hi = math.max(hi, w)
+				sum += w; n += 1
+			end
+		end
+		return lo, sum / math.max(n, 1), hi
+	end
+
 	-- sample subset, with the face-frame components precomputed once
 	local sample = {}
 	do
@@ -1500,7 +1791,32 @@ local function run()
 	-- One flat job list, so grid mode and row mode share the whole builder
 	-- below instead of forking it.
 	local jobs = {}
-	if #P.LADDER > 0 then
+	if P.SHELL_MATRIX then
+		-- Shell settings across, (hue x underside) back. The shell is an axis
+		-- rather than a variant, so it multiplies whatever is in SHELL_BASES
+		-- instead of appearing in VARIANTS -- see THE GLOW SHELL above.
+		local hueByName = {}
+		for _, h in ipairs(P.HUES) do hueByName[h[1]] = h[2] end
+		local row = 0
+		for _, hueName in ipairs(P.SHELL_HUES) do
+			local hue = hueByName[hueName]
+			assert(hue, string.format(
+				"[Lab] SHELL_HUES names %q, which is not one of the six authored hues", hueName))
+			for _, baseName in ipairs(P.SHELL_BASES) do
+				local v = byName[baseName]
+				assert(v, string.format(
+					"[Lab] SHELL_BASES names %q, which is not a variant here", baseName))
+				for col, sh in ipairs(P.SHELL_SET) do
+					table.insert(jobs, {
+						v = v, tier = "", hueName = hueName, hue = hue,
+						shell = { name = sh[1], inflate = sh[2], transparency = sh[3] },
+						x = (col - 1) * P.SPACING, z = row * P.ROW_SPACING,
+					})
+				end
+				row += 1
+			end
+		end
+	elseif #P.LADDER > 0 then
 		for row, rung in ipairs(P.LADDER) do
 			local tier, vname = rung[1], rung[2]
 			local v = byName[vname]
@@ -1544,6 +1860,14 @@ local function run()
 	-- row rather than six independent searches landing 0.3% apart.
 	local shapeCache = {}
 
+	-- THE TEXTURE IS THE VARIANT AND THE HUE AND NOTHING ELSE IN THE JOB, so
+	-- shell matrix mode -- which hangs seven jobs off each painted body --
+	-- would otherwise evaluate the same 512x512 seven times. Cached on
+	-- (variant, hue) for the second reason shapeCache is cached on the
+	-- variant as well as the first: it saves the work, AND it makes a row the
+	-- identical texture rather than seven that ought to come out identical.
+	local paintCache = {}
+
 	local worstPx, worstWhat = math.huge, "?"
 	for vi, job in ipairs(jobs) do
 		Y.tick()
@@ -1584,96 +1908,111 @@ local function run()
 
 		-- paint, and measure the shape while painting: white texel count and the
 		-- count of white texels with a non-white neighbour give area and perimeter
-		local whiteN, edgeN = 0, 0
-		local coreN, coreEdgeN = 0, 0
-		local visN, visEdgeN = 0, 0
-		local rowVis = table.create(W)
-		local VT2 = P.VIS_THRESHOLD * P.VIS_THRESHOLD
-		local rowWhite = table.create(W)
-		local rowCore = table.create(W)
-		local cr, cg, cb = 0, 0, 0
-		if v.core then cr, cg, cb = v.core.color.R, v.core.color.G, v.core.color.B end
-		for y = 0, W-1 do
-			if y % P.PAINT_TICK_ROWS == 0 then Y.tick() end
-			for x = 0, W-1 do
-				local idx = y*W + x
-				local off = idx*4
-				if buffer.readu8(MASK, idx) ~= 0 then
-					local o = idx*12
-					local qx = buffer.readf32(POS,o)
-					local qy = buffer.readf32(POS,o+4)
-					local qz = buffer.readf32(POS,o+8)
-					local fq = qx*FWD.X + qz*FWD.Z
-					local sq = qx*SIDE.X + qz*SIDE.Z
-					local a = whiteAt(v, qx, qy, qz, fq, sq, k)
-					if a > 0.5 then whiteN += 1 end
-					rowWhite[x + 1] = a > 0.5
-					if x > 0 and rowWhite[x] ~= rowWhite[x + 1] then edgeN += 1 end
-					local pr, pg, pb
-					if v.stops then
-						-- inside the mask the colour is the ramp; `a` still
-						-- antialiases the mask edge against the body
-						local h = v.heat(qx, qy, qz, fq, sq, qy, k)
-						local hr, hg, hb = rampAt(stopsV, h)
-						pr = br + (hr - br) * a
-						pg = bg + (hg - bg) * a
-						pb = bb + (hb - bb) * a
+		local pkey = v.name .. "|" .. job.hueName
+		local painted = paintCache[pkey]
+		if not painted then
+			local whiteN, edgeN = 0, 0
+			local coreN, coreEdgeN = 0, 0
+			local visN, visEdgeN = 0, 0
+			local rowVis = table.create(W)
+			local VT2 = P.VIS_THRESHOLD * P.VIS_THRESHOLD
+			local rowWhite = table.create(W)
+			local rowCore = table.create(W)
+			local cr, cg, cb = 0, 0, 0
+			if v.core then cr, cg, cb = v.core.color.R, v.core.color.G, v.core.color.B end
+			for y = 0, W-1 do
+				if y % P.PAINT_TICK_ROWS == 0 then Y.tick() end
+				for x = 0, W-1 do
+					local idx = y*W + x
+					local off = idx*4
+					if buffer.readu8(MASK, idx) ~= 0 then
+						local o = idx*12
+						local qx = buffer.readf32(POS,o)
+						local qy = buffer.readf32(POS,o+4)
+						local qz = buffer.readf32(POS,o+8)
+						local fq = qx*FWD.X + qz*FWD.Z
+						local sq = qx*SIDE.X + qz*SIDE.Z
+						local a = whiteAt(v, qx, qy, qz, fq, sq, k)
+						if a > 0.5 then whiteN += 1 end
+						rowWhite[x + 1] = a > 0.5
+						if x > 0 and rowWhite[x] ~= rowWhite[x + 1] then edgeN += 1 end
+						local pr, pg, pb
+						if v.stops then
+							-- inside the mask the colour is the ramp; `a` still
+							-- antialiases the mask edge against the body
+							local h = v.heat(qx, qy, qz, fq, sq, qy, k)
+							local hr, hg, hb = rampAt(stopsV, h)
+							pr = br + (hr - br) * a
+							pg = bg + (hg - bg) * a
+							pb = bb + (hb - bb) * a
+						else
+							pr = br + (ar-br)*a
+							pg = bg + (ag-bg)*a
+							pb = bb + (ab-bb)*a
+						end
+						if coreK and not v.stops then
+							local c = whiteAt(v, qx, qy, qz, fq, sq, coreK)
+							pr = pr + (cr-pr)*c
+							pg = pg + (cg-pg)*c
+							pb = pb + (cb-pb)*c
+							if c > 0.5 then coreN += 1 end
+							rowCore[x + 1] = c > 0.5
+							if x > 0 and rowCore[x] ~= rowCore[x + 1] then coreEdgeN += 1 end
+						end
+						local dr, dg, db = pr - br, pg - bg, pb - bb
+						local seen = (dr*dr + dg*dg + db*db) > VT2
+						if seen then visN += 1 end
+						rowVis[x + 1] = seen
+						if x > 0 and rowVis[x] ~= rowVis[x + 1] then visEdgeN += 1 end
+						buffer.writeu8(buf, off, math.floor(math.clamp(pr, 0, 1)*255 + 0.5))
+						buffer.writeu8(buf, off+1, math.floor(math.clamp(pg, 0, 1)*255 + 0.5))
+						buffer.writeu8(buf, off+2, math.floor(math.clamp(pb, 0, 1)*255 + 0.5))
+						buffer.writeu8(buf, off+3, 255)
 					else
-						pr = br + (ar-br)*a
-						pg = bg + (ag-bg)*a
-						pb = bb + (ab-bb)*a
+						rowWhite[x + 1] = false
+						rowCore[x + 1] = false
+						rowVis[x + 1] = false
+						buffer.writeu8(buf, off, 0); buffer.writeu8(buf, off+1, 0)
+						buffer.writeu8(buf, off+2, 0); buffer.writeu8(buf, off+3, 255)
 					end
-					if coreK and not v.stops then
-						local c = whiteAt(v, qx, qy, qz, fq, sq, coreK)
-						pr = pr + (cr-pr)*c
-						pg = pg + (cg-pg)*c
-						pb = pb + (cb-pb)*c
-						if c > 0.5 then coreN += 1 end
-						rowCore[x + 1] = c > 0.5
-						if x > 0 and rowCore[x] ~= rowCore[x + 1] then coreEdgeN += 1 end
-					end
-					local dr, dg, db = pr - br, pg - bg, pb - bb
-					local seen = (dr*dr + dg*dg + db*db) > VT2
-					if seen then visN += 1 end
-					rowVis[x + 1] = seen
-					if x > 0 and rowVis[x] ~= rowVis[x + 1] then visEdgeN += 1 end
-					buffer.writeu8(buf, off, math.floor(math.clamp(pr, 0, 1)*255 + 0.5))
-					buffer.writeu8(buf, off+1, math.floor(math.clamp(pg, 0, 1)*255 + 0.5))
-					buffer.writeu8(buf, off+2, math.floor(math.clamp(pb, 0, 1)*255 + 0.5))
-					buffer.writeu8(buf, off+3, 255)
-				else
-					rowWhite[x + 1] = false
-					rowCore[x + 1] = false
-					rowVis[x + 1] = false
-					buffer.writeu8(buf, off, 0); buffer.writeu8(buf, off+1, 0)
-					buffer.writeu8(buf, off+2, 0); buffer.writeu8(buf, off+3, 255)
 				end
 			end
+
+			-- characteristic width 2A/P, which is exactly the stripe width for a stripe
+			local widthStuds = (edgeN > 0)
+				and (2 * whiteN / edgeN) * texelStep * bodyRadiusStuds or 0
+			local widthPx = widthStuds * pxPerStud
+			-- THE VISIBLE SIZE. For a mask this agrees with widthPx by construction,
+			-- because everything inside a mask is the accent. For a RAMP it does not,
+			-- and it is the only one of the two that means anything -- see the header.
+			local visPx = (visEdgeN > 0)
+				and (2 * visN / visEdgeN) * texelStep * bodyRadiusStuds * pxPerStud or 0
+
+			-- THE CORE IS THE THING AT RISK, not the marking around it: it is
+			-- narrower by construction, so it is measured on its own and checked
+			-- against the same 8 px floor below rather than assumed safe.
+			local corePx = 0
+			if coreK and coreEdgeN > 0 then
+				corePx = (2 * coreN / coreEdgeN) * texelStep * bodyRadiusStuds * pxPerStud
+			end
+			local keep = buffer.create(W*W*4)
+			buffer.copy(keep, 0, buf, 0, W*W*4)
+			painted = { buf = keep, widthPx = widthPx, visPx = visPx, corePx = corePx }
+			paintCache[pkey] = painted
+		else
+			buffer.copy(buf, 0, painted.buf, 0, W*W*4)
 		end
+		local widthPx, visPx, corePx = painted.widthPx, painted.visPx, painted.corePx
 
-		-- characteristic width 2A/P, which is exactly the stripe width for a stripe
-		local widthStuds = (edgeN > 0)
-			and (2 * whiteN / edgeN) * texelStep * bodyRadiusStuds or 0
-		local widthPx = widthStuds * pxPerStud
-		-- THE VISIBLE SIZE. For a mask this agrees with widthPx by construction,
-		-- because everything inside a mask is the accent. For a RAMP it does not,
-		-- and it is the only one of the two that means anything -- see the header.
-		local visPx = (visEdgeN > 0)
-			and (2 * visN / visEdgeN) * texelStep * bodyRadiusStuds * pxPerStud or 0
-
-		-- a rung with no marking has no narrowest feature; it would read as 0 px
+		-- a rung with no marking has no narrowest feature; it would read as 0 px.
+		-- Tracked out here rather than inside the cache: a cached texture still
+		-- has to be checked against the floor every time it is used.
 		local floorPx = v.stops and visPx or widthPx
 		if not v.solid and floorPx < worstPx then
 			worstPx, worstWhat = floorPx, v.name .. (v.stops and " visible" or "")
 		end
-
-		-- THE CORE IS THE THING AT RISK, not the marking around it: it is
-		-- narrower by construction, so it is measured on its own and tracked
-		-- against the same 8 px floor rather than assumed safe.
-		local corePx = 0
-		if coreK and coreEdgeN > 0 then
-			corePx = (2 * coreN / coreEdgeN) * texelStep * bodyRadiusStuds * pxPerStud
-			if corePx < worstPx then worstPx, worstWhat = corePx, v.name .. " core" end
+		if corePx > 0 and corePx < worstPx then
+			worstPx, worstWhat = corePx, v.name .. " core"
 		end
 
 		local img = AssetService:CreateEditableImage({ Size = Vector2.new(W, W) })
@@ -1713,6 +2052,42 @@ local function run()
 			part.CFrame = bodyCF * spec.rel
 			part.Parent = slime
 		end
+
+		-- ---- the glow shell: the body's own mesh, worn one size up ----
+		-- Exactly DivinePrototype's L4_Pulse construction -- same mesh, same
+		-- CFrame, Size * (1 + inflate), Neon, transparent -- and nothing else
+		-- from that rig. No halo, no motes, no ground light, and none of the
+		-- pose module: this is the static shape, not the breath.
+		-- IT SHARES THE BODY'S MESH ASSET, which is the whole cost argument:
+		-- one more part per slime and not one more mesh.
+		local ringLo, ringMid, ringHi = 0, 0, 0
+		if job.shell and job.shell.inflate > 0 then
+			local sh = job.shell
+			local mix = P.SHELL_WHITE_MIX
+			local glow = source:Clone()
+			glow.Name = "GlowShell"
+			glow.Size = source.Size * partScale * (1 + sh.inflate)
+			glow.Material = Enum.Material.Neon
+			glow.Transparency = sh.transparency
+			glow.Color = Color3.new(
+				job.hue.R + (1 - job.hue.R) * mix,
+				job.hue.G + (1 - job.hue.G) * mix,
+				job.hue.B + (1 - job.hue.B) * mix)
+			glow.Anchored = true
+			glow.CanCollide = false; glow.CanQuery = false; glow.CanTouch = false
+			glow.CastShadow = false
+			-- the body's texture would otherwise come along on the clone and be
+			-- emitted at full brightness by Neon
+			pcall(function() glow.TextureID = "" end)
+			glow.TextureContent = Content.none
+			glow.CFrame = body.CFrame
+			glow.Parent = slime
+			ringLo, ringMid, ringHi = ringSpread(sh.inflate)
+			slime:SetAttribute("ShellInflate", sh.inflate)
+			slime:SetAttribute("ShellTransparency", sh.transparency)
+			slime:SetAttribute("RingCrownPx", ringLo)
+			slime:SetAttribute("RingFlankPx", ringHi)
+		end
 		Y.mark()
 
 		slime:SetAttribute("BodyCentre", Vector3.new(at.X, at.Y + bodyHeightStuds/2, at.Z))
@@ -1725,7 +2100,28 @@ local function run()
 		slime:SetAttribute("ShadowAlignment", shadow)
 		slime:SetAttribute("LitRatio", lit)
 		local coreNote = corePx > 0 and string.format(" | core %5.1f px", corePx) or ""
-		if v.stops then
+		if job.shell then
+			-- THE MASK NUMBERS BELONG TO THE UNDERSIDE, NOT THE SHELL, so they are
+			-- printed as the underside's and the shell gets its own. Nothing here
+			-- is a property of the treatment being compared -- dev/README.md's
+			-- rule, applied before the numbers had a chance to mislead anyone.
+			if job.shell.inflate <= 0 then
+				log("[Lab] %2d %-6s %-7s %-8s no shell                | over %s at %.1f%% white",
+					vi, job.shell.name, job.hueName, v.name, v.name, measured * 100)
+			else
+				-- NO FLAG AGAINST MIN_FEATURE_PX. That floor is the TEXTURE's, and
+				-- the ring is not in the texture: the two failure modes are not the
+				-- same one. A texture feature under 8 px stops resolving; a ring at
+				-- 8 px resolves perfectly and can still be invisible, because what
+				-- decides that is its contrast against the BACKDROP, which this
+				-- build cannot see. Measured numbers are in the header.
+				log("[Lab] %2d %-6s %-7s %-8s inflate %.3f alpha %.2f | ring %4.1f crown"
+					.. " %4.1f flank px | nominal veil %2.0f%%, renders ~5x that",
+					vi, job.shell.name, job.hueName, v.name,
+					job.shell.inflate, job.shell.transparency, ringLo, ringHi,
+					(1 - job.shell.transparency) * 100)
+			end
+		elseif v.stops then
 			-- J and lit are switched off here, not hidden: both are defined on
 			-- white-versus-not and both would invert their meaning on a ramp.
 			log("[Lab] %2d %-17s covers %.1f%% of the body | VISIBLE feature %5.1f px"
@@ -1748,6 +2144,17 @@ local function run()
 	end
 	log("[Lab] narrowest feature: %.1f px (%s), floor is %d px",
 		worstPx, worstWhat, P.MIN_FEATURE_PX)
+	if P.SHELL_MATRIX then
+		-- The floor above is the TEXTURE's floor and the shell is not in the
+		-- texture, so the shell's own is stated separately rather than folded in.
+		local cLo, _, cHi = ringSpread(1.0)
+		log("[Lab] shell ring per unit inflate: %.1f px at the crown, %.1f px at the flank."
+			.. " %d px -- the TEXTURE floor, quoted only as a familiar length -- would"
+			.. " need inflate %.3f at the crown, %.3f at the flank",
+			cLo, cHi, P.MIN_FEATURE_PX, P.MIN_FEATURE_PX / cLo, P.MIN_FEATURE_PX / cHi)
+		log("[Lab] shell cost: 1 part and 0 new meshes per slime, but the part IS the"
+			.. " body mesh -- %d triangles each, against TierMarks' 5862 worst case", 15400)
+	end
 	log("[Lab] watchdog worst hold %.1f ms | built %d variants in %.2f s",
 		Y.worstMs(), #jobs, os.clock() - t0)
 	log("[Lab] undo with workspace.%s:Destroy()", P.ROOT_NAME)
