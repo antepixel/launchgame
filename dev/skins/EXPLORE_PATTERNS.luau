@@ -281,6 +281,15 @@ local P = {
 	-- the rig's identity and does not come with the shell -- see above.
 	SHELL_WHITE_MIX = 0.0,
 
+	-- WHAT THE SHELL IS MADE OF, when a SHELL_SET row does not say. {nth, nt}
+	-- generates one shared surface-of-revolution mesh at that resolution; nil
+	-- clones the body mesh, which is what DivinePrototype does and what costs
+	-- 15400 triangles a slime. 24 x 12 is the measured floor -- pixel-identical
+	-- ring, and the coarsest that does not change width as the body turns. See
+	-- WHAT THE SHELL ACTUALLY NEEDS TO BE MADE OF. A row can override with a
+	-- 4th and 5th element, and {0, 0} on a row forces the body clone.
+	SHELL_MESH = { 24, 12 },
+
 	-- Build only these variants, by name, in this order. Empty builds them all.
 	-- This is what makes an A/B repeatable instead of a scratch edit: name the
 	-- two you are comparing and everything else about the build is untouched.
@@ -910,11 +919,16 @@ end
 -- SO THE TREATMENT IS HUE-DEPENDENT IN A WAY NO PATTERN HERE IS. A shape is a
 -- shape on all six hues -- that is why grid mode exists. A glow is a colour
 -- against a backdrop, and this lab's backdrop is a bright blue sky, so blue is
--- the hue it works WORST on: the one case where the treatment and the
+-- the hue it works WORST on HERE: the one case where the treatment and the
 -- background are the same colour. Green gets 6x the luminance separation from
--- identical geometry. Before this goes on a rarity ladder, settle what a slime
--- is seen against, because if it is this sky the ladder does not read equally
--- across the six.
+-- identical geometry.
+--
+-- THAT IS THE LAB'S BACKDROP AND NOT THE GAME'S, and the difference turned out
+-- to matter more than the number does -- see WHERE A SLIME IS ACTUALLY SEEN
+-- below, which settles it against the real framings. Short version: against
+-- ground the same blue ring measures 0.487 rather than 0.206, and the hue that
+-- comes last swaps to green. Do not carry the sky figures forward as the
+-- verdict; they are one backdrop of several, and not the common one.
 --
 -- WHAT IT COSTS THE PATTERN UNDERNEATH, which is the composition question:
 --     dots24, dot-against-body rgb distance   no shell -> alpha 0.73
@@ -959,6 +973,13 @@ end
 --     60 shells                            924k  <- 2.6x the whole mark budget
 -- A shell is a whole extra body. Sixty slimes already carry 924k triangles of
 -- body, and the shell exactly doubles that, where TierMarks adds 38%.
+--
+-- THAT IS THE COST OF CLONING THE BODY, NOT THE COST OF THE EFFECT, and the
+-- section WHAT THE SHELL ACTUALLY NEEDS TO BE MADE OF takes it apart: a
+-- generated 24 x 12 shell measures pixel-identical at 624 triangles and one
+-- shared mesh, which is 10.6% of the accepted budget rather than 262% of it.
+-- The paragraphs below still stand as written -- they are what the DIVINE
+-- construction costs, and it is the construction the brief asked for.
 --
 -- THAT IS dev/README.md's PATTERN AGAIN, and it is worth naming because this
 -- time it arrived as a SENTENCE rather than as a metric: "one part per slime"
@@ -1006,6 +1027,152 @@ end
 -- mark's worth of it. That last one is the difference TierMarks does not have:
 -- its shells are opaque and cover part of a slime, this one is translucent and
 -- covers all of it.
+-- ===========================================================================
+--
+-- ================== WHERE A SLIME IS ACTUALLY SEEN ======================
+--
+-- THE SHELL IS A COLOUR AGAINST A BACKGROUND, so this is not decoration on the
+-- measurement, it IS the measurement. Read out of the game's own config rather
+-- than assumed, and then rendered at each of those framings.
+--
+-- SLIMES DO NOT FLY. The player does. LaunchFormulas.chaseCameraCFrame takes a
+-- characterPosition and LaunchConfig has RIDER_SEAT_HEIGHT_OFFSET; the slime is
+-- never the projectile. It appears in exactly two places, and they are
+-- different shots at different sizes:
+--
+--   BASE     PlayerProfile.SLOT_SLIME_WIDTH_STUDS = 7, on an 8 x 0.6 x 8
+--            Concrete pad (BaseConfig 182,182,188), on the grass Baseplate
+--            (default.project.json: Grass, 104,198,78).
+--   REVEAL   SlimeConfig.SLIME_REVEAL_WIDTH_STUDS = 16, standing in the air
+--            where the box was, framed by the box camera at
+--            BOX_CAMERA_DISTANCE_STUDS = 34, BOX_CAMERA_PITCH_DEGREES = 0.
+--
+-- BOTH SHOTS PUT THE HORIZON ACROSS THE SLIME, which is the thing that decides
+-- everything below. A level camera puts the horizon at exactly frame centre --
+-- LaunchConfig says so itself, at BOX_CAMERA_PITCH_DEGREES -- so:
+--     base    eye height 5.0, slime top at y 6.04: the top 1.04 studs of 4.74,
+--             21% of the body, stands against SKY and the rest against GROUND.
+--     reveal  pitch 0, camera at the slime's own centre height: the horizon
+--             cuts the slime exactly in HALF.
+-- There is no framing in this game where the ring is against one backdrop.
+--
+-- AND THE LAB'S OWN FRAMING IS THE CONSERVATIVE ONE, which is worth knowing
+-- before reading any px figure here as a limit. Ring at inflate 0.110,
+-- predicted against measured:
+--     lab      14 studs at 40    8.2 / 8 px flank    5.3 / 6 px crown
+--     base      7 studs at 16   10.3 / 10           6.6 / 6
+--     reveal   16 studs at 34   11.1 / 11           7.1 / 8
+-- The formula holds at all three scales, and both real shots are BIGGER on
+-- screen than the lab's. A ring judged here is a ring judged pessimistically.
+--
+-- THE BLUE RING SURVIVES THE GROUND, AND COMFORTABLY. Measured on the base
+-- shot, ring against the backdrop it actually covers:
+--     hue      against grass          against sky
+--              rgb     lum            rgb     lum
+--     yellow   0.625   0.395          0.517   0.257
+--     purple   0.584   0.080          0.355   0.009
+--     orange   0.503   0.221          0.472   0.146
+--     blue     0.487   0.094          0.206   0.008
+--     red      0.475   0.052          0.475   0.037
+--     green    0.429   0.308          0.293   0.158
+-- Blue against grass is 0.487 -- 2.4x what it manages against sky, and within
+-- 1.3x of the best hue. The six spread 1.45x against grass against 2.5x
+-- against sky, so THE LADDER READS FAR MORE EVENLY AGAINST GROUND. The worst
+-- hue also swaps: blue is last against sky and green is last against grass,
+-- each losing to a backdrop of its own colour. No hue is weak in both places.
+--
+-- THE OTHER TWO GROUNDS a base slime can stand against:
+--     plot mat  (158, 94, 70)     blue 0.499   green 0.467
+--     path      (214,210,198)     blue 0.278   green 0.254
+-- The pale path is the weakest ground -- a near-white backdrop is close to
+-- what a 27% Neon veil renders as -- but even there blue beats its own sky
+-- number.
+--
+-- THE REVEAL IS THE HARD CASE, AND NOT BECAUSE OF THE SKY HALF. Under it is
+-- the runway, and RunwayBuilder paints that Color3.fromHSV(i % 5 / 5, 1, 1) --
+-- 40-stud bands, 360 studs wide, FULLY SATURATED, cycling every five bands.
+-- Measured on the lower half:
+--     blue  shell over a (168,164,243) band    ring 0 px, rgb 0.000
+--     green shell over a (232, 21,210) band    ring 12 px, rgb 0.569
+-- The blue ring does not weaken over a blue-violet band, it DISAPPEARS. And
+-- since the road cycles every 200 studs, this is not a place the shell can be
+-- tuned for: whatever colour it is, there are bands it vanishes over and bands
+-- it blazes against, and which one a given reveal lands on is the flight's
+-- outcome. A backdrop-independent treatment would need a colour the road never
+-- uses, and at saturation 1 the road uses all of them.
+-- ===========================================================================
+--
+-- ============== WHAT THE SHELL ACTUALLY NEEDS TO BE MADE OF ==============
+--
+-- 924k TRIANGLES WAS NEVER THE PRICE OF THE EFFECT, it was the price of
+-- reaching for the body mesh because it was lying there. A shell is not a
+-- body: nothing on it is ever shaded, because Neon is unlit and every pixel of
+-- it is the same colour whatever the normal does. Faceting -- the thing that
+-- gives a low-poly body away -- has nothing to show up in. Only the SILHOUETTE
+-- can carry a triangle count.
+--
+-- MEASURED BY SWAPPING THE MESH UNDER A FIXED CAMERA, one subject, everything
+-- else in the place hidden, so the only thing that changes between frames is
+-- the shell. Generated meshes are surfaces of revolution over the same
+-- measured PROFILE the dots are placed on, single outward winding, two pole
+-- fans:
+--     mesh          tris    ring px R/L/crown   differs from the clone
+--     body clone   15400        8 /  9 / 11     --
+--     96 x 48       9408        8 /  9 / 11       159 px, peak 19
+--     48 x 24       2400        8 /  9 / 11       205 px, peak 19
+--     32 x 16       1088        8 /  9 / 11       354 px, peak 19
+--     24 x 12        624        8 /  9 / 11       456 px, peak 23
+--     16 x  8        288        8 /  9 / 11       665 px, peak 25
+--     12 x  6        168        8 /  8 / 11       940 px, peak 26
+--      8 x  4         80        5 /  9 / 11      4791 px, peak 70
+-- The ring is unchanged from 15400 triangles down to 168. And every difference
+-- that does exist sits at radius 55-83 px from centre -- the silhouette, with
+-- the body edge at 68 and the ring ending at 78. The interior is identical,
+-- which is the unlit-material argument showing up as a measurement.
+--
+-- BUT THE FLOOR IS SET BY YAW, NOT BY THE HEAD-ON SHOT. An NTH-gon's widest
+-- point depends on whether a vertex happens to land on the view direction, so
+-- a coarse shell's ring WIDTH is a function of how the body is turned:
+--     12 x 6 (168 tris)   yaw 0.0  8/8    7.5  7/8    15.0  6/9
+--     24 x 12 (624 tris)  yaw 0.0  8/9    3.8  8/9     7.5  8/9
+-- 12 x 6 breathes 2 px of 8 -- 25% -- across half a segment, and asymmetrically,
+-- so one flank thins while the other fattens. 24 x 12 does not move. Read
+-- head-on only, 168 triangles looks like the answer; it is a yaw away from
+-- being wrong, and the base camera is the player's to turn.
+--
+-- SO THE FLOOR IS 24 x 12 = 624 TRIANGLES, and it is 4.1% of the body mesh:
+--     60 clones        924,000 tris   2.6x the accepted mark budget
+--     60 generated      37,440 tris   10.6% of it
+-- against TierMarks' accepted 352k. The cost objection goes away entirely --
+-- this is now the cheapest thing on the slime, well under a Legendary mark's
+-- 5862, and the shell stops being a whole second body.
+--
+-- AND IT IS ONE MESH FOR EVERY SLIME ON SCREEN. Generated once, cached on
+-- (nth, nt), every part a Clone of that one MeshPart -- exactly how TierMarks
+-- gets "60 parts and 4 shared meshes", and here it is 60 parts and ONE. The
+-- shell does not vary per slime: inflate rides on Size, colour on Color, and
+-- neither touches geometry. It is the clone path that cannot share, since it
+-- borrows an asset sized for a body.
+--
+-- ONE COST THE GENERATOR APPEARED TO HAVE AND DOES NOT. It first measured a
+-- 400 ms worst watchdog hold against the clone path's 36 ms, which reads as
+-- "building an EditableMesh stalls the main thread". It does not. The shell is
+-- built right after the three face parts, each a CreateMeshPartAsync, each of
+-- which YIELDS -- and os.clock() cannot see a yield, so the tick inside the
+-- generator's own vertex loop was charging three waits on the face to the
+-- generator. Moving Y.mark() to before the shell instead of after it puts the
+-- number at 41.7 ms. Third time this trap has been paid for in this project,
+-- first time from the inside of a new loop: adding a tick to a span is a claim
+-- that nothing in it yields.
+--
+-- WHAT THE GENERATED SHELL IS NOT is the body's shape. The profile takes the
+-- MAX radius per height band, so this is a surface of revolution around the
+-- body rather than the body's own outline -- it contains the body everywhere,
+-- which is what a shell has to do, but it stands further off wherever the body
+-- is narrower than its widest azimuth. On this mesh that is small: 96 x 48
+-- already differs from the clone in 159 px, all of it at the silhouette. On a
+-- less axisymmetric body it would not be, and the check is the same swap under
+-- a fixed camera.
 -- ===========================================================================
 
 -- ===================================================================
@@ -1525,6 +1692,10 @@ local function buildUVMap(meshId: string, W: number, Y)
 		HEIGHT = mxy - mny, FULL_W = amxx - amnx,
 		PROFILE = profile, PROFILE_BANDS = PB, PROFILE_FILLED = filled,
 		QY0 = (mny - CY) / RAD, QY1 = (mxy - CY) / RAD,
+		-- the mesh's own bounding box, in mesh units. A GENERATED shell has to
+		-- pin its box to this one or Size stops meaning what it means on the
+		-- body -- BUILD_TIERMARKS' marker-triangle trick, and it needs the box.
+		BOX = { mnx = mnx, mxx = mxx, mny = mny, mxy = mxy, mnz = mnz, mxz = mxz },
 	}
 end
 
@@ -1655,6 +1826,113 @@ local function run()
 			end
 		end
 		return lo, sum / math.max(n, 1), hi
+	end
+
+	-- ===================================================================
+	-- THE GENERATED SHELL, AND WHY IT IS ALLOWED TO BE CRUDE.
+	--
+	-- A shell cloned from the body carries the body's 15400 triangles, which
+	-- is the whole cost problem -- see WHAT THE SHELL COSTS. But a shell is
+	-- not a body: NOTHING IS EVER SHADED ON IT. Neon is unlit, so its every
+	-- pixel is the same colour whatever the surface normal does, and faceting
+	-- -- the thing that gives a low-poly body away -- has nothing to show up
+	-- in. The only place a triangle count can be seen is the SILHOUETTE.
+	--
+	-- WHICH GIVES A COMPUTABLE FLOOR, and it is not a large one. An NTH-gon
+	-- inscribed in the ring at the widest point falls short of the true circle
+	-- by r*(1 - cos(pi/NTH)), so the shell's outline pulls IN by that much:
+	--     NTH = 48   0.2% of r   0.15 px      NTH = 16   1.9% of r   1.35 px
+	--     NTH = 32   0.5% of r   0.34 px      NTH = 12   3.4% of r   2.40 px
+	--     NTH = 24   0.9% of r   0.60 px      NTH =  8   7.6% of r   5.36 px
+	-- at this lab's 70.4 px body radius. Against a ring that is 8 px at
+	-- inflate 0.110, NTH = 12 quietly eats 30% of it and NTH = 8 eats two
+	-- thirds. That is the failure mode to watch: not a jagged edge, a THINNER
+	-- RING. It is measured against the cloned shell rather than trusted.
+	--
+	-- ONE MESH FOR EVERY SLIME ON SCREEN. It is generated once, cached on
+	-- (nth, nt), and every part is a Clone of that one MeshPart -- which is
+	-- exactly how TierMarks gets "60 parts and 4 shared meshes". The shell
+	-- does not vary per slime: inflate rides on Size and colour on Color, and
+	-- neither touches the geometry.
+	--
+	-- MARKER TRIANGLES, lifted from BUILD_TIERMARKS along with the winding.
+	-- Two sub-pixel triangles at the BODY's own bbox corners pin the generated
+	-- mesh's bounding box to the body's, so Size = body.Size * (1 + inflate)
+	-- means the identical thing here as it does on a clone. Without them the
+	-- generated mesh would be normalised to its own extent and the inflate
+	-- would silently cancel.
+	-- ===================================================================
+	local shellMeshCache = {}
+	local function shellMesh(nth: number, nt: number): (MeshPart, number)
+		local key = nth * 10000 + nt
+		if shellMeshCache[key] then
+			local c = shellMeshCache[key]
+			return c[1], c[2]
+		end
+		local B = M.BOX
+		local em = AssetService:CreateEditableMesh()
+		local e = 1e-4
+		local function marker(x, y, z, sx, sy)
+			local a = em:AddVertex(Vector3.new(x, y, z))
+			local b = em:AddVertex(Vector3.new(x + sx * e, y, z))
+			local c = em:AddVertex(Vector3.new(x, y + sy * e, z))
+			em:AddTriangle(a, b, c)
+		end
+		marker(B.mnx, B.mny, B.mnz, 1, 1)
+		marker(B.mxx, B.mxy, B.mxz, -1, -1)
+
+		-- radiusAt works in RAD units on the same PROFILE the dots are placed
+		-- on, so the generated silhouette is the mesh's own, not an ideal one.
+		local RMAX = B.mxx * 0.9999
+		local function vert(th: number, t: number)
+			local r = math.min(radiusAt(t) * M.RAD, RMAX)
+			return em:AddVertex(Vector3.new(
+				r * math.sin(th),
+				B.mny + (B.mxy - B.mny) * t,
+				r * math.cos(th)))
+		end
+
+		local tris = 0
+		for i = 0, nt - 1 do
+			local t0, t1 = i / nt, (i + 1) / nt
+			for j = 0, nth - 1 do
+				local th0 = 2 * math.pi * j / nth
+				local th1 = 2 * math.pi * (j + 1) / nth
+				local a, b, c, d = vert(th0, t0), vert(th1, t0), vert(th1, t1), vert(th0, t1)
+				-- SINGLE OUTWARD WINDING. The shell hugs an opaque body and is
+				-- never seen from inside, so back faces are pure waste -- and
+				-- this is the winding BUILD_TIERMARKS established empirically.
+				em:AddTriangle(a, b, c)
+				em:AddTriangle(a, c, d)
+				tris += 2
+				Y.tick()
+			end
+		end
+
+		-- POLE CAPS. The profile does not reach zero at either end -- radius is
+		-- 0.562 at the base and 0.113 at the crown -- so bands alone leave two
+		-- open holes, and with back faces culled a hole is a place where the
+		-- shell simply is not there. The crown one sits exactly where the ring
+		-- is already thinnest. Two fans close it for 2*nth triangles.
+		-- Winding follows from the band order above: reversed at the bottom,
+		-- because the outward normal there points down.
+		local apexTop = em:AddVertex(Vector3.new(0, B.mxy, 0))
+		local apexBot = em:AddVertex(Vector3.new(0, B.mny, 0))
+		for j = 0, nth - 1 do
+			local th0 = 2 * math.pi * j / nth
+			local th1 = 2 * math.pi * (j + 1) / nth
+			em:AddTriangle(apexTop, vert(th0, 1), vert(th1, 1))
+			em:AddTriangle(apexBot, vert(th1, 0), vert(th0, 0))
+			tris += 2
+		end
+
+		-- os.clock() cannot see a yield, so the watchdog has to be told where the
+		-- known-yielding call is on BOTH sides of it -- see dev/README.md.
+		Y.mark()
+		local mp = AssetService:CreateMeshPartAsync(Content.fromObject(em))
+		shellMeshCache[key] = { mp, tris }
+		Y.mark()
+		return mp, tris
 	end
 
 	-- sample subset, with the face-frame components precomputed once
@@ -1791,6 +2069,19 @@ local function run()
 	-- One flat job list, so grid mode and row mode share the whole builder
 	-- below instead of forking it.
 	local jobs = {}
+	-- A row's own {nth, nt} wins; 0 means "clone the body" explicitly, so a
+	-- comparison can hold the clone against the generated meshes without the
+	-- default quietly turning the control into one of them.
+	local function shellSpec(sh)
+		local nth, nt = sh[4], sh[5]
+		if nth == nil then
+			nth, nt = P.SHELL_MESH and P.SHELL_MESH[1], P.SHELL_MESH and P.SHELL_MESH[2]
+		elseif nth == 0 then
+			nth, nt = nil, nil
+		end
+		return { name = sh[1], inflate = sh[2], transparency = sh[3], nth = nth, nt = nt }
+	end
+
 	if P.SHELL_MATRIX then
 		-- Shell settings across, (hue x underside) back. The shell is an axis
 		-- rather than a variant, so it multiplies whatever is in SHELL_BASES
@@ -1809,7 +2100,7 @@ local function run()
 				for col, sh in ipairs(P.SHELL_SET) do
 					table.insert(jobs, {
 						v = v, tier = "", hueName = hueName, hue = hue,
-						shell = { name = sh[1], inflate = sh[2], transparency = sh[3] },
+						shell = shellSpec(sh),
 						x = (col - 1) * P.SPACING, z = row * P.ROW_SPACING,
 					})
 				end
@@ -2052,6 +2343,14 @@ local function run()
 			part.CFrame = bodyCF * spec.rel
 			part.Parent = slime
 		end
+		-- MARK BEFORE THE SHELL, NOT AFTER. The three face parts above are
+		-- CreateMeshPartAsync calls, which YIELD, and os.clock() cannot see a
+		-- yield -- so any tick raised after them and before this mark charges
+		-- their wait to whatever ran next. Building the shell mesh here ticks
+		-- inside its own vertex loop, and with the mark in the old place that
+		-- read as a 400 ms stall in the generator that was really three waits
+		-- on the face. dev/README.md, third trap, found again from the inside.
+		Y.mark()
 
 		-- ---- the glow shell: the body's own mesh, worn one size up ----
 		-- Exactly DivinePrototype's L4_Pulse construction -- same mesh, same
@@ -2061,10 +2360,22 @@ local function run()
 		-- IT SHARES THE BODY'S MESH ASSET, which is the whole cost argument:
 		-- one more part per slime and not one more mesh.
 		local ringLo, ringMid, ringHi = 0, 0, 0
+		local shellTris = 0
 		if job.shell and job.shell.inflate > 0 then
 			local sh = job.shell
 			local mix = P.SHELL_WHITE_MIX
-			local glow = source:Clone()
+			-- CLONE THE BODY, or generate one shared low-poly mesh and clone
+			-- THAT. Same part either way; the only difference is which mesh
+			-- asset it points at, and how many triangles come with it.
+			local glow
+			if sh.nth then
+				local proto, tris = shellMesh(sh.nth, sh.nt)
+				glow = proto:Clone()
+				shellTris = tris
+			else
+				glow = source:Clone()
+				shellTris = 15400
+			end
 			glow.Name = "GlowShell"
 			glow.Size = source.Size * partScale * (1 + sh.inflate)
 			glow.Material = Enum.Material.Neon
@@ -2085,10 +2396,10 @@ local function run()
 			ringLo, ringMid, ringHi = ringSpread(sh.inflate)
 			slime:SetAttribute("ShellInflate", sh.inflate)
 			slime:SetAttribute("ShellTransparency", sh.transparency)
+			slime:SetAttribute("ShellTriangles", shellTris)
 			slime:SetAttribute("RingCrownPx", ringLo)
 			slime:SetAttribute("RingFlankPx", ringHi)
 		end
-		Y.mark()
 
 		slime:SetAttribute("BodyCentre", Vector3.new(at.X, at.Y + bodyHeightStuds/2, at.Z))
 		slime:SetAttribute("Variant", v.name)
@@ -2115,11 +2426,13 @@ local function run()
 				-- 8 px resolves perfectly and can still be invisible, because what
 				-- decides that is its contrast against the BACKDROP, which this
 				-- build cannot see. Measured numbers are in the header.
-				log("[Lab] %2d %-6s %-7s %-8s inflate %.3f alpha %.2f | ring %4.1f crown"
-					.. " %4.1f flank px | nominal veil %2.0f%%, renders ~5x that",
+				log("[Lab] %2d %-8s %-7s %-8s inflate %.3f alpha %.2f | ring %4.1f crown"
+					.. " %4.1f flank px | %5d tris %s",
 					vi, job.shell.name, job.hueName, v.name,
 					job.shell.inflate, job.shell.transparency, ringLo, ringHi,
-					(1 - job.shell.transparency) * 100)
+					shellTris, job.shell.nth
+						and string.format("(generated %dx%d, shared)", job.shell.nth, job.shell.nt)
+						or "(the body mesh, cloned)")
 			end
 		elseif v.stops then
 			-- J and lit are switched off here, not hidden: both are defined on
@@ -2152,8 +2465,16 @@ local function run()
 			.. " %d px -- the TEXTURE floor, quoted only as a familiar length -- would"
 			.. " need inflate %.3f at the crown, %.3f at the flank",
 			cLo, cHi, P.MIN_FEATURE_PX, P.MIN_FEATURE_PX / cLo, P.MIN_FEATURE_PX / cHi)
-		log("[Lab] shell cost: 1 part and 0 new meshes per slime, but the part IS the"
-			.. " body mesh -- %d triangles each, against TierMarks' 5862 worst case", 15400)
+		if P.SHELL_MESH then
+			local tris = 2 * P.SHELL_MESH[1] * (P.SHELL_MESH[2] + 1)
+			log("[Lab] shell cost: 1 part per slime sharing ONE generated %dx%d mesh,"
+				.. " %d tris -- 60 of them is %dk against TierMarks' accepted 352k",
+				P.SHELL_MESH[1], P.SHELL_MESH[2], tris, 60 * tris // 1000)
+		else
+			log("[Lab] shell cost: 1 part and 0 new meshes per slime, but the part IS"
+				.. " the body mesh -- 15400 triangles each, so 60 is 924k against"
+				.. " TierMarks' accepted 352k")
+		end
 	end
 	log("[Lab] watchdog worst hold %.1f ms | built %d variants in %.2f s",
 		Y.worstMs(), #jobs, os.clock() - t0)
