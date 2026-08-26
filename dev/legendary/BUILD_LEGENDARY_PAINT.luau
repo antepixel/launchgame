@@ -70,15 +70,46 @@
 --      still has to be the one the reveal panel and the inventory row can
 --      point at.
 --
---   3. THE PAIR CLEARS THE LADDER'S OWN WORST CONTRAST. Below Legendary this
---      gate was free -- white against a saturated hue always clears it -- so no
---      rig has ever had to check it. Two chromatic colours can sit on top of
---      each other and turn to mud, so it is checked here, against the worst
+--   3. THE PAIR SEPARATES ON LUMINANCE, ON RGB, AND ON HUE. Below Legendary
+--      this gate was free -- white against a saturated hue always clears it --
+--      so no rig has ever had to check it. Two chromatic colours can sit on top
+--      of each other and turn to mud, so it is checked here, against the worst
 --      pair the ladder ALREADY SHIPS rather than against a number picked for
 --      the occasion:
 --          white on yellow    lum 0.161   rgb 0.767   (Uncommon..Epic, hue 4)
---      Every pair below clears both. This is the one new gate the tier needs,
---      and it exists because of rule 1.
+--
+--      THE HUE TERM IS THE THIRD ONE AND IT WAS ADDED AFTER A FAILURE, which
+--      is the only reason it is trustworthy. `rosette` shipped a lilac body
+--      (185,140,235) with deep violet rings (60,25,110) and it read as ONE
+--      COLOUR WITH TEXTURE. It passed both numbers and it passed them well:
+--          rosette   lum 0.462 (2.9x the floor)   rgb 0.827 (1.08x the floor)
+--      What it measures 4 DEGREES on is hue. The two colours are the same
+--      violet at two brightnesses, and a colour at two brightnesses is exactly
+--      what a LIGHT does to one colour -- so the eye takes the cheaper
+--      explanation and sees a lit lilac slime, not a two-colour one.
+--
+--      THAT IS THE TERMINATOR RULE, IN COLOUR SPACE. It is the same argument
+--      that killed countershade and dipped, arriving on a different axis: a
+--      difference the renderer could have produced by itself is not a marking.
+--      There it was "does the boundary lie where the light already puts one";
+--      here it is "is the pair a difference of shade, which is all a light can
+--      make". Both are the rule that a tier's identity has to be something
+--      lighting cannot fake.
+--
+--      WHY THE OLD TWO NUMBERS COULD NOT SEE IT is structural, and it is the
+--      same shape as everything else in this header. contrast() was lifted
+--      from BUILD_SKINS, where the accent is ALWAYS WHITE. White has no hue, so
+--      hue separation was never a variable there, and a pair of numbers that
+--      never varies is a pair of numbers nobody misses. Rule 1 is what put a
+--      hue on both sides of the comparison, so rule 1 is what made the third
+--      number necessary. dev/README.md's rule again: when the representation
+--      changes, re-derive the metric from the thing you actually care about.
+--
+--      THE FLOOR IS 60 DEGREES AND IT IS A GUESS IN A GAP, stated as such. The
+--      evidence is one failure at 4 degrees and eight passes at 97 and above;
+--      60 is comfortably clear of both and there is nothing in between to
+--      calibrate on. The rig prints the number for every pair, so the next
+--      failure narrows it rather than being argued about.
 --
 -- WHAT IS *NOT* PART OF THE KIND, deliberately: the pattern. Below Legendary
 -- one pattern defines the whole tier; here the pattern is what separates the
@@ -135,12 +166,28 @@
 -- band, stripes4 is four spirals, dots24 is a scattered field. So: no bands, no
 -- spirals, no scatter.
 --
---   tiger    azimuthal bars, placed and tapered    tangerine  / deep indigo
---   koi      six large lobed patches               deep teal  / gold
---   rosette  ten annuli, placed, leopard           lilac      / deep violet
---   argyle   a diamond lattice                     jade       / magenta
---   split    bilateral two-tone, wave seam         royal blue / acid lime
---   ribbon   four crossing great-circle bands        coral      / deep sea green
+--   tiger      twelve wide placed bars      tangerine  / deep indigo
+--   koi        six large lobed patches      deep teal  / gold
+--   ocelli     five giant annuli            hot pink   / navy
+--   harlequin  three giant diamonds         sea foam   / deep plum
+--   split      one seam, a slow wave        royal blue / acid lime
+--   cow        three sprawling patches      butter     / deep forest
+--
+-- FEWER AND LARGER, WHICH IS THE SECOND STRUCTURAL RULE THIS TIER HAS EARNED.
+-- The first three above survived a round that cut the other three, and what
+-- the survivors share is not a family -- it is a COUNT. split is one shape.
+-- koi is six. tiger is twelve, but every one of them is 20 px wide. What was
+-- cut was fourteen small rings, a twenty-cell lattice, and four thin bands.
+--
+--     AT 45% COVERAGE, ELEMENT COUNT AND ELEMENT SIZE TRADE DIRECTLY, AND THE
+--     TRADE ONLY RUNS ONE WAY: a slime a player wants is one they can describe.
+--
+-- "half blue, half lime" is a description. "lilac with a lot of small rings" is
+-- a texture, and a texture is what the four rungs BELOW are made of -- dots24
+-- is twenty-four small marks and that is precisely why it sits at Epic. Adding
+-- a second colour to a texture does not promote it. So the replacements below
+-- go the other way: five rings instead of fourteen, three diamonds instead of
+-- twenty, three patches instead of four bands. Nothing here is under 25 px.
 --
 -- ============ TWO DESIGNS DIED OF THE SAME THING, AND IT IS A RULE ========
 --
@@ -191,6 +238,50 @@
 --            neighbouring caps join; koi survives the same treatment only
 --            because its patches are spread over the whole body rather than
 --            clustered on one feature.
+--
+-- AND THREE MORE WERE CUT IN THE ROUND AFTER THAT, on the count rule rather
+-- than the frame rule:
+--
+--   rosette  fourteen annuli, lilac on deep violet. The pattern was fine and
+--            the numbers were fine (J 0.04, lit 1.04, 27 px). The PAIR was 4
+--            degrees apart in hue -- see rule 3 -- so it rendered as one
+--            colour with texture. Kept in the set as `ocelli`: same annulus
+--            idea at five rings instead of fourteen, and a pair 97 degrees
+--            apart.
+--
+--   argyle   a six-by-two lattice, jade on magenta. Busy rather than
+--            desirable: twenty cells is a fabric swatch, and two colours at
+--            full saturation vibrating against each other is not a creature.
+--            Kept as `harlequin`: three columns by one row, so the diamonds
+--            are 123 px across and there are three of them in the frame, and
+--            a lighter primary against a darker mark instead of two loud ones.
+--
+--   sash     cow's rival for the sixth slot, built beside it in the same run:
+--            two wide great circles crossing low on the chest, so the crossing
+--            would be a SHAPE where four bands were a rhythm. It is not. The
+--            two bands meet at the chest and merge into what reads as a bib,
+--            the crossing never resolves as a crossing, and lit came back 0.76
+--            -- the lowest in the set, because a crossing placed low puts most
+--            of the mark under the equator. cow won the slot on the render.
+--
+--   ribbon   four crossing great-circle bands. At thumbnail size it shares
+--            tiger's banded structure -- both read as "stripes" before the
+--            colour arrives, and a set of six cannot spend two slots on one
+--            silhouette. Replaced outright by `cow`, which is the only
+--            arrangement in the set with no repeat structure at all.
+--
+-- ONE MORE THING THE ROUND COST, and it is the merge failure a third time:
+-- cow's first placement put its two flank patches at 35 degrees elevation with
+-- 0.26 of lobe amplitude, and their lobes reached the crown -- 1.05 rad of
+-- effective radius against 0.96 rad to the pole -- so the two joined over the
+-- top into a mantle and the slime read as green with a yellow face rather than
+-- yellow with green patches. Pulling them down to 25 degrees and calming the
+-- lobes to 0.22 clears the pole by 0.16 rad and the three patches separate.
+-- SO THE CHECK IS ALWAYS THE SAME ONE: effective radius is the authored radius
+-- times (1 + lobe amplitude) PLUS k, and k is not known until the bisection
+-- runs. Any two placed features whose centres are closer than the sum of those
+-- will merge at this tier's coverage, and merging is what killed panda and the
+-- first rosette and the first cow.
 --
 -- All six above obey it: bars run top-to-bottom across the front, the lattice
 -- and the annuli cross it, the seam cuts down through it, the partition's cells
@@ -293,6 +384,11 @@ local P = {
 	-- is no harder to read than something already in the game.
 	CONTRAST_LUM_FLOOR = 0.161,
 	CONTRAST_RGB_FLOOR = 0.767,
+	-- A GUESS IN A GAP, AND LABELLED ONE. One measured failure at 4 degrees
+	-- (rosette's lilac on deep violet, which cleared both numbers above and
+	-- still read as one colour), eight measured passes at 97 and up, nothing in
+	-- between. See rule 3 in the header before moving it.
+	CONTRAST_HUE_FLOOR = 60.0,
 	-- the ladder's accent, here ONLY so rule 1 can be checked against it
 	LADDER_WHITE = Color3.fromRGB(252, 251, 247),
 	CHROMA_FLOOR = 0.12, -- min max-minus-min channel spread for "chromatic"
@@ -383,6 +479,32 @@ end
 local function contrast(a: Color3, b: Color3): (number, number)
 	local dr, dg, db = b.R - a.R, b.G - a.G, b.B - a.B
 	return math.abs(luminance(b) - luminance(a)), math.sqrt(dr * dr + dg * dg + db * db)
+end
+
+-- RULE 3's THIRD NUMBER. Hue, in degrees around the wheel, and the circular
+-- distance between two of them. Written out rather than pulled from
+-- Color3:ToHSV so the achromatic case is explicit: a colour with no chroma has
+-- no hue to compare, which is exactly why this number was never needed while
+-- the accent was white. Rule 1 guarantees both sides are chromatic here, so it
+-- always means something -- but the guard stays, because a rule that depends
+-- on another rule should not silently return 0 if that one ever moves.
+local function hueOf(c: Color3): number
+	local mx = math.max(c.R, c.G, c.B)
+	local mn = math.min(c.R, c.G, c.B)
+	local d = mx - mn
+	if d < 1e-6 then return -1 end
+	local h
+	if mx == c.R then h = (c.G - c.B) / d % 6
+	elseif mx == c.G then h = (c.B - c.R) / d + 2
+	else h = (c.R - c.G) / d + 4 end
+	return h * 60 % 360
+end
+
+local function hueSep(a: Color3, b: Color3): number
+	local ha, hb = hueOf(a), hueOf(b)
+	if ha < 0 or hb < 0 then return 180 end -- achromatic: not this gate's business
+	local d = math.abs(ha - hb) % 360
+	return math.min(d, 360 - d)
 end
 
 -- Rule 1's test, and it has to be a test rather than a promise: "not white" is
@@ -515,36 +637,30 @@ end
 -- rosette field must not have. These are ten authored (elevation, azimuth,
 -- radius) triples, mirrored across the midline, with NOTHING at azimuth 0 so
 -- the face sits on clear primary between the two crown rings.
-local ROSETTE = {}
+local OCELLI = {}
 do
 	-- elevation deg, azimuth deg from the face, ring radius in radians.
-	-- FOURTEEN SMALL RINGS, NOT TEN BIG ONES, and the first version is why the
-	-- count is written down here. Ten rings at radius 0.44..0.52 came out with
-	-- their BANDS TOUCHING -- 45% coverage over that little ring length forces a
-	-- thick band, and neighbours 0.9 rad apart with 0.48 rad radii have nowhere
-	-- to be thick into. It rendered as a dark hood around the crown, not as
-	-- rosettes. Halving the radius doubles how many fit and thins the band, and
-	-- it is the count and the radius together that decide whether a ring field
-	-- reads as rings or as a web.
-	-- SPREAD BY REPULSION ON THE SPHERE, THEN WRITTEN DOWN. Seven free centres
-	-- were relaxed against each other and each mirrored across the midline; the
-	-- result is pasted here as literals rather than re-solved at build time, so
-	-- the placement is fixed evidence and not something that can drift. Minimum
-	-- separation is 0.87 rad (50 deg) against bands 0.36 rad across, so nothing
-	-- touches, and four of the fourteen sit on the visible front.
+	-- FIVE RINGS, NOT FOURTEEN. Fourteen small ones was a leopard TEXTURE and a
+	-- texture is what the rungs below are made of -- see FEWER AND LARGER. At
+	-- five, the two front rings are 0.55 rad across with a 0.27 rad band: about
+	-- 97 px wide with a 24 px wall and a 50 px hole, so each one is an OBJECT
+	-- the eye counts rather than a grain it averages.
+	-- THE FRONT PAIR IS PLACED TO BE SEEN, at 52 degrees off the nose, so their
+	-- near edges reach within 13 degrees of it and both sit wholly inside the
+	-- frame at either framing. The rear three carry the coverage that would
+	-- otherwise have to go into thickening the front two.
+	-- SEPARATIONS CHECKED, NOT ASSUMED: the closest pair is 1.41 rad apart
+	-- against outer radii summing to 1.35, so nothing merges -- which is the
+	-- defect that made ten big rings read as a hood two rounds ago.
 	local spec = {
-		{ 62, 71, 0.28 }, { 62, -71, 0.28 },
-		{ 17, 28, 0.26 }, { 17, -28, 0.26 },
-		{ 5, 92, 0.30 }, { 5, -92, 0.30 },
-		{ -32, 39, 0.25 }, { -32, -39, 0.25 },
-		{ -21, 149, 0.27 }, { -21, -149, 0.27 },
-		{ 33, 148, 0.24 }, { 33, -148, 0.24 },
-		{ -62, 103, 0.26 }, { -62, -103, 0.26 },
+		{ 15, 52, 0.55 }, { 15, -52, 0.55 },
+		{ -22, 125, 0.52 }, { -22, -125, 0.52 },
+		{ 72, 180, 0.48 },
 	}
 	for _, e in ipairs(spec) do
 		local el, az = math.rad(e[1]), math.rad(e[2])
 		-- (f, y, s), the same frame the fields resolve their query into
-		table.insert(ROSETTE, {
+		table.insert(OCELLI, {
 			d = Vector3.new(math.cos(el) * math.cos(az), math.sin(el), math.cos(el) * math.sin(az)),
 			R = e[3],
 		})
@@ -608,27 +724,33 @@ local function dripLevel(th: number): number
 	return -drop
 end
 
--- ---- ribbon: four great-circle bands, crossing --------------------------
--- A band around a GREAT CIRCLE is the one band family the ladder has not spent:
--- blaze is a single band over the crown and stripes4 is four parallel spirals,
--- and both are one direction. Four circles at two authored tilts cross each
--- other, so the boundaries run across the frame in several directions at once
--- and the gaps between them are triangles rather than stripes.
--- NORMALS ARE KEPT OFF THE FACE AXIS ON PURPOSE. A band's plane is perpendicular
--- to its normal, so a normal pointing at the camera puts its band on the
--- silhouette rim -- the same failure star died of, reachable from here by
--- picking a lazy normal. Every normal below has a small f component.
--- AND MIRRORED PAIRS NEED THEIR NORMALS AWAY FROM THE SIDEWAYS AXIS TOO, or
--- the two mirrors describe nearly the same great circle and the design quietly
--- has two bands instead of four.
-local RIBBON = {}
+-- ---- cow: three sprawling patches, and the only design with no repeat ----
+-- THE SAME MACHINERY AS koi AND DELIBERATELY NOT THE SAME PICTURE. koi is six
+-- round-ish caps spread evenly over the whole body with the face left clear:
+-- read as a field. These are THREE, each nearly twice the size, each lobed
+-- hard enough to sprawl rather than sit, and one of them comes up the chest
+-- under the chin. There is no repeat structure anywhere in it -- no count to
+-- notice, no spacing to read as rhythm -- which is what makes it the opposite
+-- end of the set from tiger and the reason it took ribbon's slot rather than
+-- another band design.
+-- THE CHEST PATCH IS KEPT OFF THE EYES ON PURPOSE. panda died putting caps on
+-- features and watching them merge into a mask at this coverage; this one is
+-- centred 30 degrees BELOW the nose, so it grows down the chest rather than up
+-- over the face, and the primary keeps a clear band across the eyes.
+local COW = {}
 do
-	-- elevation deg, azimuth deg from the face, of the band's NORMAL
-	local spec = { { 60, 45 }, { 60, -45 }, { 15, 65 }, { 15, -65 } }
+	-- f, s, y, angular radius, lobe amplitude, lobe count, lobe phase
+	local spec = {
+		{ 0.707, 0.000, -0.707, 0.60, 0.20, 3, 0.50 },
+		{ -0.157, 0.892, 0.423, 0.72, 0.22, 4, 1.20 },
+		{ -0.157, -0.892, 0.423, 0.72, 0.22, 4, -1.20 },
+	}
 	for _, e in ipairs(spec) do
-		local el, az = math.rad(e[1]), math.rad(e[2])
-		table.insert(RIBBON, Vector3.new(
-			math.cos(el) * math.cos(az), math.sin(el), math.cos(el) * math.sin(az)))
+		local d = Vector3.new(e[1], e[3], e[2]).Unit
+		local up = math.abs(d.Y) > 0.9 and Vector3.new(1, 0, 0) or Vector3.new(0, 1, 0)
+		local t = up:Cross(d).Unit
+		local b = d:Cross(t)
+		table.insert(COW, { d = d, t = t, b = b, R = e[4], a = e[5], m = e[6], p = e[7] })
 	end
 end
 
@@ -684,20 +806,19 @@ local DESIGNS = {
 		end,
 	},
 	{
-		name = "rosette",
-		note = "ten placed annuli, the primary showing through every middle",
-		primary = Color3.fromRGB(185, 140, 235), -- lilac
-		mark = Color3.fromRGB(60, 25, 110), -- deep violet
-		primaryName = "lilac", markName = "deep violet",
-		-- The distance to the nearest ring's BAND rather than to its centre, so
-		-- one k is the band's half-width and the bisection thickens all ten
-		-- together. Rings whose centres are closer than their radii merge, which
-		-- is what a real rosette field does and why they are not evenly spaced.
+		name = "ocelli",
+		note = "five giant annuli, the primary showing through every middle",
+		primary = Color3.fromRGB(230, 80, 160), -- hot pink
+		mark = Color3.fromRGB(25, 35, 90), -- navy
+		primaryName = "hot pink", markName = "navy",
+		-- Distance to the nearest ring's BAND rather than to its centre, so one
+		-- k is the band's half-width and the bisection thickens all five
+		-- together while their authored radii stay in proportion.
 		g = function(qx, qy, qz, f, s, l)
 			local dx, dy, dz = f / l, qy / l, s / l
 			local best = math.huge
-			for i = 1, #ROSETTE do
-				local r = ROSETTE[i]
+			for i = 1, #OCELLI do
+				local r = OCELLI[i]
 				local d = r.d
 				local ang = math.acos(math.clamp(dx * d.X + dy * d.Y + dz * d.Z, -1, 1))
 				local v = math.abs(ang - r.R)
@@ -707,28 +828,31 @@ local DESIGNS = {
 		end,
 	},
 	{
-		name = "argyle",
-		note = "a six-by-two diamond lattice, the two colours interlocking",
-		primary = Color3.fromRGB(45, 200, 150), -- jade
-		mark = Color3.fromRGB(200, 35, 130), -- magenta
-		primaryName = "jade", markName = "magenta",
-		-- THE LATTICE IS A ROTATED ONE, WHICH IS WHAT MAKES IT ARGYLE RATHER
-		-- THAN A CHECKERBOARD. In (u, v) = (azimuth, height) coordinates take
-		-- A = u+v and B = u-v; the points where both are integers form a
-		-- staggered lattice, and max(distance-to-integer) over the two is
-		-- exactly the L1 distance to the nearest of them -- a DIAMOND. It
-		-- reaches full coverage at k = 0.5, where the two colours tile the body
-		-- with no gaps at all, so the bisection is searching a knob whose whole
-		-- range means something.
+		name = "harlequin",
+		note = "three giant diamonds around, the two colours interlocking",
+		primary = Color3.fromRGB(130, 215, 180), -- sea foam
+		mark = Color3.fromRGB(90, 30, 85), -- deep plum
+		primaryName = "sea foam", markName = "deep plum",
+		-- THE SAME ROTATED LATTICE argyle USED, AT THE LARGEST SCALE IT HAS.
+		-- In (u, v) = (azimuth, height), the points where A = u+v and B = u-v
+		-- are both integers form a staggered lattice, and max(distance to the
+		-- nearest integer) over the two is the L1 distance to the nearest of
+		-- them -- a DIAMOND. Full coverage at k = 0.5, where the two colours
+		-- tile the body with no gaps, so the bisection searches a knob whose
+		-- whole range means something.
+		-- THREE COLUMNS BY ONE ROW, against argyle's six by two. That is twenty
+		-- cells down to about six, and a diamond 1.40 rad across -- 123 px at
+		-- the base framing, so between one and two of them fill the visible
+		-- front. A lattice you can count is a costume; a lattice you cannot is
+		-- a fabric swatch, and the tier below is already made of swatches.
 		-- SEAMLESS BY CONSTRUCTION: u wraps by an integer number of columns, so
-		-- A and B wrap by integers too and dInt does not notice the seam.
-		-- SIX COLUMNS AND TWO ROWS because the body is 6.28 radii around and
-		-- 1.35 tall -- a lattice with square cells would be six-by-one. Two
-		-- rows is as tall as it goes before the diamonds stop being diamonds.
+		-- A and B wrap by integers too and dInt does not notice the seam. Three
+		-- is odd and still bilaterally symmetric, because u negates under the
+		-- mirror and dInt is even.
 		g = function(qx, qy, qz, f, s, l)
-			local u = 6 * (math.atan2(s, f) / TAU)
-			local v = 2 * (math.clamp(qy / YHALF, -1, 1) + 1) * 0.5
-			return math.max(dInt(u + v), dInt(u - v)) * (TAU / 6)
+			local u = 3 * (math.atan2(s, f) / TAU)
+			local v = (math.clamp(qy / YHALF, -1, 1) + 1) * 0.5
+			return math.max(dInt(u + v), dInt(u - v)) * (TAU / 3)
 		end,
 	},
 	{
@@ -755,26 +879,23 @@ local DESIGNS = {
 		end,
 	},
 	{
-		name = "ribbon",
-		note = "four great-circle bands at two tilts, crossing over the front",
-		-- THE SET WAS SHORT A WARM-DOMINANT SLIME. Five primaries were orange,
-		-- teal, lilac, jade and royal blue -- one warm and four cool -- and the
-		-- sixth slot is the only place left to fix that, so coral takes the body
-		-- and the sea green goes on the bands. It is the same green family as
-		-- koi's teal and that is deliberate: there it is the BODY and here it is
-		-- the marking, which is a different slime at a glance.
-		primary = Color3.fromRGB(248, 110, 95), -- coral
-		mark = Color3.fromRGB(16, 88, 78), -- deep sea green
-		primaryName = "coral", markName = "deep sea green",
-		-- |q.n| is the sine of the angle off the great circle, which is the
-		-- angular distance to it for anything near enough to matter -- so g is
-		-- in body-radii like the rest and k is the band's half-width.
+		name = "cow",
+		note = "three sprawling patches, no repeat structure anywhere in it",
+		primary = Color3.fromRGB(250, 218, 120), -- butter
+		mark = Color3.fromRGB(25, 85, 60), -- deep forest
+		primaryName = "butter", markName = "deep forest",
 		g = function(qx, qy, qz, f, s, l)
+			-- the query direction in the face-aligned frame, as (f, y, s)
 			local dx, dy, dz = f / l, qy / l, s / l
 			local best = math.huge
-			for i = 1, #RIBBON do
-				local n = RIBBON[i]
-				local v = math.abs(dx * n.X + dy * n.Y + dz * n.Z)
+			for i = 1, #COW do
+				local c = COW[i]
+				local d = c.d
+				local ang = math.acos(math.clamp(dx * d.X + dy * d.Y + dz * d.Z, -1, 1))
+				local tv = dx * c.t.X + dy * c.t.Y + dz * c.t.Z
+				local bv = dx * c.b.X + dy * c.b.Y + dz * c.b.Z
+				local phi = math.atan2(bv, tv)
+				local v = ang - c.R * (1 + c.a * math.cos(c.m * phi + c.p))
 				if v < best then best = v end
 			end
 			return best
@@ -1189,6 +1310,7 @@ local function run(): string
 
 		-- ---- rule 1 and rule 3, checked rather than promised ----
 		local lumGap, rgbDist = contrast(d.primary, d.mark)
+		local hSep = hueSep(d.primary, d.mark)
 		local chP, chM = chroma(d.primary), chroma(d.mark)
 		local _, wp = contrast(d.primary, P.LADDER_WHITE)
 		local _, wm = contrast(d.mark, P.LADDER_WHITE)
@@ -1307,33 +1429,41 @@ local function run(): string
 
 		table.insert(rows, {
 			name = d.name, k = k, cov = measured, fb = featBase, fr = featReveal,
-			shadow = shadow, lit = lit, lum = lumGap, rgb = rgbDist,
+			shadow = shadow, lit = lit, lum = lumGap, rgb = rgbDist, hue = hSep,
 			chP = chP, chM = chM, wp = wp, wm = wm,
 			pn = d.primaryName, mn = d.markName, note = d.note,
 		})
 	end
 
 	-- ---- the table, and the two gates that are this tier's own ----
-	log("[Paint] %-8s %-12s %-12s  cov      k    featBase featReveal   J    lit",
+	log("[Paint] %-10s %-12s %-14s cov      k    featBase featReveal   J    lit",
 		"design", "primary", "mark")
 	for _, r in ipairs(rows) do
 		local flag = (r.shadow >= P.SHADOW_WARN or r.lit <= P.LIT_LO or r.lit >= P.LIT_HI)
 			and " <-- terminator" or ""
-		log("[Paint] %-8s %-12s %-12s %4.1f%% %6.3f %6.1f px %6.1f px  %.2f  %.2f%s",
+		log("[Paint] %-10s %-12s %-14s %4.1f%% %6.3f %6.1f px %6.1f px  %.2f  %.2f%s",
 			r.name, r.pn, r.mn, r.cov * 100, r.k, r.fb, r.fr, r.shadow, r.lit, flag)
 	end
 	log("[Paint] ---- rule 1: both colours chromatic (chroma floor %.2f) ----", P.CHROMA_FLOOR)
 	for _, r in ipairs(rows) do
 		local bad = (r.chP < P.CHROMA_FLOOR or r.chM < P.CHROMA_FLOOR) and " <-- NOT CHROMATIC" or ""
-		log("[Paint] %-8s chroma %.2f / %.2f | rgb distance from the ladder's white %.2f / %.2f%s",
+		log("[Paint] %-10s chroma %.2f / %.2f | rgb distance from the ladder's white %.2f / %.2f%s",
 			r.name, r.chP, r.chM, r.wp, r.wm, bad)
 	end
-	log("[Paint] ---- rule 3: the pair against the ladder's own worst (white on yellow,"
-		.. " lum %.3f rgb %.3f) ----", P.CONTRAST_LUM_FLOOR, P.CONTRAST_RGB_FLOOR)
+	log("[Paint] ---- rule 3: lum and rgb against the ladder's own worst (white on"
+		.. " yellow, %.3f / %.3f), hue against the %.0f deg floor ----",
+		P.CONTRAST_LUM_FLOOR, P.CONTRAST_RGB_FLOOR, P.CONTRAST_HUE_FLOOR)
 	for _, r in ipairs(rows) do
-		local bad = (r.lum < P.CONTRAST_LUM_FLOOR or r.rgb < P.CONTRAST_RGB_FLOOR)
-			and " <-- BELOW THE LADDER'S WORST" or ""
-		log("[Paint] %-8s lum gap %.3f | rgb distance %.3f%s", r.name, r.lum, r.rgb, bad)
+		-- THE THREE ARE REPORTED SEPARATELY AND FLAGGED SEPARATELY, because the
+		-- one failure this gate has caught passed two of them comfortably. A
+		-- single combined score would have hidden exactly the case the third
+		-- number was added for.
+		local bad = ""
+		if r.lum < P.CONTRAST_LUM_FLOOR then bad ..= " <-- LUM BELOW THE LADDER'S WORST" end
+		if r.rgb < P.CONTRAST_RGB_FLOOR then bad ..= " <-- RGB BELOW THE LADDER'S WORST" end
+		if r.hue < P.CONTRAST_HUE_FLOOR then bad ..= " <-- ONE COLOUR IN TWO SHADES" end
+		log("[Paint] %-10s lum gap %.3f | rgb distance %.3f | hue apart %3.0f deg%s",
+			r.name, r.lum, r.rgb, r.hue, bad)
 	end
 	log("[Paint] narrowest feature %.1f px (%s) at the tighter of the two framings,"
 		.. " floor is %d px", worstPx, worstWhat, P.MIN_FEATURE_PX)
