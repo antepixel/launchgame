@@ -6,21 +6,39 @@ tables differ only in the body size the cells were built at. The feature columns
 are reported at BOTH framings from either run, which is the whole point of
 having two of them.
 
-RULE 3 CARRIES THREE NUMBERS NOW, and the third one is here because of a
-failure the first two could not see. `rosette` -- lilac (185,140,235) with deep
-violet (60,25,110) rings -- rendered as ONE COLOUR WITH TEXTURE and measured:
+FOUR RULES NOW, AND THE LAST TWO WERE EACH ADDED AFTER A FAILURE THE EXISTING
+ONES COULD NOT SEE.
 
-    lum gap 0.462   (2.9x the ladder's own worst, 0.161)
-    rgb     0.827   (1.08x the ladder's own worst, 0.767)
-    hue     4 deg
+RULE 3's HUE TERM. `rosette` -- lilac (185,140,235) with deep violet (60,25,110)
+rings -- rendered as ONE COLOUR WITH TEXTURE and measured lum 0.462 (2.9x the
+ladder's worst) and rgb 0.827 (1.08x). It is 4 DEGREES apart in hue: the same
+violet at two brightnesses, which is exactly what a light does to one colour.
+The terminator rule in colour space. contrast() came from BUILD_SKINS where the
+accent is always white; white has no hue, so the number never varied there.
 
-It passed both gates it had. It is the same violet at two brightnesses, and a
-colour at two brightnesses is exactly what a LIGHT does to one colour -- the
-terminator rule arriving in colour space. contrast() came from BUILD_SKINS,
-where the accent is always white; white has no hue, so hue separation was never
-a variable there and a constant is a thing nobody misses. Rule 1 is what put a
-hue on both sides of the comparison, so rule 1 is what made the third number
-necessary.
+RULE 4, THE EYE ZONE. `ocelli` shipped five navy rings with two of them at 15
+degrees elevation, 52 degrees either side of the nose. Coverage 44.8%, feature
+37.9 px, J 0.18, lit 1.05, all three contrast numbers clear -- and it rendered
+as a FOUR-EYED SLIME. A symmetric pair of round marks at the eyes' own height
+does not decorate a face, it joins it. This is a PLACEMENT constraint, and
+neither the coverage gate nor the contrast gates can see it: those ask what a
+design is made of, this asks where it was put.
+
+The zone is solved out of FACE_PARTS rather than declared -- eye_dark is one
+mesh holding both eyes, so its bounding box is solved back into two spheres
+(half-separation 0.335 body radii, radius 0.117, at 0.812 forward):
+
+    |azimuth| <= 30.1 deg,  elevation -15.1 .. 19.9 deg
+
+    ocelli (old)  el 15.0  reaches  8.1 deg from the midline   IN BAND  -- fails
+    koi           el 17.4  reaches 30.5 deg from the midline   in band  -- passes
+    cow           el 25.0  reaches  6.1 deg from the midline   out band -- passes
+
+KOI CLEARS BY 0.4 DEGREES, which is not a margin. The gate is calibrated on one
+failure and two passes with one of the passes on the line: a flag is a reason to
+look at the render, never a proof. The robust fix is not to tune against it --
+the ocelli that ships has NO mirrored pair anywhere, so it cannot be near the
+threshold at all. Asymmetry breaks the eye reading outright and costs nothing.
 
 ==== FRAMING: base ====
 [Paint] source: ReplicatedStorage.Assets.Slime.slime
@@ -29,7 +47,7 @@ necessary.
 [Paint] design     primary      mark           cov      k    featBase featReveal   J    lit
 [Paint] tiger      tangerine    deep indigo    44.9%  0.179   19.6 px   21.1 px  0.11  1.17
 [Paint] koi        deep teal    gold           45.1%  0.082   63.3 px   68.1 px  0.09  1.20
-[Paint] ocelli     hot pink     navy           44.8%  0.173   37.9 px   40.7 px  0.18  1.05
+[Paint] ocelli     hot pink     navy           45.1%  0.217   53.8 px   57.8 px  0.11  1.07
 [Paint] harlequin  sea foam     deep plum      44.8%  0.686   43.7 px   47.0 px  0.14  0.96
 [Paint] split      royal blue   acid lime      44.6% -0.141  160.3 px  172.4 px  0.02  0.96
 [Paint] cow        butter       deep forest    45.0%  0.117   82.5 px   88.7 px  0.18  1.19
@@ -47,8 +65,16 @@ necessary.
 [Paint] harlequin  lum gap 0.579 | rgb distance 0.831 | hue apart 150 deg
 [Paint] split      lum gap 0.526 | rgb distance 1.013 | hue apart 157 deg
 [Paint] cow        lum gap 0.578 | rgb distance 1.052 | hue apart 110 deg
+[Paint] ---- rule 4: mirrored pairs against the eyes' own footprint (|az| <= 30.1 deg, elevation -15.1 .. 19.9 deg, solved from FACE_PARTS) ----
+[Paint] tiger      no placed features -- rule 4 does not apply
+[Paint] koi        mirrored pair at el  17.4 deg | reaches  30.5 deg from the midline | in the eye elevation band: true 
+[Paint] koi        mirrored pair at el -31.3 deg | reaches -17.0 deg from the midline | in the eye elevation band: false
+[Paint] ocelli     4 placed features, NO mirrored pair
+[Paint] harlequin  no placed features -- rule 4 does not apply
+[Paint] split      no placed features -- rule 4 does not apply
+[Paint] cow        mirrored pair at el  25.0 deg | reaches   6.1 deg from the midline | in the eye elevation band: false
 [Paint] narrowest feature 19.6 px (tiger) at the tighter of the two framings, floor is 8 px
-[Paint] watchdog worst hold 44.8 ms | built 6 cells at 400 studs apart in 10.88 s
+[Paint] watchdog worst hold 42.3 ms | built 6 cells at 400 studs apart in 10.68 s
 [Paint] undo with workspace.LegendaryPaint:Destroy()
 
 ==== FRAMING: reveal ====
@@ -58,7 +84,7 @@ necessary.
 [Paint] design     primary      mark           cov      k    featBase featReveal   J    lit
 [Paint] tiger      tangerine    deep indigo    44.9%  0.179   19.6 px   21.1 px  0.11  1.17
 [Paint] koi        deep teal    gold           45.1%  0.082   63.3 px   68.1 px  0.09  1.20
-[Paint] ocelli     hot pink     navy           44.8%  0.173   37.9 px   40.7 px  0.18  1.05
+[Paint] ocelli     hot pink     navy           45.1%  0.217   53.8 px   57.8 px  0.11  1.07
 [Paint] harlequin  sea foam     deep plum      44.8%  0.686   43.7 px   47.0 px  0.14  0.96
 [Paint] split      royal blue   acid lime      44.6% -0.141  160.3 px  172.4 px  0.02  0.96
 [Paint] cow        butter       deep forest    45.0%  0.117   82.5 px   88.7 px  0.18  1.19
@@ -76,6 +102,14 @@ necessary.
 [Paint] harlequin  lum gap 0.579 | rgb distance 0.831 | hue apart 150 deg
 [Paint] split      lum gap 0.526 | rgb distance 1.013 | hue apart 157 deg
 [Paint] cow        lum gap 0.578 | rgb distance 1.052 | hue apart 110 deg
+[Paint] ---- rule 4: mirrored pairs against the eyes' own footprint (|az| <= 30.1 deg, elevation -15.1 .. 19.9 deg, solved from FACE_PARTS) ----
+[Paint] tiger      no placed features -- rule 4 does not apply
+[Paint] koi        mirrored pair at el  17.4 deg | reaches  30.5 deg from the midline | in the eye elevation band: true 
+[Paint] koi        mirrored pair at el -31.3 deg | reaches -17.0 deg from the midline | in the eye elevation band: false
+[Paint] ocelli     4 placed features, NO mirrored pair
+[Paint] harlequin  no placed features -- rule 4 does not apply
+[Paint] split      no placed features -- rule 4 does not apply
+[Paint] cow        mirrored pair at el  25.0 deg | reaches   6.1 deg from the midline | in the eye elevation band: false
 [Paint] narrowest feature 19.6 px (tiger) at the tighter of the two framings, floor is 8 px
-[Paint] watchdog worst hold 45.4 ms | built 6 cells at 400 studs apart in 10.18 s
+[Paint] watchdog worst hold 40.3 ms | built 6 cells at 400 studs apart in 9.86 s
 [Paint] undo with workspace.LegendaryPaint:Destroy()

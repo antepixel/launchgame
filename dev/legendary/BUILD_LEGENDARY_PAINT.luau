@@ -111,6 +111,48 @@
 --      calibrate on. The rig prints the number for every pair, so the next
 --      failure narrows it rather than being argued about.
 --
+--   4. NO MIRRORED PAIR OF MARKS AT THE EYES' OWN HEIGHT. This one is a
+--      PLACEMENT constraint and it is the first rule here that neither the
+--      coverage gate nor the contrast gates can see: both of those ask what a
+--      design is made of, and this asks where it was put.
+--
+--          A MARK AT THE EYES' OWN HEIGHT, MIRRORED ABOUT THE MIDLINE, IS READ
+--          AS AN EYE.
+--
+--      `ocelli` shipped five navy rings on hot pink with two of them at 15
+--      degrees elevation and 52 degrees either side of the nose. Coverage
+--      44.8%, feature 37.9 px, J 0.18, lit 1.05, and all three contrast
+--      numbers clear. It rendered as a FOUR-EYED SLIME: a symmetric pair of
+--      round marks beside the eyes at eye height does not decorate a face, it
+--      joins it, and rings do it worse than blobs because a ring with the body
+--      colour in the middle is the shape of an eye.
+--
+--      IT IS panda's FAILURE FROM THE OTHER SIDE. panda put caps ON the eyes
+--      and they merged into a mask; ocelli put them BESIDE the eyes and they
+--      were recruited as more eyes. Both are the same thing: the face is a
+--      strong reading and anything placed in its neighbourhood gets pulled
+--      into it.
+--
+--      THE ZONE IS DERIVED FROM THE FACE PARTS, NOT DECLARED. FACE_PARTS
+--      carries one mesh holding both eyes, so its bounding box is solved back
+--      into two spheres -- half-separation 0.335 body radii, radius 0.117, at
+--      0.812 forward -- which gives the eyes' own angular footprint:
+--          |azimuth| <= 30.1 deg,  elevation -15.1 .. 19.9 deg
+--      A mirrored pair fails when its centres sit in that elevation band AND
+--      the pair reaches inside that azimuth. Measured on the three designs
+--      with placed features:
+--          ocelli (old)  el 15.0  approach  8.1 deg   IN BAND, INSIDE  -- fails
+--          koi           el 17.5  approach 30.5 deg   in band, outside -- passes
+--          cow           el 25.0  approach  6.1 deg   out of band      -- passes
+--
+--      KOI CLEARS BY 0.4 DEGREES AND THAT IS NOT A MARGIN. The gate is
+--      calibrated on exactly one failure and two passes and one of the passes
+--      is on the line, so treat a flag as a reason to look at the render and
+--      never as a proof. THE ROBUST FIX IS NOT TO TUNE AGAINST IT: the ocelli
+--      that ships has no mirrored pair anywhere, which is why it cannot be
+--      near the threshold in the first place. Asymmetry breaks the eye reading
+--      outright, and it costs nothing -- a spotted animal is not symmetric.
+--
 -- WHAT IS *NOT* PART OF THE KIND, deliberately: the pattern. Below Legendary
 -- one pattern defines the whole tier; here the pattern is what separates the
 -- six from each other, so it differs per slime and so does the colour
@@ -168,7 +210,7 @@
 --
 --   tiger      twelve wide placed bars      tangerine  / deep indigo
 --   koi        six large lobed patches      deep teal  / gold
---   ocelli     five giant annuli            hot pink   / navy
+--   ocelli     four giant annuli, no pair    hot pink   / navy
 --   harlequin  three giant diamonds         sea foam   / deep plum
 --   split      one seam, a slow wave        royal blue / acid lime
 --   cow        three sprawling patches      butter     / deep forest
@@ -469,6 +511,73 @@ local FACE_REL = FACE_PARTS[1].rel.Position
 local FWD = Vector3.new(FACE_REL.X, 0, FACE_REL.Z).Unit
 local SIDE = Vector3.new(-FWD.Z, 0, FWD.X)
 
+-- ===================================================================
+-- THE EYE ZONE, SOLVED OUT OF THE FACE PARTS RATHER THAN DECLARED.
+--
+-- Rule 4 needs to know where the eyes actually are in angular terms, and
+-- FACE_PARTS does not say: eye_dark is ONE mesh holding BOTH eyes, so all it
+-- carries is the pair's bounding box. That box is the AABB of two spheres set
+-- apart along the SIDEWAYS axis, which is enough to solve for both unknowns --
+-- half-separation d and eye radius r -- because the box's X and Z half-extents
+-- are d*|SIDE.X| + r and d*|SIDE.Z| + r, two equations in two unknowns.
+--
+-- DERIVED RATHER THAN TYPED so it moves when the face moves. A hard-coded
+-- "eyes are at 22 degrees" would be a number describing a face that had been
+-- edited out from under it -- dev/README.md's whole first section.
+-- ===================================================================
+local EYE_AZ_HALF_DEG, EYE_EL_LO_DEG, EYE_EL_HI_DEG = 30.1, -15.1, 19.9
+do
+	local spec = FACE_PARTS[1]
+	local refR = 7.0 -- body radius in the frame the offsets are written in
+	local c = spec.rel.Position / refR
+	local h = spec.size / (2 * refR)
+	local ef = c.X * FWD.X + c.Z * FWD.Z
+	local ey = c.Y
+	-- two spheres along SIDE: halfX = d|SIDE.X| + r, halfZ = d|SIDE.Z| + r
+	local sepDen = math.abs(SIDE.X) - math.abs(SIDE.Z)
+	if math.abs(sepDen) > 1e-3 then
+		local d = (h.X - h.Z) / sepDen
+		local r = h.X - d * math.abs(SIDE.X)
+		local dist = math.sqrt(ef * ef + ey * ey + d * d)
+		if dist > 1e-6 and d > 0 and r > 0 then
+			EYE_AZ_HALF_DEG = math.deg(math.atan2(d, ef)) + math.deg(math.asin(math.clamp(r / dist, -1, 1)))
+			local elC = math.deg(math.asin(math.clamp(ey / dist, -1, 1)))
+			local elH = math.deg(math.asin(math.clamp(h.Y / dist, -1, 1)))
+			EYE_EL_LO_DEG, EYE_EL_HI_DEG = elC - elH, elC + elH
+		end
+	end
+end
+
+-- Every design that PLACES features declares them, so rule 4 can be measured
+-- rather than eyeballed. d is the centre in the (f, y, s) frame; R is the
+-- authored angular radius; lobe is the edge modulation, because a lobed patch
+-- reaches further than its radius says. The bisection's k is added at check
+-- time -- it is not known until the shape has been calibrated, which is the
+-- same trap that let cow's flank patches merge over the crown.
+local function eyeReadPairs(centres, k: number)
+	local out = {}
+	if not centres then return out end
+	for i = 1, #centres do
+		for j = i + 1, #centres do
+			local a, b = centres[i], centres[j]
+			-- a mirrored pair: same forward and same height, opposite sideways
+			if math.abs(a.d.X - b.d.X) < 0.02 and math.abs(a.d.Y - b.d.Y) < 0.02
+				and math.abs(a.d.Z + b.d.Z) < 0.02 and math.abs(a.R - b.R) < 0.02 then
+				local reff = a.R * (1 + (a.lobe or 0)) + k
+				local el = math.deg(math.asin(math.clamp(a.d.Y, -1, 1)))
+				-- how close the pair gets to the midline plane, in degrees
+				local approach = math.deg(math.asin(math.clamp(math.abs(a.d.Z), -1, 1))) - math.deg(reff)
+				local inBand = el >= EYE_EL_LO_DEG and el <= EYE_EL_HI_DEG
+				table.insert(out, {
+					el = el, approach = approach, inBand = inBand,
+					fails = inBand and approach <= EYE_AZ_HALF_DEG,
+				})
+			end
+		end
+	end
+	return out
+end
+
 local function luminance(c: Color3): number
 	return 0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B
 end
@@ -622,7 +731,7 @@ do
 		local up = math.abs(d.Y) > 0.9 and Vector3.new(1, 0, 0) or Vector3.new(0, 1, 0)
 		local t = up:Cross(d).Unit
 		local b = d:Cross(t)
-		table.insert(KOI, { d = d, t = t, b = b, R = e[4], a = e[5], m = e[6], p = e[7] })
+		table.insert(KOI, { d = d, t = t, b = b, R = e[4], a = e[5], m = e[6], p = e[7], lobe = e[5] })
 	end
 end
 
@@ -640,22 +749,28 @@ end
 local OCELLI = {}
 do
 	-- elevation deg, azimuth deg from the face, ring radius in radians.
-	-- FIVE RINGS, NOT FOURTEEN. Fourteen small ones was a leopard TEXTURE and a
-	-- texture is what the rungs below are made of -- see FEWER AND LARGER. At
-	-- five, the two front rings are 0.55 rad across with a 0.27 rad band: about
-	-- 97 px wide with a 24 px wall and a 50 px hole, so each one is an OBJECT
-	-- the eye counts rather than a grain it averages.
-	-- THE FRONT PAIR IS PLACED TO BE SEEN, at 52 degrees off the nose, so their
-	-- near edges reach within 13 degrees of it and both sit wholly inside the
-	-- frame at either framing. The rear three carry the coverage that would
-	-- otherwise have to go into thickening the front two.
-	-- SEPARATIONS CHECKED, NOT ASSUMED: the closest pair is 1.41 rad apart
-	-- against outer radii summing to 1.35, so nothing merges -- which is the
-	-- defect that made ten big rings read as a hood two rounds ago.
+	-- FOUR RINGS AND NOT ONE MIRRORED PAIR AMONG THEM. The version before this
+	-- had five, two of them at 15 deg elevation and 52 deg either side of the
+	-- nose, and it rendered as a four-eyed slime -- see rule 4. Every gate it
+	-- had passed; the pair was the whole problem.
+	--
+	-- ASYMMETRY IS THE FIX, NOT A SMALLER PAIR. A pair at eye height beside the
+	-- eyes is read as eyes at any size, and moving it far enough out to clear
+	-- the zone puts it on the silhouette where nothing resolves. Four rings at
+	-- four different elevations and four unrelated azimuths cannot be read as
+	-- a face at all, and a spotted animal is not symmetric anyway -- this is
+	-- the one design in the set that says so.
+	--
+	-- STILL PLACED, STILL CHECKED. Closest pair is 85.7 deg apart against outer
+	-- radii summing to 81.6, so nothing merges; no mirror of any centre comes
+	-- within 43 deg of any other, so no accidental pair; and A and B both sit
+	-- well inside the visible front -- upper left and lower right -- so the
+	-- design reads as itself at both framings rather than wrapping out of view.
 	local spec = {
-		{ 15, 52, 0.55 }, { 15, -52, 0.55 },
-		{ -22, 125, 0.52 }, { -22, -125, 0.52 },
-		{ 72, 180, 0.48 },
+		{ 55, -40, 0.56 },
+		{ -28, 58, 0.54 },
+		{ 25, 135, 0.58 },
+		{ -30, -125, 0.52 },
 	}
 	for _, e in ipairs(spec) do
 		local el, az = math.rad(e[1]), math.rad(e[2])
@@ -750,7 +865,7 @@ do
 		local up = math.abs(d.Y) > 0.9 and Vector3.new(1, 0, 0) or Vector3.new(0, 1, 0)
 		local t = up:Cross(d).Unit
 		local b = d:Cross(t)
-		table.insert(COW, { d = d, t = t, b = b, R = e[4], a = e[5], m = e[6], p = e[7] })
+		table.insert(COW, { d = d, t = t, b = b, R = e[4], a = e[5], m = e[6], p = e[7], lobe = e[5] })
 	end
 end
 
@@ -787,6 +902,7 @@ local DESIGNS = {
 		primary = Color3.fromRGB(16, 124, 124), -- deep teal
 		mark = Color3.fromRGB(255, 196, 60), -- gold
 		primaryName = "deep teal", markName = "gold",
+		centres = KOI,
 		g = function(qx, qy, qz, f, s, l)
 			-- the query direction in the face-aligned frame, as (f, y, s)
 			local dx, dy, dz = f / l, qy / l, s / l
@@ -807,10 +923,11 @@ local DESIGNS = {
 	},
 	{
 		name = "ocelli",
-		note = "five giant annuli, the primary showing through every middle",
+		note = "four giant annuli at four elevations, no mirrored pair",
 		primary = Color3.fromRGB(230, 80, 160), -- hot pink
 		mark = Color3.fromRGB(25, 35, 90), -- navy
 		primaryName = "hot pink", markName = "navy",
+		centres = OCELLI,
 		-- Distance to the nearest ring's BAND rather than to its centre, so one
 		-- k is the band's half-width and the bisection thickens all five
 		-- together while their authored radii stay in proportion.
@@ -884,6 +1001,7 @@ local DESIGNS = {
 		primary = Color3.fromRGB(250, 218, 120), -- butter
 		mark = Color3.fromRGB(25, 85, 60), -- deep forest
 		primaryName = "butter", markName = "deep forest",
+		centres = COW,
 		g = function(qx, qy, qz, f, s, l)
 			-- the query direction in the face-aligned frame, as (f, y, s)
 			local dx, dy, dz = f / l, qy / l, s / l
@@ -1311,6 +1429,7 @@ local function run(): string
 		-- ---- rule 1 and rule 3, checked rather than promised ----
 		local lumGap, rgbDist = contrast(d.primary, d.mark)
 		local hSep = hueSep(d.primary, d.mark)
+		local pairs4 = eyeReadPairs(d.centres, k)
 		local chP, chM = chroma(d.primary), chroma(d.mark)
 		local _, wp = contrast(d.primary, P.LADDER_WHITE)
 		local _, wm = contrast(d.mark, P.LADDER_WHITE)
@@ -1430,6 +1549,7 @@ local function run(): string
 		table.insert(rows, {
 			name = d.name, k = k, cov = measured, fb = featBase, fr = featReveal,
 			shadow = shadow, lit = lit, lum = lumGap, rgb = rgbDist, hue = hSep,
+			pairs4 = pairs4, placed = d.centres and #d.centres or 0,
 			chP = chP, chM = chM, wp = wp, wm = wm,
 			pn = d.primaryName, mn = d.markName, note = d.note,
 		})
@@ -1464,6 +1584,27 @@ local function run(): string
 		if r.hue < P.CONTRAST_HUE_FLOOR then bad ..= " <-- ONE COLOUR IN TWO SHADES" end
 		log("[Paint] %-10s lum gap %.3f | rgb distance %.3f | hue apart %3.0f deg%s",
 			r.name, r.lum, r.rgb, r.hue, bad)
+	end
+	log("[Paint] ---- rule 4: mirrored pairs against the eyes' own footprint"
+		.. " (|az| <= %.1f deg, elevation %.1f .. %.1f deg, solved from FACE_PARTS) ----",
+		EYE_AZ_HALF_DEG, EYE_EL_LO_DEG, EYE_EL_HI_DEG)
+	for _, r in ipairs(rows) do
+		if r.placed == 0 then
+			-- SWITCHED OFF FOR A CLASS OF INPUTS RATHER THAN PRINTED AS ZERO.
+			-- A field has no placed centres, so "how many mirrored pairs" is not
+			-- a question about it -- and a 0 in this column would read as a pass
+			-- it never earned. dev/README.md's habit, one metric later.
+			log("[Paint] %-10s no placed features -- rule 4 does not apply", r.name)
+		elseif #r.pairs4 == 0 then
+			log("[Paint] %-10s %d placed features, NO mirrored pair", r.name, r.placed)
+		else
+			for _, q in ipairs(r.pairs4) do
+				log("[Paint] %-10s mirrored pair at el %5.1f deg | reaches %5.1f deg from the"
+					.. " midline | in the eye elevation band: %-5s%s",
+					r.name, q.el, q.approach, tostring(q.inBand),
+					q.fails and " <-- WILL BE READ AS AN EYE" or "")
+			end
+		end
 	end
 	log("[Paint] narrowest feature %.1f px (%s) at the tighter of the two framings,"
 		.. " floor is %d px", worstPx, worstWhat, P.MIN_FEATURE_PX)
