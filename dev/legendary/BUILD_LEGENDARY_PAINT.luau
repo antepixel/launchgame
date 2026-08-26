@@ -379,9 +379,23 @@
 --   sets body.Color and nothing else -- there is no texture path in the shipping
 --   builder at all. Every rung from Uncommon up already needs one, so this is a
 --   gap the ladder shares rather than a cost this tier introduces: either an
---   EditableImage painted at runtime (what this file and EXPLORE_PATTERNS do,
---   ~87k texels per skin) or 65 baked uploads. Whichever, it is one decision
---   for the whole catalog and it should not be made inside a tier.
+--   EditableImage painted at runtime (what this file and EXPLORE_PATTERNS do)
+--   or baked uploads. Whichever, it is one decision for the whole catalog and
+--   it should not be made inside a tier.
+--
+--   TWO NUMBERS IN THIS PARAGRAPH WERE WRONG AND BOTH WERE WRONG THE SAME WAY.
+--   It used to read "~87k texels per skin" and "65 baked uploads".
+--     87k is 256,966 / SAMPLE_STRIDE 3 -- the CALIBRATION SAMPLE built in
+--     run(), not the paint. The paint loop walks every covered texel of the
+--     sheet, which the build logs as 256,966. Anything costed off 87k was
+--     three times low.
+--     65 is the whole catalog. Common is `bare` and wants no image at all;
+--     Mythic, Secret and Divine have no pattern designed yet, and Divine has a
+--     geometry rig instead. The painted set today is Uncommon, Rare, Epic and
+--     Legendary: 6 + 6 + 6 + 6 = 24 images over 9 distinct patterns.
+--   Both were sample-versus-population slips, which is the same shape as
+--   dev/README.md's standing trap: a number that keeps computing after it has
+--   stopped describing the thing it is being read as.
 --
 -- THE HONEST SUMMARY: the palette is free, the pair costs a typed field and
 -- three call sites, and the pattern costs a texture pipeline that four other
