@@ -1,6 +1,26 @@
 --!strict
 -- BUILD_LEGENDARY.luau -- CANDIDATES FOR THE TOP RUNG, BUILT AS GEOMETRY.
 --
+-- ###########################################################################
+-- ## THIS DIRECTION IS CUT. Legendary is BUILD_LEGENDARY_PAINT.luau, beside ##
+-- ## this file: six skins, pattern and colour, no added geometry at all.    ##
+-- ##                                                                        ##
+-- ## Adding a thing to a slime gives you a blue slime with a spike on it. It ##
+-- ## does not give you a distinctive slime -- the addition reads as an       ##
+-- ## OBJECT rather than a creature, the body underneath is untouched (every  ##
+-- ## candidate here wears the Common skin), and attached objects are         ##
+-- ## mutation territory, which was ruled before this file was written. What  ##
+-- ## makes a slime desirable is how it LOOKS: pattern and colour. That is    ##
+-- ## the axis the four rungs below already run on, and Legendary has to be   ##
+-- ## further along it rather than off it.                                    ##
+-- ##                                                                        ##
+-- ## LEFT BUILDABLE ON PURPOSE. The measurements below are real and several  ##
+-- ## are not repeated anywhere else -- the silhouette rule, the white-has-to ##
+-- ## -arrive-at-an-edge finding, the cone-versus-drop profile result, the    ##
+-- ## per-hue accent contrast table, the triangle budgets. A reason you       ##
+-- ## cannot rebuild is a reason nobody can check.                            ##
+-- ###########################################################################
+--
 -- Paste the whole file into the Studio command bar and it builds
 -- workspace.LegendaryLab from nothing: one cell per candidate, each on its own
 -- ground, at the framing the game actually uses. No other file needs to be
