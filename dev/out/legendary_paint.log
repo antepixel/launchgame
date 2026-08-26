@@ -16,7 +16,7 @@ violet at two brightnesses, which is exactly what a light does to one colour.
 The terminator rule in colour space. contrast() came from BUILD_SKINS where the
 accent is always white; white has no hue, so the number never varied there.
 
-RULE 4, THE EYE ZONE. `ocelli` shipped five navy rings with two of them at 15
+RULE 4, THE EYE ZONE. `sweeps` (then `ocelli`) shipped five navy rings with two of them at 15
 degrees elevation, 52 degrees either side of the nose. Coverage 44.8%, feature
 37.9 px, J 0.18, lit 1.05, all three contrast numbers clear -- and it rendered
 as a FOUR-EYED SLIME. A symmetric pair of round marks at the eyes' own height
@@ -30,15 +30,21 @@ mesh holding both eyes, so its bounding box is solved back into two spheres
 
     |azimuth| <= 30.1 deg,  elevation -15.1 .. 19.9 deg
 
-    ocelli (old)  el 15.0  reaches  8.1 deg from the midline   IN BAND  -- fails
+    sweeps (old)  el 15.0  reaches  8.1 deg from the midline   IN BAND  -- fails
     koi           el 17.4  reaches 30.5 deg from the midline   in band  -- passes
     cow           el 25.0  reaches  6.1 deg from the midline   out band -- passes
 
 KOI CLEARS BY 0.4 DEGREES, which is not a margin. The gate is calibrated on one
 failure and two passes with one of the passes on the line: a flag is a reason to
 look at the render, never a proof. The robust fix is not to tune against it --
-the ocelli that ships has NO mirrored pair anywhere, so it cannot be near the
+the design that ships has NO mirrored pair anywhere, so it cannot be near the
 threshold at all. Asymmetry breaks the eye reading outright and costs nothing.
+
+THE NAME. This design was `ocelli` -- eyespots -- and at these radii it is not
+that: each ring has a 44 deg outer radius with its centre 52 to 62 deg off the
+nose, so a viewer sees the near half of each annulus and never a whole ring with
+its hole. What renders is four broad curved sweeps. Renamed for the picture
+rather than the construction.
 
 ==== FRAMING: base ====
 [Paint] source: ReplicatedStorage.Assets.Slime.slime
@@ -47,21 +53,21 @@ threshold at all. Asymmetry breaks the eye reading outright and costs nothing.
 [Paint] design     primary      mark           cov      k    featBase featReveal   J    lit
 [Paint] tiger      tangerine    deep indigo    44.9%  0.179   19.6 px   21.1 px  0.11  1.17
 [Paint] koi        deep teal    gold           45.1%  0.082   63.3 px   68.1 px  0.09  1.20
-[Paint] ocelli     hot pink     navy           45.1%  0.217   53.8 px   57.8 px  0.11  1.07
+[Paint] sweeps     hot pink     navy           45.1%  0.217   53.8 px   57.8 px  0.11  1.07
 [Paint] harlequin  sea foam     deep plum      44.8%  0.686   43.7 px   47.0 px  0.14  0.96
 [Paint] split      royal blue   acid lime      44.6% -0.141  160.3 px  172.4 px  0.02  0.96
 [Paint] cow        butter       deep forest    45.0%  0.117   82.5 px   88.7 px  0.18  1.19
 [Paint] ---- rule 1: both colours chromatic (chroma floor 0.12) ----
 [Paint] tiger      chroma 0.80 / 0.26 | rgb distance from the ladder's white 0.89 / 1.34
 [Paint] koi        chroma 0.42 / 0.76 | rgb distance from the ladder's white 1.16 / 0.76
-[Paint] ocelli     chroma 0.59 / 0.25 | rgb distance from the ladder's white 0.76 / 1.37
+[Paint] sweeps     chroma 0.59 / 0.25 | rgb distance from the ladder's white 0.76 / 1.37
 [Paint] harlequin  chroma 0.33 / 0.24 | rgb distance from the ladder's white 0.56 / 1.25
 [Paint] split      chroma 0.62 / 0.67 | rgb distance from the ladder's white 1.08 / 0.78
 [Paint] cow        chroma 0.51 / 0.24 | rgb distance from the ladder's white 0.51 / 1.32
 [Paint] ---- rule 3: lum and rgb against the ladder's own worst (white on yellow, 0.161 / 0.767), hue against the 60 deg floor ----
 [Paint] tiger      lum gap 0.505 | rgb distance 0.954 | hue apart 133 deg
 [Paint] koi        lum gap 0.383 | rgb distance 1.011 | hue apart 138 deg
-[Paint] ocelli     lum gap 0.317 | rgb distance 0.868 | hue apart  97 deg
+[Paint] sweeps     lum gap 0.317 | rgb distance 0.868 | hue apart  97 deg
 [Paint] harlequin  lum gap 0.579 | rgb distance 0.831 | hue apart 150 deg
 [Paint] split      lum gap 0.526 | rgb distance 1.013 | hue apart 157 deg
 [Paint] cow        lum gap 0.578 | rgb distance 1.052 | hue apart 110 deg
@@ -69,12 +75,12 @@ threshold at all. Asymmetry breaks the eye reading outright and costs nothing.
 [Paint] tiger      no placed features -- rule 4 does not apply
 [Paint] koi        mirrored pair at el  17.4 deg | reaches  30.5 deg from the midline | in the eye elevation band: true 
 [Paint] koi        mirrored pair at el -31.3 deg | reaches -17.0 deg from the midline | in the eye elevation band: false
-[Paint] ocelli     4 placed features, NO mirrored pair
+[Paint] sweeps     4 placed features, NO mirrored pair
 [Paint] harlequin  no placed features -- rule 4 does not apply
 [Paint] split      no placed features -- rule 4 does not apply
 [Paint] cow        mirrored pair at el  25.0 deg | reaches   6.1 deg from the midline | in the eye elevation band: false
 [Paint] narrowest feature 19.6 px (tiger) at the tighter of the two framings, floor is 8 px
-[Paint] watchdog worst hold 42.3 ms | built 6 cells at 400 studs apart in 10.68 s
+[Paint] watchdog worst hold 45.0 ms | built 6 cells at 400 studs apart in 10.16 s
 [Paint] undo with workspace.LegendaryPaint:Destroy()
 
 ==== FRAMING: reveal ====
@@ -84,21 +90,21 @@ threshold at all. Asymmetry breaks the eye reading outright and costs nothing.
 [Paint] design     primary      mark           cov      k    featBase featReveal   J    lit
 [Paint] tiger      tangerine    deep indigo    44.9%  0.179   19.6 px   21.1 px  0.11  1.17
 [Paint] koi        deep teal    gold           45.1%  0.082   63.3 px   68.1 px  0.09  1.20
-[Paint] ocelli     hot pink     navy           45.1%  0.217   53.8 px   57.8 px  0.11  1.07
+[Paint] sweeps     hot pink     navy           45.1%  0.217   53.8 px   57.8 px  0.11  1.07
 [Paint] harlequin  sea foam     deep plum      44.8%  0.686   43.7 px   47.0 px  0.14  0.96
 [Paint] split      royal blue   acid lime      44.6% -0.141  160.3 px  172.4 px  0.02  0.96
 [Paint] cow        butter       deep forest    45.0%  0.117   82.5 px   88.7 px  0.18  1.19
 [Paint] ---- rule 1: both colours chromatic (chroma floor 0.12) ----
 [Paint] tiger      chroma 0.80 / 0.26 | rgb distance from the ladder's white 0.89 / 1.34
 [Paint] koi        chroma 0.42 / 0.76 | rgb distance from the ladder's white 1.16 / 0.76
-[Paint] ocelli     chroma 0.59 / 0.25 | rgb distance from the ladder's white 0.76 / 1.37
+[Paint] sweeps     chroma 0.59 / 0.25 | rgb distance from the ladder's white 0.76 / 1.37
 [Paint] harlequin  chroma 0.33 / 0.24 | rgb distance from the ladder's white 0.56 / 1.25
 [Paint] split      chroma 0.62 / 0.67 | rgb distance from the ladder's white 1.08 / 0.78
 [Paint] cow        chroma 0.51 / 0.24 | rgb distance from the ladder's white 0.51 / 1.32
 [Paint] ---- rule 3: lum and rgb against the ladder's own worst (white on yellow, 0.161 / 0.767), hue against the 60 deg floor ----
 [Paint] tiger      lum gap 0.505 | rgb distance 0.954 | hue apart 133 deg
 [Paint] koi        lum gap 0.383 | rgb distance 1.011 | hue apart 138 deg
-[Paint] ocelli     lum gap 0.317 | rgb distance 0.868 | hue apart  97 deg
+[Paint] sweeps     lum gap 0.317 | rgb distance 0.868 | hue apart  97 deg
 [Paint] harlequin  lum gap 0.579 | rgb distance 0.831 | hue apart 150 deg
 [Paint] split      lum gap 0.526 | rgb distance 1.013 | hue apart 157 deg
 [Paint] cow        lum gap 0.578 | rgb distance 1.052 | hue apart 110 deg
@@ -106,10 +112,10 @@ threshold at all. Asymmetry breaks the eye reading outright and costs nothing.
 [Paint] tiger      no placed features -- rule 4 does not apply
 [Paint] koi        mirrored pair at el  17.4 deg | reaches  30.5 deg from the midline | in the eye elevation band: true 
 [Paint] koi        mirrored pair at el -31.3 deg | reaches -17.0 deg from the midline | in the eye elevation band: false
-[Paint] ocelli     4 placed features, NO mirrored pair
+[Paint] sweeps     4 placed features, NO mirrored pair
 [Paint] harlequin  no placed features -- rule 4 does not apply
 [Paint] split      no placed features -- rule 4 does not apply
 [Paint] cow        mirrored pair at el  25.0 deg | reaches   6.1 deg from the midline | in the eye elevation band: false
 [Paint] narrowest feature 19.6 px (tiger) at the tighter of the two framings, floor is 8 px
-[Paint] watchdog worst hold 40.3 ms | built 6 cells at 400 studs apart in 9.86 s
+[Paint] watchdog worst hold 41.5 ms | built 6 cells at 400 studs apart in 10.11 s
 [Paint] undo with workspace.LegendaryPaint:Destroy()

@@ -119,7 +119,8 @@
 --          A MARK AT THE EYES' OWN HEIGHT, MIRRORED ABOUT THE MIDLINE, IS READ
 --          AS AN EYE.
 --
---      `ocelli` shipped five navy rings on hot pink with two of them at 15
+--      `sweeps` (then called `ocelli`) shipped five navy rings on hot pink,
+--      two of them at 15
 --      degrees elevation and 52 degrees either side of the nose. Coverage
 --      44.8%, feature 37.9 px, J 0.18, lit 1.05, and all three contrast
 --      numbers clear. It rendered as a FOUR-EYED SLIME: a symmetric pair of
@@ -128,7 +129,7 @@
 --      colour in the middle is the shape of an eye.
 --
 --      IT IS panda's FAILURE FROM THE OTHER SIDE. panda put caps ON the eyes
---      and they merged into a mask; ocelli put them BESIDE the eyes and they
+--      and they merged into a mask; this one put them BESIDE the eyes and they
 --      were recruited as more eyes. Both are the same thing: the face is a
 --      strong reading and anything placed in its neighbourhood gets pulled
 --      into it.
@@ -141,14 +142,14 @@
 --      A mirrored pair fails when its centres sit in that elevation band AND
 --      the pair reaches inside that azimuth. Measured on the three designs
 --      with placed features:
---          ocelli (old)  el 15.0  approach  8.1 deg   IN BAND, INSIDE  -- fails
+--          sweeps (old)  el 15.0  approach  8.1 deg   IN BAND, INSIDE  -- fails
 --          koi           el 17.5  approach 30.5 deg   in band, outside -- passes
 --          cow           el 25.0  approach  6.1 deg   out of band      -- passes
 --
 --      KOI CLEARS BY 0.4 DEGREES AND THAT IS NOT A MARGIN. The gate is
 --      calibrated on exactly one failure and two passes and one of the passes
 --      is on the line, so treat a flag as a reason to look at the render and
---      never as a proof. THE ROBUST FIX IS NOT TO TUNE AGAINST IT: the ocelli
+--      never as a proof. THE ROBUST FIX IS NOT TO TUNE AGAINST IT: the sweeps
 --      that ships has no mirrored pair anywhere, which is why it cannot be
 --      near the threshold in the first place. Asymmetry breaks the eye reading
 --      outright, and it costs nothing -- a spotted animal is not symmetric.
@@ -210,7 +211,7 @@
 --
 --   tiger      twelve wide placed bars      tangerine  / deep indigo
 --   koi        six large lobed patches      deep teal  / gold
---   ocelli     four giant annuli, no pair    hot pink   / navy
+--   sweeps     four giant annuli, no pair    hot pink   / navy
 --   harlequin  three giant diamonds         sea foam   / deep plum
 --   split      one seam, a slow wave        royal blue / acid lime
 --   cow        three sprawling patches      butter     / deep forest
@@ -287,8 +288,8 @@
 --   rosette  fourteen annuli, lilac on deep violet. The pattern was fine and
 --            the numbers were fine (J 0.04, lit 1.04, 27 px). The PAIR was 4
 --            degrees apart in hue -- see rule 3 -- so it rendered as one
---            colour with texture. Kept in the set as `ocelli`: same annulus
---            idea at five rings instead of fourteen, and a pair 97 degrees
+--            colour with texture. Kept in the set as `sweeps`: same annulus
+--            idea at four rings instead of fourteen, and a pair 97 degrees
 --            apart.
 --
 --   argyle   a six-by-two lattice, jade on magenta. Busy rather than
@@ -746,7 +747,7 @@ end
 -- rosette field must not have. These are ten authored (elevation, azimuth,
 -- radius) triples, mirrored across the midline, with NOTHING at azimuth 0 so
 -- the face sits on clear primary between the two crown rings.
-local OCELLI = {}
+local SWEEPS = {}
 do
 	-- elevation deg, azimuth deg from the face, ring radius in radians.
 	-- FOUR RINGS AND NOT ONE MIRRORED PAIR AMONG THEM. The version before this
@@ -775,7 +776,7 @@ do
 	for _, e in ipairs(spec) do
 		local el, az = math.rad(e[1]), math.rad(e[2])
 		-- (f, y, s), the same frame the fields resolve their query into
-		table.insert(OCELLI, {
+		table.insert(SWEEPS, {
 			d = Vector3.new(math.cos(el) * math.cos(az), math.sin(el), math.cos(el) * math.sin(az)),
 			R = e[3],
 		})
@@ -922,20 +923,29 @@ local DESIGNS = {
 		end,
 	},
 	{
-		name = "ocelli",
+		name = "sweeps",
 		note = "four giant annuli at four elevations, no mirrored pair",
+		-- NAMED FOR WHAT IS ON SCREEN, NOT FOR WHAT WAS INTENDED. This was
+		-- `ocelli` -- eyespots -- and at these radii it is not that. Each ring
+		-- has an outer radius of 44 deg and its centre sits 52 to 62 deg off the
+		-- nose, so a viewer sees the NEAR HALF of each annulus and never the
+		-- whole ring with its hole inside it. What renders is four broad curved
+		-- sweeps of navy across hot pink. The design is right; the old label was
+		-- describing the construction rather than the picture, and a name that
+		-- only makes sense to whoever wrote the field is a name that will
+		-- mislead the next person reading the set.
 		primary = Color3.fromRGB(230, 80, 160), -- hot pink
 		mark = Color3.fromRGB(25, 35, 90), -- navy
 		primaryName = "hot pink", markName = "navy",
-		centres = OCELLI,
+		centres = SWEEPS,
 		-- Distance to the nearest ring's BAND rather than to its centre, so one
 		-- k is the band's half-width and the bisection thickens all five
 		-- together while their authored radii stay in proportion.
 		g = function(qx, qy, qz, f, s, l)
 			local dx, dy, dz = f / l, qy / l, s / l
 			local best = math.huge
-			for i = 1, #OCELLI do
-				local r = OCELLI[i]
+			for i = 1, #SWEEPS do
+				local r = SWEEPS[i]
 				local d = r.d
 				local ang = math.acos(math.clamp(dx * d.X + dy * d.Y + dz * d.Z, -1, 1))
 				local v = math.abs(ang - r.R)
