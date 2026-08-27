@@ -70,6 +70,116 @@ A healthy server looks like:
 **Confirming the plugin is alive does not mean your tools can reach it.** Those
 are two different questions, and conflating them is the whole trap.
 
+### `pluginConnected` lies in the other direction too
+
+The recipe above has now produced a **false negative**: every port answered
+`"pluginConnected":false`, with `instanceCount:0` and an empty `instances`
+array, while `execute_luau` on two of those same ports ran perfectly and
+returned the right place name. Studio was attached the whole time.
+
+So `/status` is a hint, not an answer, and it can be wrong in *both*
+directions — it can point at a server your tools are not wired to, and it can
+deny holding a plugin it is holding. **Ask the server to do something instead
+of asking it how it feels:**
+
+```python
+# the only trustworthy probe: a real tools/call
+tools/call {"name": "execute_luau", "arguments": {"code": "return 1"}}
+```
+
+Cheap, unambiguous, and it fails for the one reason you care about. Anything
+that reads `pluginConnected` and stops there will eventually send you off
+restarting a plugin that was never broken — which is the same hour this file
+already exists to save.
+
+### The playtest flag gets stuck, and the play-mode targets may not route
+
+Two separate failures, both hit in one session, both of which look like Studio
+misbehaving and are not:
+
+- **`start_playtest` refuses with `A test is already running` while the
+  DataModel is in edit mode.** `get_playtest_output` reports `isRunning: true`;
+  `execute_luau` in that same instant returns `IsRunning=false IsEdit=true`.
+  The engine is right and the server's flag is stale. `stop_playtest` says
+  `Playtest stop signal sent` and does not clear it, however many times it is
+  called. **Trust `RunService:IsRunning()`, never `isRunning`.**
+
+- **`target="server"` / `"client-1"` / `"client-2"` all time out during a
+  playtest, while `target="edit"` runs inside the play CLIENT.** The plugin
+  registers one instance and it is not the server. `dev/analysis/
+  runtime_mesh_probe.luau`'s how-to-run section assumes those three targets
+  work, so as written it cannot be driven from here.
+
+**The workaround for both is to stop driving the runtime over the bridge at
+all.** Write a `Script` into `ServerScriptService` and a `LocalScript` into
+`StarterPlayerScripts`, press Play by hand, and read their `print`s back with
+`get_output_log`. An installed script does not care how the bridge routes
+anything — it runs because the engine runs it, in the real context.
+`dev/legendary/U2_RUNTIME.luau` installs and removes exactly that pair.
+
+`RunService:Run()` is plugin-reachable and looks like a way to get a server
+context without the playtest machinery. It did **not** work here: the call
+returned successfully and `IsRunning` stayed false. Do not spend a second
+attempt on it.
+
+**`get_playtest_output` returns nothing while the playtest is running fine.**
+This one was misdiagnosed here first, and the correction is the useful part.
+A `{"mode":"play","numPlayers":2}` call returned `Playtest started in play mode
+with 2 player(s)`; sixty seconds of polling produced `outputCount: 0`, and
+`execute_luau` kept reaching a DataModel reporting `IsRunning=false`. The
+conclusion written here was "it claims success without starting anything."
+
+**That was wrong.** Studio's own log file had the whole run in it —
+
+```
+21:31:23.992  [FLog::CreatorOutput] [U2RT server] context: IsServer=true IsClient=false
+21:31:23.992  [FLog::CreatorOutput] [U2RT server] srv_white_TID via TextureID write=true
+```
+
+— six seconds after the call. The playtest started, the installed script ran on
+a real server, and it printed. What failed was the bridge's output capture, and
+what misled the follow-up check was that `execute_luau` was answering from a
+DIFFERENT DataModel than the one running.
+
+Two lessons, and the second is the general one:
+
+- **Read `%LOCALAPPDATA%\Roblox\logs\*_Studio_*_last.log` directly.** Server
+  and client `print`s land there as `[FLog::CreatorOutput]`, timestamped, with
+  no bridge in the path. It is strictly better than `get_playtest_output` and
+  it works after the playtest has ended.
+- **A silent channel is not an idle system.** Every check available through the
+  bridge agreed that nothing was happening, and all of them were reading the
+  wrong end of it. When a tool reports absence, confirm the absence somewhere
+  the tool cannot reach before believing it.
+
+The stale `A test is already running` flag is real and does block later calls.
+Pressing Play by hand sidesteps it entirely.
+
+**`numPlayers` did not produce clients.** Both runs came back `IsServer=true`
+with no player ever joining — the probe's `PlayerAdded` attach never fired and
+printed nothing. So `numPlayers: 2` got a server-only run, which answers a
+server-capability question and cannot answer a replication one. For anything
+needing a real client, press Play in Studio.
+
+### Rojo eats anything you install into a `$path` folder
+
+Installed probes disappeared between being written and being read, with no
+error, because nothing failed. `default.project.json` gives both
+`ServerScriptService` and `StarterPlayer/StarterPlayerScripts` a `$path`, which
+makes them **managed** folders: a sync prunes any child that is not on disk.
+`workspace.U3Test` sat untouched through the same interval, which is the tell —
+Workspace is not `$path`-managed (the project names only `Baseplate` under it).
+
+Install runtime probes where Rojo has no opinion:
+
+- **A `Script` in `Workspace` runs on the server** exactly as one in
+  `ServerScriptService` does.
+- **Create the `LocalScript` at runtime** — have the server clone it into each
+  player's `PlayerGui` on join. There is no sync that can prune an instance
+  created after the sync.
+
+`dev/legendary/U2_RUNTIME.luau` does both.
+
 ### Fix
 
 Do **not** kill the other node processes — they belong to other live sessions

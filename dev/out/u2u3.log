@@ -1,0 +1,134 @@
+U2 AND U3 -- the measured output of dev/legendary/U2U3.luau and the asset-path
+probe beside it, read off the Studio viewport rather than argued.
+
+THE HEADLINE, BECAUSE IT IS ONE LINE OF SHIPPING CODE:
+
+    MeshPart.Color DOES NOT TINT A TEXTURED MeshPart.
+
+    So SlimeBuilder.build's `body.Color = color` STAYS EXACTLY AS IT IS. The
+    per-slime colour simply stops being visible once a skin is bound, which is
+    correct by itself -- a painted Legendary is its two authored colours, not
+    its palette entry multiplied into them.
+
+==== U3: DOES Color TINT? ====
+
+Three bodies, same sheet, one frame. dev/out/bake/tiger.png went in over HTTP as
+raw RGBA and its byte sum was checked against the bake (150405167) BEFORE
+binding, so these are the bake's own pixels and not something that merely looks
+like them.
+
+    body                     Color        texture
+    sink_white               255,255,255  EditableImage (the bake's pixels)
+    sink_red                 255,0,0      EditableImage (the bake's pixels)
+    control_red_untextured   255,0,0      NONE
+
+Measured off the capture, by clustering each body's pixels to the design's own
+two colours:
+
+    body          tangerine px   mean RGB        indigo px   mean RGB
+    sink_white          2584   224.4 135.8  52.1      4370   45.7 31.2 74.9
+    sink_red            3083   231.0 142.1  54.5      4285   51.3 35.5 84.3
+    control_red            0   --                        0   --
+
+    control_red is 7802 px of flat red and NOTHING ELSE.
+
+THE CONTROL IS THE POINT. Without it, "the two textured bodies look the same"
+cannot be told apart from "the texture never bound and both fell back to their
+Color" -- and those two look identical in the failure case. The control is red,
+the other two are not, so the texture is really there. dev/README.md's standing
+trap, avoided by construction rather than noticed afterwards.
+
+If Color multiplied, sink_red's tangerine would have G and B near zero. They are
+142 and 55, against white's 136 and 52. The hypothesis is not close.
+
+==== U2, PART ONE: THE BINDING ====
+
+Four more bodies, this time with an asset id (the sign board texture already in
+the place -- no upload needed to ask this question):
+
+    asset_white_TC   TextureContent = Content.fromUri(id)   bind ok
+    asset_red_TC     TextureContent = Content.fromUri(id)   bind ok
+    asset_white_TID  TextureID      = id                    bind ok
+    asset_red_TID    TextureID      = id                    bind ok
+
+TextureID AND TextureContent ARE THE SAME PROPERTY, which settles a question
+that looked like a choice: writing either one reads back on BOTH.
+
+    read back after writing TextureContent:
+        TextureID       = "rbxassetid://98429592839825"
+        TextureContent  = Content{SourceType=Uri, Uri=rbxassetid://98429592839825}
+    read back after writing TextureID: identical.
+
+And Color does not tint on the asset path either. Measured as channel RATIOS,
+because absolute brightness varies across the frame:
+
+    body               body px   mean RGB          G/R     B/R
+    asset_white_TC        7564   128.0  92.0  55.3  0.719   0.432
+    asset_red_TC          7417   136.5  97.5  58.4  0.714   0.428
+    asset_white_TID       7411   148.6 105.6  63.3  0.710   0.426
+    asset_red_TID         7568   158.9 112.9  68.1  0.711   0.429
+
+THE RATIOS ARE FLAT AND THE BRIGHTNESS IS NOT, and the brightness rises
+monotonically LEFT TO RIGHT -- white, red, white, red -- so it tracks POSITION
+IN THE FRAME, not Color. That ordering is the control on the residual: if Color
+were doing anything, the two red bodies would move together and they do not.
+
+==== U2, PART TWO: STILL OPEN ====
+
+WHETHER OUR OWN SHEET SURVIVES ROBLOX'S IMAGE ENCODE. Everything above uses
+either the bake's raw pixels (no upload) or an image already in the place, so
+none of it can answer what an UPLOAD does to a 512x512 sheet whose whole design
+is thin high-contrast boundaries -- the narrowest tiger bar is 19.6 px at the
+base framing, against an 8 px floor, and lossy recompression is exactly the
+thing that eats that margin.
+
+    upload_decal is ADVERTISED by the MCP server and NOT DISPATCHABLE: every
+    port answers "Unknown tool: upload_decal" to a tools/call while listing it
+    in tools/list. There is no ROBLOSECURITY and no ROBLOX_OPEN_CLOUD_API_KEY
+    in the environment, which is what that combination means.
+
+So this needs either a credential on the MCP server or a manual upload of
+dev/out/bake/tiger.png, and until then there is no asset id and no row to wire.
+
+==== ALSO STILL OPEN: THE RUNTIME CONTEXT ====
+
+Everything above was measured in EDIT MODE. Two questions are deliberately not
+answered by it, and both are asked by dev/legendary/U2_RUNTIME.luau's installed
+probes rather than assumed:
+
+  2a. MAY A SERVER SCRIPT WRITE THE PROPERTY AT ALL? SlimeBuilder's own header
+      records RenderFidelity and CollisionFidelity THROWING when written from a
+      server or client script -- "the current thread cannot write '<name>'" --
+      and they do not fail quietly, they take every slime build down. TextureID
+      could be in that family. Edit mode is the permissive context and proves
+      nothing about the restrictive one.
+
+  2b. DOES IT CROSS TO A SECOND CLIENT? The server stamps what it wrote as an
+      attribute and each client reports what it sees against that stamp, which
+      is runtime_mesh_probe's own detector shape pointed at a new property.
+
+2a IS NOW ANSWERED. The probe ran on a real server (twice), and the answer is
+that there is no capability problem at all:
+
+    [U2RT server] context: IsServer=true IsClient=false
+    [U2RT server] srv_white_TID   via TextureID      write=true  TextureID now "rbxassetid://98429592839825"
+    [U2RT server] srv_red_TID     via TextureID      write=true  TextureID now "rbxassetid://98429592839825"
+    [U2RT server] srv_white_TC    via TextureContent write=true  TextureID now "rbxassetid://98429592839825"
+    [U2RT server] srv_none_red    via nil            write=true  TextureID now ""
+    [U2RT server] parented workspace.U2ServerBuilt with 4 bodies
+
+    A SERVER SCRIPT MAY WRITE BOTH PROPERTIES. No throw, no pcall failure, and
+    the value reads back on the part. TextureID is NOT in RenderFidelity's
+    capability family, which was the thing worth being afraid of.
+
+AND THE ANSWER WAS SITTING IN THE STUDIO LOG THE WHOLE TIME, while every check
+available through the MCP bridge said nothing had happened. get_playtest_output
+returned outputCount 0; execute_luau answered from a different DataModel and
+reported IsRunning=false. The run had gone fine. See dev/README.md -- a silent
+channel is not an idle system, and the log file is the channel with no bridge
+in it.
+
+2b IS STILL NOT ANSWERED. Both runs were SERVER-ONLY: no player ever joined, so
+the probe's PlayerAdded attach never fired and no client ever reported. Asking
+start_playtest for numPlayers 2 did not produce clients. A real Play, pressed by
+hand, is what 2b needs.

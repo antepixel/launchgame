@@ -110,7 +110,18 @@ end
 local Color3 = {}
 local Color3Mt = {}
 Color3Mt.__index = function(t, k)
-	if k == "Lerp" then
+	-- ROBLOX SPELLS THESE UPPERCASE, and until this existed a read of `.R`
+	-- returned nil rather than erroring -- so a colour comparison lifted out of
+	-- a real script came back 0 and looked like a measurement rather than a
+	-- gap. The lowercase fields stay as the storage; these are the property
+	-- names Roblox actually exposes.
+	if k == "R" then
+		return rawget(t, "r")
+	elseif k == "G" then
+		return rawget(t, "g")
+	elseif k == "B" then
+		return rawget(t, "b")
+	elseif k == "Lerp" then
 		return function(self, other, alpha)
 			return setmetatable({
 				r = self.r + (other.r - self.r) * alpha,
@@ -127,6 +138,37 @@ end
 Color3.fromRGB = function(r, g, b)
 	return setmetatable({ r = r / 255, g = g / 255, b = b / 255 }, Color3Mt)
 end
+-- Documented Roblox behaviour: h, s, v all in 0..1, h wrapping at 1.
+Color3.fromHSV = function(h, sat, val)
+	local i = math.floor(h * 6) % 6
+	local f = h * 6 - math.floor(h * 6)
+	local p = val * (1 - sat)
+	local q = val * (1 - f * sat)
+	local t = val * (1 - (1 - f) * sat)
+	local r, g, b
+	if i == 0 then
+		r, g, b = val, t, p
+	elseif i == 1 then
+		r, g, b = q, val, p
+	elseif i == 2 then
+		r, g, b = p, val, t
+	elseif i == 3 then
+		r, g, b = p, q, val
+	elseif i == 4 then
+		r, g, b = t, p, val
+	else
+		r, g, b = val, p, q
+	end
+	return setmetatable({ r = r, g = g, b = b }, Color3Mt)
+end
+
+--============================= Vector2 =============================--
+local Vector2 = {}
+local Vector2Mt = {}
+Vector2.new = function(x, y)
+	return setmetatable({ X = x, Y = y }, Vector2Mt)
+end
+Vector2.zero = Vector2.new(0, 0)
 
 --============================= CFrame =============================--
 -- Represented as { p = Vector3, rx = Vector3, ry = Vector3, rz = Vector3 }
@@ -241,9 +283,12 @@ local Enum = setmetatable({}, {
 
 --============================= Instance =============================--
 local InstanceMt = {}
+-- Forward-declared: InstanceMt.__index's Clone needs it, and __index is
+-- written above the constructor.
+local newInstance
 
 local function isPartClass(className)
-	return className == "Part"
+	return className == "Part" or className == "MeshPart"
 end
 
 local function collectDescendantParts(inst, out)
@@ -284,7 +329,7 @@ local function extentsSizeAndBounds(inst)
 	return v3(maxX - minX, maxY - minY, maxZ - minZ), minX, maxX, minY, maxY, minZ, maxZ
 end
 
-local function newInstance(className)
+function newInstance(className)
 	local inst
 	inst = setmetatable({
 		ClassName = className,
@@ -367,14 +412,50 @@ InstanceMt.__index = function(t, k)
 			collect(self)
 			return out
 		end
+	elseif k == "GetFullName" then
+		return function(self)
+			local parts, node = {}, self
+			while node ~= nil do
+				table.insert(parts, 1, node.Name)
+				node = rawget(node, "_parent")
+			end
+			return table.concat(parts, ".")
+		end
+	elseif k == "Destroy" then
+		return function(self)
+			self.Parent = nil
+			local kids = rawget(self, "_children")
+			for i = #kids, 1, -1 do
+				kids[i]:Destroy()
+			end
+		end
+	elseif k == "Clone" then
+		-- Deep copy of the scalar properties, the attributes and the children,
+		-- with the clone UNPARENTED -- which is what Roblox does. _cframe rides
+		-- along as a raw slot because CFrame only ever goes in via __newindex.
+		return function(self)
+			local copy = newInstance(rawget(self, "ClassName"))
+			for key, value in pairs(self) do
+				if key ~= "_children" and key ~= "_parent" and key ~= "_attrs" then
+					rawset(copy, key, value)
+				end
+			end
+			for name, value in pairs(rawget(self, "_attrs")) do
+				rawget(copy, "_attrs")[name] = value
+			end
+			for _, child in ipairs(rawget(self, "_children")) do
+				child:Clone().Parent = copy
+			end
+			return copy
+		end
 	elseif k == "IsA" then
 		return function(self, className)
 			if className == self.ClassName then
 				return true
 			elseif className == "BasePart" then
-				return self.ClassName == "Part"
+				return isPartClass(self.ClassName)
 			elseif className == "PVInstance" then
-				return self.ClassName == "Part" or self.ClassName == "Model"
+				return isPartClass(self.ClassName) or self.ClassName == "Model"
 			end
 			return false
 		end
@@ -517,6 +598,7 @@ local function loadLuauModule(relPath)
 		game = game,
 		Instance = Instance,
 		Vector3 = Vector3,
+		Vector2 = Vector2,
 		CFrame = CFrame,
 		Color3 = Color3,
 		Enum = Enum,
@@ -610,6 +692,7 @@ return {
 	loadLuauModule = loadLuauModule,
 	Instance = Instance,
 	Vector3 = Vector3,
+	Vector2 = Vector2,
 	CFrame = CFrame,
 	Color3 = Color3,
 	Enum = Enum,
