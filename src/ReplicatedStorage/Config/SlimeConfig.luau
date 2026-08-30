@@ -9,6 +9,7 @@ export type SlimeConfig = {
 	SLIME_TIER_NAMES: { string },
 	SLIME_TIER_COUNTS: { number },
 	SLIME_TIER_COLORS: { Color3 },
+	SLIME_NAME_BY_TIER: { { string } },
 	SLIME_COLOR_BY_TIER: { { Color3 } },
 	SLIME_INCOME_BY_TIER: { { number } },
 	SLIME_SKIN_BY_TIER: { [number]: { [number]: string } },
@@ -73,6 +74,70 @@ local SlimeConfig: SlimeConfig = {
 		Color3.fromRGB(140, 26, 191), -- Secret: deep violet
 		Color3.fromRGB(255, 237, 153), -- Divine: gold-white
 	},
+	-- ===== THE NAMES. One per slime, same [tier][indexInTier] indexing as
+	-- COLOR_BY_TIER and INCOME_BY_TIER, and SlimeData asserts the lengths
+	-- against SLIME_TIER_COUNTS the same way.
+	--
+	-- AUTHORED, and this table is why the generator no longer builds a name.
+	-- SlimeData used to format "%s Slime %d" from the tier name and the index,
+	-- which is the right call for a placeholder and the wrong one for a
+	-- collection game: the names are half the appeal and a formula cannot
+	-- write them.
+	--
+	-- TWO THINGS PICK EACH NAME. The TIER sets the register -- Common is
+	-- kitchen-and-garden, Rare is gemstones, Mythic is monsters, Divine is
+	-- cosmic -- and the POSITION picks the hue word, because position i is
+	-- bound to colour i for good (see SLIME_COLOR_BY_TIER below: every tier's
+	-- slime 1 is green, 2 red, 3 blue, 4 yellow, 5 purple, 6 orange). So a
+	-- name must fit both, and moving a colour means renaming its slime.
+	--
+	-- KEPT SHORT ON PURPOSE -- 12 characters or under. These render on the
+	-- pad nametag (PlayerProfile's "%s (Lv %d)") and in the inventory row
+	-- (InventoryClient's "Slot %d: %s -- Lv %d -- %s"), and both already
+	-- carry more than the name.
+	--
+	-- LEGENDARY IS NAMED FOR ITS DESIGN, NOT ITS HUE, and it is the one row
+	-- that breaks the rule above. Legendary slimes carry a painted sheet, and
+	-- MeshPart.Color does not tint a textured MeshPart (measured -- see
+	-- dev/out/u2u3.log), so the palette colour is INVISIBLE on them. Naming
+	-- Legendary 1 "Moss" for its green would name it after the one property
+	-- of it nobody can see. It is the tiger, so it is Tigerback.
+	--
+	--   THE DESIGN-TO-POSITION MAPPING IS AUTHORED HERE AND NOWHERE ELSE.
+	--   It is a DECISION, not a discovery -- there was no such mapping to
+	--   find. BUILD_LEGENDARY_PAINT's DESIGNS array is authoring order;
+	--   BUILD_LEGENDARY's own HUES list runs blue/green/red/... against this
+	--   file's green/red/blue/..., so it is not a mapping either; and the
+	--   painted designs carry their own two colours (tiger is tangerine and
+	--   deep indigo) rather than a palette hue, so nothing ties a design to a
+	--   slot. This table and SLIME_SKIN_BY_TIER below are the mapping, and
+	--   they must agree: position i's name and position i's sheet are the
+	--   same design. Only tiger is uploaded today; the other five names are
+	--   already in place so that wiring a sheet is one line and no rename.
+	SLIME_NAME_BY_TIER = {
+		-- green        red           blue          yellow        purple        orange
+		{ "Moss", "Tomato", "Puddle", "Butter", "Grape", "Apricot" }, -- Common
+		{ "Fern", "Cinder", "Drizzle", "Honey", "Thistle", "Rust" }, -- Uncommon
+		{ "Jade", "Garnet", "Sapphire", "Amber", "Amethyst", "Coral" }, -- Rare
+		{ "Wildvine", "Wildfire", "Riptide", "Sunflare", "Nightshade", "Emberfall" }, -- Epic
+		-- Legendary: tiger, koi, sweeps, harlequin, split, cow -- the designs,
+		-- in the order this file hereby assigns them to positions 1..6.
+		{ "Tigerback", "Koi Royal", "Pinwheel", "Harlequin", "Highsplit", "Dappleback" }, -- Legendary
+		{ "Basilisk", "Phoenix", "Leviathan", "Griffin", "Wyvern", "Chimera" }, -- Mythic
+		-- Secret (21): the six hues above, then the 15 extra ones in
+		-- SLIME_COLOR_BY_TIER's own order -- teal, magenta, lime, indigo, sky
+		-- cyan, maroon, olive, coral, slate blue, mint, plum, steel blue,
+		-- amber brown, rose, chartreuse.
+		{
+			"Mossglitch", "Redshift", "Deepsignal", "Flicker", "Voidbloom", "Hexflare",
+			"Tealwake", "Neonhush", "Limeglow", "Deepnull", "Skyghost", "Duskblood",
+			"Olivedrift", "Coralwisp", "Slatewisp", "Mintghost", "Plumshade", "Steelhush",
+			"Amberdust", "Roseglitch", "Acidbloom",
+		}, -- Secret
+		-- Divine (8): the six, then teal and magenta.
+		{ "Aurora", "Supernova", "Empyrean", "Halo", "Eventide", "Helion", "Aether", "Zenith" }, -- Divine
+	},
+
 	-- Placeholder colours ONLY -- swapped for real art later, same as
 	-- SLIME_TIER_COLORS above. PER-SLIME, not per-tier (see the written
 	-- report -- every slime used to just inherit its tier's own colour,
@@ -83,6 +148,7 @@ local SlimeConfig: SlimeConfig = {
 	-- asserts its length against SLIME_TIER_COUNTS the same way too) --
 	-- deliberately the least-restructuring fit for that existing loop.
 	--
+
 	-- AUTHORED, not generated -- every value below is a hand-picked RGB
 	-- triple, not a computed hue rotation. Common through Mythic (the six
 	-- 6-slime tiers) each use the SAME six hues, in the SAME order --

@@ -2,9 +2,13 @@
 -- Generates the full 65-slime catalog from SlimeConfig's tier definitions --
 -- GENERATED, not hand-authored (same philosophy as LuckCurve.luau/
 -- RunwayBuilder.server.luau: a repeated, formulaic list is a loop's job, not
--- 65 hand-typed table entries). Placeholder names/colours only -- swapped
--- for real assets later. Every slime has TWO colours now (see the written
--- report): `color` is its OWN per-slime colour, the MEASURED per-slime
+-- 65 hand-typed table entries). THE NAMES ARE NO LONGER GENERATED -- they
+-- are authored, one per slime, in SlimeConfig.SLIME_NAME_BY_TIER, because a
+-- formula cannot write the names for a collection game and "Secret Slime 9"
+-- is not a name. Colours are still placeholders.
+--
+-- Every slime has TWO colours (see the written report): `color` is its OWN
+-- per-slime colour, the MEASURED per-slime
 -- value at the same position in SlimeConfig.SLIME_COLOR_BY_TIER -- distinct
 -- within a tier, same shape/indexing as income below; `tierColor` is the
 -- colour shared by every slime in that tier (SlimeConfig.SLIME_TIER_COLORS),
@@ -94,6 +98,7 @@ for tier = 1, #SlimeConfig.SLIME_TIER_NAMES do
 	local tierColor = SlimeConfig.SLIME_TIER_COLORS[tier]
 	local colors = SlimeConfig.SLIME_COLOR_BY_TIER[tier]
 	local incomes = SlimeConfig.SLIME_INCOME_BY_TIER[tier]
+	local names = SlimeConfig.SLIME_NAME_BY_TIER[tier]
 
 	-- Fail loudly, at load time, rather than silently indexing past the end
 	-- (nil income/colour) or dropping measured values a tier doesn't have
@@ -107,6 +112,10 @@ for tier = 1, #SlimeConfig.SLIME_TIER_NAMES do
 	assert(
 		#colors == count,
 		string.format("SlimeConfig.SLIME_COLOR_BY_TIER[%d] (%s) has %d entries, expected %d to match SLIME_TIER_COUNTS[%d]", tier, tierName, #colors, count, tier)
+	)
+	assert(
+		#names == count,
+		string.format("SlimeConfig.SLIME_NAME_BY_TIER[%d] (%s) has %d entries, expected %d to match SLIME_TIER_COUNTS[%d]", tier, tierName, #names, count, tier)
 	)
 	-- SLIME_TIER_WEIGHT_RATIO is checked here too, for the same reason and in
 	-- the same place, even though this generator does not read it: it is the
@@ -135,7 +144,7 @@ for tier = 1, #SlimeConfig.SLIME_TIER_NAMES do
 	for i = 1, count do
 		local slime: Slime = {
 			globalIndex = #slimes + 1,
-			name = string.format("%s Slime %d", tierName, i),
+			name = names[i],
 			tier = tier,
 			tierName = tierName,
 			color = colors[i],
