@@ -1027,9 +1027,14 @@ function LaunchRewardScene.create(
 	local function showSlimeReveal(slime: SlimeData.Slime, isNew: boolean)
 		destroySlimeReveal()
 
+		-- Skinned here as well as on the pad, deliberately: the reveal is where
+		-- a player first sees the slime they just won, and a painted Legendary
+		-- that reveals plain and then turns striped once it lands in a slot
+		-- reads as a bug in the reveal.
 		local model = SlimeBuilder.build(
 			slime.color,
-			if revealAnchorCFrame then TreasureConfig.CHEST_REVEAL_WIDTH_STUDS else SlimeConfig.SLIME_REVEAL_WIDTH_STUDS
+			if revealAnchorCFrame then TreasureConfig.CHEST_REVEAL_WIDTH_STUDS else SlimeConfig.SLIME_REVEAL_WIDTH_STUDS,
+			slime.skinTextureId
 		)
 		-- Captured because the entrance animates scale and Model:ScaleTo takes an
 		-- ABSOLUTE scale -- animating it means multiplying THIS, not stacking a

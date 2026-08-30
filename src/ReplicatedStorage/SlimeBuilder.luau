@@ -126,7 +126,11 @@ end
 -- template itself already had. Returns the Model UNPOSITIONED (wherever the
 -- template's own clone happens to sit) and UNPARENTED -- the caller places
 -- and parents it.
-function SlimeBuilder.build(color: Color3, widthStuds: number): Model
+-- `skinTextureId` is SlimeData.Slime.skinTextureId -- a painted 512x512 sheet
+-- for the body, or nil for the plain coloured body every slime had before
+-- skins existed. Optional and last so the two callers that never skin
+-- anything (MapBuilder's landmark) keep working unchanged.
+function SlimeBuilder.build(color: Color3, widthStuds: number, skinTextureId: string?): Model
 	local model = template:Clone()
 	model:ScaleTo(widthStuds / UNIT_WIDTH_STUDS)
 
@@ -151,6 +155,31 @@ function SlimeBuilder.build(color: Color3, widthStuds: number): Model
 	local body = model:FindFirstChild(BODY_PART_NAME) :: MeshPart
 	model.PrimaryPart = body
 	body.Color = color
+
+	-- THE SKIN, AND WHY body.Color ABOVE IS UNCHANGED. MeshPart.Color DOES NOT
+	-- TINT A TEXTURED MeshPart. That was the one thing that could have forced a
+	-- change to the line above -- if Color multiplied into the sheet, every
+	-- painted slime would come out muddied by a palette entry that has nothing
+	-- to do with its design, and this would have to write white when a skin is
+	-- present. It does not multiply: measured on both the EditableImage path
+	-- and the asset path, in edit mode and again on a real play server, with an
+	-- untextured control in frame to separate "Color is ignored" from "the
+	-- texture never bound" (dev/out/u2u3.log). So the line stays, and a painted
+	-- slime simply shows its two authored sheet colours instead of its palette
+	-- entry -- which is what a painted Legendary should look like.
+	--
+	-- SAFE FROM A SERVER SCRIPT, unlike the two properties the block below
+	-- refuses to touch. TextureID was suspected of being in RenderFidelity's
+	-- capability family and is not: a server script writes it, no throw, and
+	-- the value replicates to every client -- measured with each client
+	-- reporting what it saw against what the server stamped (dev/out/u2u3.log,
+	-- 2a and 2b). So this needs no client half and no RemoteEvent.
+	--
+	-- TextureID and TextureContent ARE THE SAME PROPERTY -- writing either
+	-- reads back on both -- so this uses the older, plainer one.
+	if skinTextureId then
+		body.TextureID = skinTextureId
+	end
 
 	-- DO NOT ADD RenderFidelity OR CollisionFidelity HERE. Both require the
 	-- Plugin capability and THROW when written from a server or client script

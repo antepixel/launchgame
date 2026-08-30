@@ -24,6 +24,11 @@ export type Slime = {
 	color: Color3,
 	tierColor: Color3,
 	incomePerSecond: number,
+	-- The painted sheet bound to this slime's body, or nil for the plain
+	-- coloured body every slime had before skins existed. nil rather than ""
+	-- so that "has a skin" is a presence test at every call site instead of an
+	-- emptiness test that reads as a bug the first time someone sees it.
+	skinTextureId: string?,
 }
 
 local SlimeData = {}
@@ -51,6 +56,37 @@ assert(
 	#SlimeConfig.SLIME_TIER_WEIGHT_RATIO == #SlimeConfig.SLIME_TIER_NAMES,
 	string.format("SlimeConfig.SLIME_TIER_WEIGHT_RATIO has %d entries, expected %d to match SLIME_TIER_NAMES", #SlimeConfig.SLIME_TIER_WEIGHT_RATIO, #SlimeConfig.SLIME_TIER_NAMES)
 )
+
+-- SLIME_SKIN_BY_TIER is SPARSE, so the length assert every other table gets
+-- cannot be applied to it -- and a sparse table's failure mode is exactly the
+-- one a length check would have caught elsewhere: an entry nothing ever reads.
+-- A skin written at [5][7] of a six-slime tier, or at tier [9] of an eight-tier
+-- ladder, is silently dropped -- the slime it was meant for just renders plain,
+-- which looks like "the upload did not work" and sends someone off checking the
+-- asset. So every key is validated against SLIME_TIER_COUNTS here, at load,
+-- BEFORE the catalog is built. Same reasoning as the WEIGHT_RATIO assert above:
+-- the table this loop does not otherwise read is the one that fails quietly.
+for tierKey, row in pairs(SlimeConfig.SLIME_SKIN_BY_TIER) do
+	assert(
+		typeof(tierKey) == "number" and SlimeConfig.SLIME_TIER_NAMES[tierKey] ~= nil,
+		string.format("SlimeConfig.SLIME_SKIN_BY_TIER has key %s, which is not a tier index 1..%d", tostring(tierKey), #SlimeConfig.SLIME_TIER_NAMES)
+	)
+	local count = SlimeConfig.SLIME_TIER_COUNTS[tierKey]
+	for slot, id in pairs(row) do
+		assert(
+			typeof(slot) == "number" and slot >= 1 and slot <= count,
+			string.format("SlimeConfig.SLIME_SKIN_BY_TIER[%d] (%s) has index %s, outside 1..%d for that tier", tierKey, SlimeConfig.SLIME_TIER_NAMES[tierKey], tostring(slot), count)
+		)
+		-- A malformed id does NOT throw when written to TextureID -- it binds,
+		-- resolves to nothing, and the slime renders untextured. That is
+		-- indistinguishable from "no skin configured" at a glance, which is why
+		-- the shape is checked here rather than discovered in a frame.
+		assert(
+			typeof(id) == "string" and string.match(id, "^rbxassetid://%d+$") ~= nil,
+			string.format("SlimeConfig.SLIME_SKIN_BY_TIER[%d][%d] is %q, expected a well-formed \"rbxassetid://<number>\"", tierKey, slot, tostring(id))
+		)
+	end
+end
 
 for tier = 1, #SlimeConfig.SLIME_TIER_NAMES do
 	local tierName = SlimeConfig.SLIME_TIER_NAMES[tier]
@@ -93,6 +129,8 @@ for tier = 1, #SlimeConfig.SLIME_TIER_NAMES do
 		string.format("SlimeConfig.SLIME_TIER_WEIGHT_RATIO[%d] (%s) is %s, expected a number >= 1.0", tier, tierName, tostring(ratio))
 	)
 
+	local skins = SlimeConfig.SLIME_SKIN_BY_TIER[tier]
+
 	slimesByTier[tier] = {}
 	for i = 1, count do
 		local slime: Slime = {
@@ -103,6 +141,7 @@ for tier = 1, #SlimeConfig.SLIME_TIER_NAMES do
 			color = colors[i],
 			tierColor = tierColor,
 			incomePerSecond = incomes[i],
+			skinTextureId = skins and skins[i] or nil,
 		}
 		table.insert(slimes, slime)
 		table.insert(slimesByTier[tier], slime)

@@ -471,7 +471,9 @@ local function spawnSlimeVisual(profile: Profile, slotNumber: number, slime: Sli
 	-- the per-slime field; `slime.tierColor` is the shared one). This is the
 	-- imported mesh (see SlimeBuilder.luau) -- the one place this colour is
 	-- actually visible in-game.
-	local model = SlimeBuilder.build(slime.color, SLOT_SLIME_WIDTH_STUDS)
+	-- skinTextureId is nil for every slime without a painted sheet, which is
+	-- all but one of the 65 today -- see SlimeConfig.SLIME_SKIN_BY_TIER.
+	local model = SlimeBuilder.build(slime.color, SLOT_SLIME_WIDTH_STUDS, slime.skinTextureId)
 	model.Name = slime.name
 
 	-- FACE INWARD ACROSS THE CENTRAL PATH, NOT OUT OF THE BASE (see the

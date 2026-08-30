@@ -11,6 +11,7 @@ export type SlimeConfig = {
 	SLIME_TIER_COLORS: { Color3 },
 	SLIME_COLOR_BY_TIER: { { Color3 } },
 	SLIME_INCOME_BY_TIER: { { number } },
+	SLIME_SKIN_BY_TIER: { [number]: { [number]: string } },
 	SLIME_TIER_WEIGHT_RATIO: { number },
 	SLIME_LUCK_ANCHOR_LOW: number,
 	SLIME_LUCK_ANCHOR_HIGH: number,
@@ -175,6 +176,41 @@ local SlimeConfig: SlimeConfig = {
 		-- as a jackpot rather than as inflation only because
 		-- SLIME_TIER_WEIGHT_RATIO makes the top of it rare.
 		{ 50000, 75000, 113000, 169000, 253000, 380000, 570000, 854000 }, -- Divine
+	},
+
+	-- ===== PAINTED SKINS. A baked 512x512 sheet bound to the body MeshPart's
+	-- TextureID, keyed [tier][indexInTier] -- the SAME 1-8 tier indexing and
+	-- the same within-tier position as COLOR_BY_TIER and INCOME_BY_TIER.
+	--
+	-- SPARSE ON PURPOSE, unlike every other table above. Those are dense
+	-- because every slime HAS a colour and an income; almost no slime has a
+	-- skin, and writing 65 empty strings to say so would be 65 places to make
+	-- a typo in service of a length check. SlimeData validates this one by
+	-- CONTENT instead -- every key must land inside SLIME_TIER_COUNTS and
+	-- every value must be a well-formed rbxassetid:// -- which catches the
+	-- failures a length check could not (a wrong index, a malformed id).
+	--
+	-- WHY THE PER-SLIME COLOUR STILL APPLIES UNDERNEATH. MeshPart.Color DOES
+	-- NOT TINT A TEXTURED MeshPart -- measured on both the EditableImage and
+	-- the asset path, in edit mode and on a real server (dev/out/u2u3.log).
+	-- So SlimeBuilder still writes body.Color exactly as it always did, and a
+	-- painted slime simply shows its two authored sheet colours instead. That
+	-- is correct by itself: a painted Legendary is its design, not its palette
+	-- entry multiplied into it. Nothing here has to switch the colour off.
+	--
+	-- THE UPLOAD IS LOSSLESS, so the sheet on the body is the bake byte for
+	-- byte -- 0 class flips, 0 texel error, checked against dev/out/bake/
+	-- tiger.png (dev/legendary/encode_probe.py, dev/out/u2u3.log). The
+	-- narrowest tiger bar stays 19.6 px at the base framing against an 8 px
+	-- floor.
+	--
+	-- ONE OF SIX TODAY. dev/legendary/BUILD_LEGENDARY_PAINT.luau authors six
+	-- Legendary designs -- tiger, koi, sweeps, harlequin, split, cow -- and
+	-- all six are baked to dev/out/bake/. Only tiger has been uploaded, so
+	-- only tiger is wired; the other five want an asset id and one line each.
+	SLIME_SKIN_BY_TIER = {
+		-- Legendary (tier 5), first slime in the tier.
+		[5] = { [1] = "rbxassetid://104689541793385" }, -- tiger
 	},
 
 	-- ===== HOW MASS SPLITS *WITHIN* ONE TIER. One entry per tier, same
