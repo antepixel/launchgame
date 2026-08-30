@@ -73,7 +73,7 @@ monotonically LEFT TO RIGHT -- white, red, white, red -- so it tracks POSITION
 IN THE FRAME, not Color. That ordering is the control on the residual: if Color
 were doing anything, the two red bodies would move together and they do not.
 
-==== U2, PART TWO: STILL OPEN ====
+==== U2, PART TWO: THE UPLOAD, AND WHY IT WAS FEARED ====
 
 WHETHER OUR OWN SHEET SURVIVES ROBLOX'S IMAGE ENCODE. Everything above uses
 either the bake's raw pixels (no upload) or an image already in the place, so
@@ -87,8 +87,75 @@ thing that eats that margin.
     in tools/list. There is no ROBLOSECURITY and no ROBLOX_OPEN_CLOUD_API_KEY
     in the environment, which is what that combination means.
 
-So this needs either a credential on the MCP server or a manual upload of
-dev/out/bake/tiger.png, and until then there is no asset id and no row to wire.
+So this needed either a credential on the MCP server or a manual upload.
+
+THE MANUAL UPLOAD HAPPENED. dev/out/bake/tiger.png is rbxassetid://104689541793385.
+
+==== U2, PART TWO: ANSWERED. THE ENCODE IS LOSSLESS. ====
+
+    ROBLOX GAVE BACK EXACTLY THE BYTES THAT WENT UP. Not "within tolerance" --
+    identical, alpha included.
+
+Measured in edit mode over the bridge, by running U2_RUNTIME.luau's own
+STATS_SRC and MEASURE_SRC blocks rather than a copy of them: the sink serves
+the bake's RGBA, CreateEditableImageAsync + ReadPixelsBuffer reads the uploaded
+asset back, and the two are held against each other texel by texel.
+
+    asset read back at 512x512 -- no resize
+    bake      inMap 262104  markN 117747  edgeN 4230  2A/P 55.6723 tx
+    roundtrip inMap 262104  markN 117747  edgeN 4230  2A/P 55.6723 tx  (+0.00%)
+    CLASS FLIPS   0 of 262104 in-map texels (0.000%)   off-map flips 0
+    TEXEL ERROR   mean 0.00  max 0  over 8: 0.0%  over 32: 0.00%
+    full byte sum of the read-back, alpha included: 150405167 == the bake
+
+So the narrowest tiger bar is still 19.6 px at the base framing and 21.1 px at
+the reveal, against the 8 px floor, because every texel that defines it came
+back unchanged. The upload path costs the design nothing, and the fear that
+prompted all of this -- lossy recompression eating a thin high-contrast
+boundary -- does not apply to a 512x512 PNG on this account.
+
+THE ZERO WAS CONTROLLED BEFORE IT WAS BELIEVED. "The asset is byte-for-byte the
+bake" and "readAsset is not really reading the asset" produce the same zero, and
+they are indistinguishable without a negative control. So the SAME reader was
+pointed at the sign board:
+
+    tiger from asset  1048576 bytes  512x512  byte sum 150405167  == the bake
+    sign  from asset  1048576 bytes  512x512  byte sum 160324338  differs
+    sign  stats: inMap 262144  markN 0  edgeN 0   (bake is 262104 / 117747 / 4230)
+
+A different asset comes back different, and comes back as a plainly different
+KIND of image -- every texel in-map, no mark at all. The reader reads what it is
+given. dev/README.md's standing trap, closed by construction rather than by
+assertion.
+
+WHAT THE FLOOR CHECK WAS WORTH, WHICH IS THE PART TO REMEMBER. featBase came
+back at exactly 19.6 px and CLEARS THE FLOOR -- and that line would have read
+the same way if the sheet had been mangled. dev/legendary/encode_probe.py put
+the bake through six degradations offline BEFORE the run:
+
+    case              featBase  2A/P drift  classflip  meanErr  maxErr
+    bake (identity)     19.60px      +0.00%      0.00%     0.00       0
+    jpeg q95            19.79px      +0.99%      0.10%     5.18     123
+    jpeg q85            19.86px      +1.33%      0.14%     6.65     124
+    jpeg q70            19.89px      +1.50%      0.19%     8.59     167
+    jpeg q50            19.95px      +1.80%      0.26%    10.65     178
+    resize 256->512     20.03px      +2.20%      0.27%     3.56     165
+    resize 128->512     20.62px      +5.18%      0.67%     8.99     183
+
+THE 19.6 PX FEATURE NUMBER CANNOT ANSWER THIS QUESTION. It holds within 5% of
+19.6 through a 4x downsample that destroys the sheet, and never approaches the
+8 px floor in any case. 2A/P is a MEAN characteristic width over the whole mark
+set and the wide bars carry it; "is the narrowest bar still above the floor" is
+not what it measures. So the probe prints it labelled as a floor check that
+cannot fail, and read its verdict off class flips across a = 0.5 and per-texel
+error, which move monotonically with damage. Both came back zero, which is what
+makes this a result and not a shrug.
+
+That is dev/README.md's standing trap -- a number that stays computable after
+the thing it described stopped being the thing you care about -- caught before
+the run rather than after it. The pixel-derived 2A/P is not junk: it reproduces
+the paint rig's own 19.6 px through both framings' constants, which is what
+makes it the right number to PRINT. It is just not the number to READ.
 
 ==== ALSO STILL OPEN: THE RUNTIME CONTEXT ====
 
@@ -128,7 +195,91 @@ reported IsRunning=false. The run had gone fine. See dev/README.md -- a silent
 channel is not an idle system, and the log file is the channel with no bridge
 in it.
 
-2b IS STILL NOT ANSWERED. Both runs were SERVER-ONLY: no player ever joined, so
-the probe's PlayerAdded attach never fired and no client ever reported. Asking
-start_playtest for numPlayers 2 did not produce clients. A real Play, pressed by
-hand, is what 2b needs.
+THE ROUND TRIP IS NOW CONFIRMED ON A REAL SERVER TOO. The third run was a Play
+pressed by hand, and the installed probe repeated the whole measurement in the
+play server's own context -- same twenty lines, same zeros, byte sum 150405167.
+So "the encode is lossless" is not an edit-mode artefact.
+
+2b IS STILL NOT ANSWERED, AND THE THIRD RUN FAILED FOR A NEW REASON. The first
+two were server-only -- no player ever joined. This one HAD a player: the second
+Studio process was launched with `-task StartClient -numTestServerPlayersUponStartup 1`
+and the server logged `Player -1 added, there are now 1 players total`. The
+attach still printed nothing, and the cause was four lines further down the log:
+
+    Error: The current thread cannot write 'Source'
+           (lacking capability PluginOrOpenCloud)
+    Script 'Workspace.U2ProbeServer', Line 428 - function attach
+
+A RUNTIME SERVER THREAD MAY NOT WRITE Script.Source. The probe's whole strategy
+for the client half -- carry the source as a string, build the LocalScript at
+runtime, keep it invisible to Rojo by construction -- is not available.
+
+THE IRONY IS WORTH RECORDING. 2a exists because SlimeBuilder saw RenderFidelity
+and CollisionFidelity throw "the current thread cannot write '<name>'" from a
+server script, and the fear was that TextureID was in that family. It is not --
+2a passes. But `Source` IS, and the probe was writing it, in its own installer,
+while carefully checking the property that turned out to be safe.
+
+TWO FAILURES THAT LOOK IDENTICAL FROM THE OUTPUT. "No player joined" and "the
+attach threw" both present as: server prints everything, client prints nothing.
+The first two runs really were the former, which made the third one easy to
+misread as more of the same. What separated them was in the log and not in the
+probe's own lines -- under CreatorError, not CreatorOutput, so grepping for the
+[U2RT] prefix could not see it. GREP THE LOG FOR ERRORS, NOT ONLY FOR YOUR TAG.
+
+THE FIX IS Clone(). The template LocalScript is authored ONCE at install time,
+from the command bar, which does hold PluginOrOpenCloud; the server clones it
+and reparents it, and a clone copies Source without writing it.
+
+==== 2b: ANSWERED. THE TEXTURE CROSSES. ====
+
+The fourth run, Play pressed by hand with a client. `attached client probe to
+Player1` printed, and the client reported on all five bodies:
+
+    body             server wrote                          client sees   verdict
+    srv_white_TID    rbxassetid://104689541793385          identical     CROSSED
+    srv_red_TID      rbxassetid://104689541793385          identical     CROSSED
+    srv_white_TC     rbxassetid://104689541793385          identical     CROSSED
+    srv_sign_TID     rbxassetid://98429592839825           identical     CROSSED
+    srv_none_red     ""                                    ""            (control)
+
+Colour crossed on every body too. So a server-side TextureID/TextureContent
+write REPLICATES, and SlimeBuilder can bind a skin server-side with no client
+work at all.
+
+AND THE CLIENT READ THE ASSET BACK ITSELF: inMap 262104, markN 117747, edgeN
+4230, 2A/P 55.6723 -- identical to the bake and to the server's own read. The
+client is handed the same bytes, which the round trip alone could not say.
+
+ONE WART IN THE OUTPUT, RECORDED SO IT IS NOT READ AS A RESULT: the untextured
+control prints "TEXTURE CROSSED" because the comparison is `mine == srvTex` and
+both sides are the empty string. That is true but it reads wrong. The control's
+job is done by its COLOUR being flat red in the frame, not by that word.
+
+U2 AND U3 ARE NOW CLOSED: 2a writable, 2b replicates, 2c no tint, and the
+upload survives byte-for-byte. The probe has been removed from the place.
+
+==== AND THE ANSWER IS WIRED ====
+
+SlimeConfig.SLIME_SKIN_BY_TIER -> SlimeData.Slime.skinTextureId ->
+SlimeBuilder.build(color, widthStuds, skinTextureId) -> PlayerProfile's slot
+pad, and LaunchRewardScene's reveal so the two agree. Measured on a real server
+with a real client, through PlayerProfile.receiveSlime rather than beside it:
+
+    [SKIN server] catalog: #25 Legendary Slime 1 (tier 5 Legendary) skin rbxassetid://104689541793385
+    [SKIN server] receiveSlime(Player1, Legendary Slime 1) -> placed on a pad = true
+    [SKIN server]   Base_-1.Legendary Slime 1   7.00 studs  Color  70,200, 80  TextureID "rbxassetid://104689541793385"
+    [SKIN server]   Base_-1.Uncommon Slime 5    7.00 studs  Color 165, 80,220  TextureID ""
+    [SKIN client Player1] skinned body arrived after 1.4 s
+    [SKIN client Player1]   Base_-1.Legendary Slime 1   6.82 studs  TextureID "rbxassetid://104689541793385"
+    [SKIN client Player1]   Base_-1.Uncommon Slime 5    7.16 studs  TextureID ""
+
+THE UNSKINNED SLIME BESIDE IT IS THE CONTROL and it cost nothing -- the base
+already had one. "The tiger has a texture" and "everything has a texture" look
+identical without it.
+
+AND THE COLOUR LINE IS THE PROOF THE MEASUREMENT WAS RIGHT. Legendary Slime 1
+carries Color 70,200,80 -- GREEN -- and renders tangerine and deep indigo. U3
+said Color does not tint a textured MeshPart; that is what it looks like when
+the shipping code relies on it. The 6.82 / 7.16 on the client are
+SlimeIdleClient's animation around a 7.00 rest, not a scale error.

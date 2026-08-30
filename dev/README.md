@@ -201,38 +201,54 @@ plain JSON or SSE `data:` frames, so handle both.
 
 ## A number stays computable after the thing it described stops existing
 
-**This has now caught us three times, in three unrelated places.** It is not a
+**This has now caught us four times, in four unrelated places** — the fourth
+before it could do any damage, which is the interesting one. It is not a
 Studio problem or a maths problem — it is what happens when a measurement
 outlives the representation it was defined on. The code keeps running. The
 number keeps printing. It looks healthy. It is describing something that is no
 longer there.
 
-### The three
+### The four
 
 | The number | What it was defined on | What it was being read as | What went wrong |
 | --- | --- | --- | --- |
 | White pixels counted down the pole, to check dot distribution | A projected view | "Do the dots cover their share of the crown?" | An axis-on view sees the pole face-on and the flanks edge-on, so it over-reads whichever pole faces the camera *regardless of placement*. It moved 46.1% → 42.8% while the real error halved. It was measuring projection. |
 | IoU between adjacent ladder rungs | Two binary masks | "Are these two tiers distinguishable?" | IoU measures *where the white sits*. Perceived rarity is not that. It called Uncommon → Rare the tight pair; the eye called Rare → Epic, and the eye was right. |
 | Feature size 2A/P, on a ramp | A mask with a boundary | "Is the smallest visible feature above 8 px?" | A ramp's mask edge is invisible by design — the flame tip fades to the body colour. The number described a contour nobody can see, and it stayed comfortably above the floor while saying nothing. |
+| Feature size 2A/P again, on the upload round trip | The paint rig’s mark mask | "Did Roblox’s encode eat tiger’s narrowest bar?" | 2A/P is a **mean** characteristic width over the whole mark set, and the wide bars carry it. Simulated offline it moved +1.8% through JPEG q50 and +5.2% through a 4x downsample that destroys the sheet, never approaching the 8 px floor. It cannot fail, so passing it is not evidence. |
 
 ### The rule
 
 When the representation changes, **re-derive the metric from the thing you
 actually care about** — do not keep reading the old number because the old code
-still runs. In all three cases the fix was to go back to the question:
+still runs. In the first three the fix was to go back to the question:
 
 - not "white per pole view" but *white share per height band on the texel set*;
 - not "how much do the masks overlap" but *look at the grid*;
 - not "how wide is the mask" but *how wide is the region that visibly differs
   from the body*.
 
-Two habits that catch it earlier:
+The fourth had no lapsed representation to re-derive from — 2A/P still measures
+exactly what it always measured. What lapsed was the QUESTION it was being put
+to. So the fix there was not a new metric but a **measured sensitivity**: keep
+printing 2A/P, label it as a floor check that cannot fail, and read the verdict
+off the numbers that were shown to move.
+
+Three habits that catch it earlier:
 
 - **If a metric inverts or loses meaning for a class of inputs, switch it off
   for that class.** Do not annotate it and print it anyway. `J` and `lit` are
   not computed for ramp variants, because fire is a height field and would
   score as "lighting could have drawn this" while being brightest where the
   light is dimmest — the opposite of what a high score means everywhere else.
+- **Simulate the failure before trusting the metric.** This is what caught the
+  fourth one in advance, and it is cheap: take the artefact you have, damage it
+  the way the real process might, and check that the number notices.
+  `dev/legendary/encode_probe.py` puts the baked sheet through four JPEG
+  qualities and two downsample round-trips and scores every candidate metric on
+  all six. It took minutes, and it moved the verdict off a number that could not
+  fail and onto two that track the damage monotonically. **A metric with no
+  measured sensitivity is a guess about a guess.**
 - **Keep printing the lapsed number, labelled.** `EXPLORE_PATTERNS` prints the
   ramp mask width as `(mask says N, which is not the number to read)`. Deleting
   it invites the next person to recompute it and trust it; labelling it spends
